@@ -1,0 +1,52 @@
+# Qt / C++
+build/
+build-*/
+*.o
+*.obj
+*.user
+*.user.*
+*.pro.user
+moc_*
+ui_*
+qrc_*
+Makefile
+.qmake.stash
+
+# CMake
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+
+# Python / ML
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Node / dashboard
+node_modules/
+dist/
+
+# Runtime
+*.log
+*.pid
+
+# Database runtime files
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets
+.env
+.env.*
+!example.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
