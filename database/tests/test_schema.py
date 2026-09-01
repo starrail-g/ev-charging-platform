@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+
+import sqlite3
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+SCHEMA = (ROOT / "database/schema/schema.sql").read_text(encoding="utf-8")
+SEED = (ROOT / "database/seeds/dev.sql").read_text(encoding="utf-8")
+MIGRATION = (
+    ROOT / "database/migrations/001_v0.1_to_v0.2.sql"
+).read_text(encoding="utf-8")
+
+V01_FIXTURE = """
+PRAGMA foreign_keys = ON;
+CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+INSERT INTO schema_meta VALUES ('schema_version', '0.1');
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY, phone TEXT NOT NULL, nickname TEXT NOT NULL,
+    avatar_path TEXT, balance_cents INTEGER NOT NULL, status TEXT NOT NULL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE stations (
+    id INTEGER PRIMARY KEY, name TEXT NOT NULL, address TEXT NOT NULL,
+    latitude REAL NOT NULL, longitude REAL NOT NULL, status TEXT NOT NULL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE charging_piles (
+    id INTEGER PRIMARY KEY, station_id INTEGER NOT NULL, pile_code TEXT NOT NULL,
+    pile_type TEXT NOT NULL, power_kw REAL NOT NULL,
+    unit_price_cents_per_kwh INTEGER NOT NULL, status TEXT NOT NULL,
+    total_charge_count INTEGER NOT NULL, total_charge_seconds INTEGER NOT NULL,
+    restart_count INTEGER NOT NULL, last_restart_at TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE charging_orders (
+    id INTEGER PRIMARY KEY, order_no TEXT NOT NULL, user_id INTEGER NOT NULL,
+    pile_id INTEGER NOT NULL, status TEXT NOT NULL, reserved_at TEXT,
+    started_at TEXT, ended_at TEXT, energy_wh INTEGER NOT NULL,
+    unit_price_cents_per_kwh INTEGER NOT NULL,
+    service_fee_cents INTEGER NOT NULL, total_amount_cents INTEGER NOT NULL,
+    settled_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE wallet_transactions (
+    id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, order_id INTEGER,
+    transaction_type TEXT NOT NULL, amount_cents INTEGER NOT NULL,
+    balance_after_cents INTEGER NOT NULL, idempotency_key TEXT,
+    created_at TEXT NOT NULL
+);
+INSERT INTO users VALUES
+    (1, '13800138000', 'fixture', NULL, 900, 'active', 't0', 't0');
+INSERT INTO stations VALUES
+    (1, 'fixture', 'fixture', 0, 0, 'active', 't0', 't0');
+INSERT INTO charging_piles VALUES
+    (1, 1, 'P-1', 'fast', 60, 100, 'idle', 1, 3600, 0, NULL, 't0', 't1');
+INSERT INTO charging_orders VALUES
+    (1, 'ORDER-1', 1, 1, 'completed', 't0', '2026-08-31T23:00:00Z',
+     '2026-08-31T23:30:00Z', 10000, 100, 0, 1000,
+     '2026-09-01T00:01:00Z', 't0', 't1');
+INSERT INTO wallet_transactions VALUES
+    (1, 1, 1, 'charge', -1000, 900, 'charge-1', '2026-09-01T00:01:00Z');
+"""
+
+
+class SchemaV02Test(unittest.TestCase):
+    def setUp(self):
+        self.db = sqlite3.connect(":memory:")
+        self.db.executescript(SCHEMA)
+        self.db.executescript(SEED)
+
+    def tearDown(self):
+        self.db.close()
+
+    def assert_rejected(self, sql):
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(sql)
+        self.db.rollback()
+
+    def test_seed_is_repeatable_and_covers_required_states(self):
+        self.db.executescript(SCHEMA)
+        self.db.executescript(SEED)
+        self.assertEqual(
+            self.db.execute(
+                "SELECT value FROM schema_meta WHERE key='schema_version'"
+            ).fetchone(),
+            ("0.2",),
+        )
+        self.assertEqual(
+            {row[0] for row in self.db.execute(
+                "SELECT DISTINCT status FROM charging_piles"
+            )},
+            {"idle", "reserved", "charging", "fault", "offline"},
+        )
+        order_states = {row[0] for row in self.db.execute(
+            "SELECT DISTINCT status FROM charging_orders"
+        )}
+        self.assertTrue(
+            {"pending_reservation", "reserved", "charging", "completed",
+             "exception"}.issubset(order_states)
+        )
+        self.assertEqual(
+            self.db.execute(
+                "SELECT pile_reserved FROM station_pile_status WHERE station_id=2"
+            ).fetchone(),
+            (2,),
+        )
+
+    def test_revenue_uses_settlement_date(self):
+        self.assertEqual(
+            self.db.execute(
+                "SELECT revenue_date, revenue_cents FROM revenue_daily"
+            ).fetchall(),
+            [("2026-08-31", 3050)],
+        )
+
+    def test_incomplete_settlement_rows_are_rejected(self):
+        self.assert_rejected("""
+            INSERT INTO charging_orders
+                (id, order_no, user_id, pile_id, status,
+                 unit_price_cents_per_kwh, created_at, updated_at)
+            VALUES (9101, 'BAD-COMPLETED', 3, 202, 'completed', 95, 't', 't')
+        """)
+        self.assert_rejected("""
+            INSERT INTO charging_orders
+                (id, order_no, user_id, pile_id, status,
+                 unit_price_cents_per_kwh, created_at, updated_at)
+            VALUES (9102, 'BAD-PENDING', 3, 202, 'pending_settlement', 95, 't', 't')
+        """)
+        self.assert_rejected("""
+            INSERT INTO wallet_transactions
+                (id, user_id, transaction_type, amount_cents,
+                 balance_after_cents, created_at)
+            VALUES (9103, 3, 'charge', -1, 0, 't')
+        """)
+        self.assert_rejected("""
+            INSERT INTO charging_orders
+                (id, order_no, user_id, pile_id, status, started_at, ended_at,
+                 energy_wh, unit_price_cents_per_kwh, total_amount_cents,
+                 settled_at, created_at, updated_at)
+            VALUES (9104, 'NO-LEDGER', 3, 202, 'completed', 't1', 't2',
+                    1, 95, 1, 't3', 't0', 't3')
+        """)
+
+    def test_completed_charge_ledger_is_protected(self):
+        self.assert_rejected(
+            "DELETE FROM wallet_transactions WHERE id=5002"
+        )
+        self.assert_rejected("""
+            UPDATE wallet_transactions SET amount_cents=-1 WHERE id=5002
+        """)
+
+
+class MigrationTest(unittest.TestCase):
+    def test_v01_data_is_preserved_and_constrained(self):
+        db = sqlite3.connect(":memory:")
+        self.addCleanup(db.close)
+        db.executescript(V01_FIXTURE)
+        db.executescript(MIGRATION)
+
+        self.assertEqual(
+            db.execute(
+                "SELECT value FROM schema_meta WHERE key='schema_version'"
+            ).fetchone(),
+            ("0.2",),
+        )
+        self.assertEqual(db.execute(
+            "SELECT COUNT(*) FROM charging_orders"
+        ).fetchone(), (1,))
+        self.assertEqual(
+            db.execute(
+                "SELECT revenue_date, revenue_cents FROM revenue_daily"
+            ).fetchall(),
+            [("2026-09-01", 1000)],
+        )
+        self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
+        db.execute("UPDATE charging_piles SET status='reserved' WHERE id=1")
+
+    def test_migration_rejects_completed_order_without_ledger(self):
+        db = sqlite3.connect(":memory:")
+        self.addCleanup(db.close)
+        db.executescript(V01_FIXTURE)
+        db.execute("DELETE FROM wallet_transactions")
+        db.commit()
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            db.executescript(MIGRATION)
+        db.rollback()
+        self.assertEqual(
+            db.execute(
+                "SELECT value FROM schema_meta WHERE key='schema_version'"
+            ).fetchone(),
+            ("0.1",),
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

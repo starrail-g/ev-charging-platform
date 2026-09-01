@@ -34,7 +34,7 @@ Completed project setup work:
 
 Current implementation state:
 
--   SQLite schema v0.1, deterministic seed data, and transaction rules are
+-   SQLite schema v0.2, deterministic seed data, migration from v0.1, and transaction rules are
     documented and validated with Python's SQLite driver
 -   Socket protocol v1 framing/envelope/error codes are frozen in
     `docs/architecture/protocol.md`
@@ -121,7 +121,7 @@ After foundations are stable:
 -   authentication/session behavior beyond the protocol v1 payload contract
     needs design before mutating handlers are exposed
 -   charging-order state machine and settlement consistency rules are
-    documented in the v0.1 database/protocol contracts; handlers remain
+    documented in the v0.2 database/protocol contracts; handlers remain
     unimplemented
 -   dashboard-to-backend data interface is undecided
 -   ML framework/language and model approach are undecided
@@ -166,8 +166,10 @@ These are unresolved design items, not implementation defects.
     development plan and subsystem dependencies
 -   added a backend requirement traceability baseline for database and
     protocol implementation
--   implemented and validated SQLite v0.1, protocol v1, and a diagnostic
+-   implemented and validated SQLite v0.2, protocol v1, and a diagnostic
     Qt TCP server skeleton
+-   aligned pile/order reservation and exception states, completion-ledger
+    constraints, and settlement-date revenue with CI review feedback
 
 Keep this history concise. Compress or replace old entries as the
 project progresses rather than appending indefinitely.

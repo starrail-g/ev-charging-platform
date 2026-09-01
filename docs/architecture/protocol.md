@@ -100,7 +100,10 @@ The following names and payloads are reserved for v1. Result types append
 | `station.list` | optional location/filter fields | `station.list.result`: `stations` |
 | `pile.list` | `station_id` | `pile.list.result`: `piles` |
 | `order.active.get` | `user_id` | `order.active.get.result`: `order` or `null` |
-| `charging.start` | `user_id`, `pile_id` | `charging.start.result`: `order` |
+| `reservation.create` | `user_id`, `pile_id` | `reservation.create.result`: `order` (`pending_reservation`), `pile` (`reserved`) |
+| `reservation.confirm` | `user_id`, `order_id` | `reservation.confirm.result`: `order` (`reserved`) |
+| `reservation.cancel` | `user_id`, `order_id` | `reservation.cancel.result`: `order` (`cancelled`), `pile` (`idle`) |
+| `charging.start` | `user_id`, `order_id` for a reservation, or `pile_id` for direct start | `charging.start.result`: `order`, `pile` (`charging`) |
 | `charging.stop` | `user_id`, `order_id`, optional `ended_at` | `charging.stop.result`: `order`, `estimated_amount_cents` |
 | `charging.settle` | `user_id`, `order_id` | `charging.settle.result`: `order`, `balance_cents` |
 | `admin.login` | `username`, `password` | `admin.login.result`: `admin` |
@@ -121,11 +124,18 @@ The `user` object must at least contain `id`, `phone`, `nickname`,
 `statistics` fields are finalized with the database schema and documented in
 the API reference before their handlers are enabled.
 
+Pile status values are `idle`, `reserved`, `charging`, `fault`, and `offline`.
+Order status values are `pending_reservation`, `reserved`, `charging`,
+`pending_settlement`, `completed`, `cancelled`, and `exception`.
+
 ## State and Failure Rules
 
-- A user with an unfinished order cannot start another charging order.
-- A new order can only acquire an idle pile. Fault or occupied piles return
-  `CONFLICT`.
+- A user with an unfinished order cannot create another reservation or start
+  another charging order.
+- Creating a pending reservation atomically changes an idle pile to
+  `reserved`; confirmation changes only the order to `reserved`. Starting or
+  cancelling a reservation atomically changes both order and pile. Fault or
+  occupied piles return `CONFLICT`.
 - Stop and settlement operations are idempotent only when the same `id` is
   replayed. Request ID persistence is a database-layer task before these
   mutating handlers are exposed to clients.
