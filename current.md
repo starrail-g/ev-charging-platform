@@ -16,8 +16,8 @@ Required product areas include:
 -   ECharts Web big-data dashboard
 -   intelligent charging-load analysis and forecasting
 
-Current stage: **repository initialization and architecture
-preparation**.
+Current stage: **stage-I backend contract and diagnostic server
+foundation**.
 
 No production feature should currently be treated as complete unless
 verified in the repository.
@@ -34,11 +34,15 @@ Completed project setup work:
 
 Current implementation state:
 
--   core business features have not yet been implemented
--   Socket protocol is not yet finalized
--   database schema is not yet finalized
+-   SQLite schema v0.1, deterministic seed data, and transaction rules are
+    documented and validated with Python's SQLite driver
+-   Socket protocol v1 framing/envelope/error codes are frozen in
+    `docs/architecture/protocol.md`
+-   a Qt TCP server skeleton supports `health` and `echo`
+-   database-backed business handlers and Qt clients are not yet implemented
 -   module APIs are not yet finalized
--   build system is not yet finalized
+-   qmake6 project files exist for the protocol tests and server; project-wide
+    build-system adoption is still pending
 -   automated CI is not currently a project priority
 
 ## Architecture
@@ -91,14 +95,14 @@ Important architectural details are still pending design.
 
 High priority:
 
--   [ ] confirm team member responsibilities and first development tasks
+-   [x] confirm team member responsibilities and first development tasks
 -   [ ] decide and document the concrete system architecture
--   [ ] design initial SQLite schema
--   [ ] design Socket message framing and core protocol
--   [ ] choose the Qt/C++ build system used by the repository
+-   [x] design initial SQLite schema
+-   [x] design Socket message framing and core protocol
+-   [x] initialize the server buildable project and diagnostic path
+-   [ ] choose the Qt/C++ build system used across all modules
 -   [ ] initialize the user-client buildable Qt project
 -   [ ] initialize the admin-client buildable Qt project
--   [ ] initialize the server buildable project
 -   [ ] define the first end-to-end vertical feature
 
 After foundations are stable:
@@ -113,19 +117,18 @@ After foundations are stable:
 
 ## Known Issues
 
--   exact Socket protocol and serialization format are undecided
--   exact SQLite tables, fields, constraints, and relationships are
-    undecided
--   authentication/session behavior beyond the stated product
-    requirements needs design
--   charging-order state machine and settlement consistency rules need
-    design
+-   database-backed service handlers are not implemented yet
+-   authentication/session behavior beyond the protocol v1 payload contract
+    needs design before mutating handlers are exposed
+-   charging-order state machine and settlement consistency rules are
+    documented in the v0.1 database/protocol contracts; handlers remain
+    unimplemented
 -   dashboard-to-backend data interface is undecided
 -   ML framework/language and model approach are undecided
 -   external Tencent Maps API integration details and development-key
     handling need design
--   CMake versus qmake has not been decided
--   team ownership of modules has not yet been recorded here
+-   CMake versus qmake has not been decided for the whole repository; current
+    protocol/server validation uses `qmake6`
 
 These are unresolved design items, not implementation defects.
 
@@ -147,6 +150,9 @@ These are unresolved design items, not implementation defects.
     `AGENTS.md` project-specific
 -   do not prematurely lock in details that the requirements do not
     specify
+-   同学 B 负责 `server`、`libs/protocol`、`libs/database` 和
+    `database`；其阶段计划与系统整体认知记录在
+    `docs/development-plan.md`
 
 ## Recent History
 
@@ -156,6 +162,12 @@ These are unresolved design items, not implementation defects.
 -   prepared a beginner-friendly Git/GitHub collaboration guide
 -   established the project-specific `AGENTS.md`
 -   initialized `current.md`
+-   reviewed the original project brief and documented the team-B
+    development plan and subsystem dependencies
+-   added a backend requirement traceability baseline for database and
+    protocol implementation
+-   implemented and validated SQLite v0.1, protocol v1, and a diagnostic
+    Qt TCP server skeleton
 
 Keep this history concise. Compress or replace old entries as the
 project progresses rather than appending indefinitely.
