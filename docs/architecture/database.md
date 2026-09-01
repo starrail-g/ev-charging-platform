@@ -144,9 +144,11 @@ audit event.
 
 `schema/schema.sql` initializes new databases only. Because SQLite cannot add
 these CHECK constraints in place, an existing v0.1 database must be backed up
-and upgraded with `migrations/001_v0.1_to_v0.2.sql` while the server is
-stopped. The migration rebuilds the affected tables, preserves valid rows,
+and upgraded with `scripts/migrate_db.py` while the server is stopped. The
+migration runner owns the transaction, stops on the first SQLite error, and
+rolls back before returning non-zero. The migration rebuilds the affected tables, preserves valid rows,
 recreates indexes/views, changes revenue grouping to `settled_at`, and updates
 `schema_meta`. Invalid legacy completed/charge rows cause the transaction to
 roll back instead of being silently accepted. Run `PRAGMA foreign_key_check`
-after the migration; a successful check returns no rows.
+after the migration; a successful check returns no rows. Do not pipe the SQL
+file into an executor configured to continue after errors.

@@ -16,8 +16,9 @@ Upgrade an existing v0.1 database only after stopping the server and making a
 backup:
 
 ```sh
-sqlite3 var/ev-charging.db < database/migrations/001_v0.1_to_v0.2.sql
-sqlite3 var/ev-charging.db 'PRAGMA foreign_key_check;'
+python3 scripts/migrate_db.py var/ev-charging.db \
+  database/migrations/001_v0.1_to_v0.2.sql
+python3 -c 'import sqlite3; c=sqlite3.connect("var/ev-charging.db"); assert not c.execute("PRAGMA foreign_key_check").fetchall()'
 ```
 
 The server must enable `PRAGMA foreign_keys = ON` on every new connection.

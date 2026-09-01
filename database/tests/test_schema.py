@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import sqlite3
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -152,46 +154,79 @@ class SchemaV02Test(unittest.TestCase):
 
 
 class MigrationTest(unittest.TestCase):
-    def test_v01_data_is_preserved_and_constrained(self):
-        db = sqlite3.connect(":memory:")
-        self.addCleanup(db.close)
-        db.executescript(V01_FIXTURE)
-        db.executescript(MIGRATION)
+    def run_migration(self, database):
+        return subprocess.run(
+            [
+                "python3",
+                str(ROOT / "scripts/migrate_db.py"),
+                str(database),
+                str(ROOT / "database/migrations/001_v0.1_to_v0.2.sql"),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
-        self.assertEqual(
-            db.execute(
-                "SELECT value FROM schema_meta WHERE key='schema_version'"
-            ).fetchone(),
-            ("0.2",),
-        )
-        self.assertEqual(db.execute(
-            "SELECT COUNT(*) FROM charging_orders"
-        ).fetchone(), (1,))
-        self.assertEqual(
-            db.execute(
-                "SELECT revenue_date, revenue_cents FROM revenue_daily"
-            ).fetchall(),
-            [("2026-09-01", 1000)],
-        )
-        self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
-        db.execute("UPDATE charging_piles SET status='reserved' WHERE id=1")
+    def test_v01_data_is_preserved_and_constrained(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "legacy.sqlite"
+            db = sqlite3.connect(database)
+            db.executescript(V01_FIXTURE)
+            db.close()
+
+            result = self.run_migration(database)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            db = sqlite3.connect(database)
+            self.addCleanup(db.close)
+            self.assertEqual(
+                db.execute(
+                    "SELECT value FROM schema_meta WHERE key='schema_version'"
+                ).fetchone(),
+                ("0.2",),
+            )
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM charging_orders"
+            ).fetchone(), (1,))
+            self.assertEqual(
+                db.execute(
+                    "SELECT revenue_date, revenue_cents FROM revenue_daily"
+                ).fetchall(),
+                [("2026-09-01", 1000)],
+            )
+            self.assertEqual(
+                db.execute("PRAGMA foreign_key_check").fetchall(), []
+            )
+            db.execute("UPDATE charging_piles SET status='reserved' WHERE id=1")
 
     def test_migration_rejects_completed_order_without_ledger(self):
-        db = sqlite3.connect(":memory:")
-        self.addCleanup(db.close)
-        db.executescript(V01_FIXTURE)
-        db.execute("DELETE FROM wallet_transactions")
-        db.commit()
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "legacy.sqlite"
+            db = sqlite3.connect(database)
+            db.executescript(V01_FIXTURE)
+            db.execute("DELETE FROM wallet_transactions")
+            db.commit()
+            db.close()
 
-        with self.assertRaises(sqlite3.IntegrityError):
-            db.executescript(MIGRATION)
-        db.rollback()
-        self.assertEqual(
-            db.execute(
-                "SELECT value FROM schema_meta WHERE key='schema_version'"
-            ).fetchone(),
-            ("0.1",),
-        )
+            result = self.run_migration(database)
+            self.assertNotEqual(result.returncode, 0)
+
+            db = sqlite3.connect(database)
+            self.addCleanup(db.close)
+            self.assertEqual(
+                db.execute(
+                    "SELECT value FROM schema_meta WHERE key='schema_version'"
+                ).fetchone(),
+                ("0.1",),
+            )
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM charging_orders").fetchone(),
+                (1,),
+            )
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM charging_piles").fetchone(),
+                (1,),
+            )
 
 
 if __name__ == "__main__":

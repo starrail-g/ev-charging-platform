@@ -22,6 +22,9 @@ the database service.
 - Payload: UTF-8 JSON object, max 1 MiB. Zero-length and over-limit frames
   are invalid; the server sends an `error` where possible and closes only
   that connection.
+- If a TCP read contains valid frames followed by a malformed frame, the
+  decoder returns the valid messages together with the error. The server
+  dispatches those messages before sending the error and closing the session.
 - The initial server processes a connection's requests in received order.
   Request IDs allow clients to correlate responses and will support later
   asynchronous work. Clients must generate unique IDs while a connection is
@@ -153,6 +156,9 @@ Order status values are `pending_reservation`, `reserved`, `charging`,
 `libs/protocol` implements envelope validation and incremental frame
 encoding/decoding. `server` accepts multiple TCP clients and currently
 implements `health` and `echo`; unknown operations return `INVALID_REQUEST`.
+When a read contains valid messages before a malformed frame, the server
+dispatches the valid messages before returning the frame error and closing
+that connection.
 It deliberately has no direct SQLite dependency, so the database/transaction
 service can be introduced behind the request dispatcher without changing the
 wire contract.

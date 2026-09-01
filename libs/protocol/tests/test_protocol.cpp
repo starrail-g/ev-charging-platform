@@ -31,6 +31,12 @@ int main(int argc, char **argv)
     unsupported.version = 2;
     decoder.feed(encodeFrame(unsupported), &error, &errorCode);
     if (error.isEmpty() || errorCode != ErrorCode::UnsupportedVersion) return 6;
+    Message good{1, QStringLiteral("good-before-bad"), QStringLiteral("echo"),
+                 QJsonObject{{QStringLiteral("value"), 42}}};
+    const QByteArray badBatch = encodeFrame(good) + QByteArray("\x00\x00\x00\x01!", 5);
+    result = decoder.feed(badBatch, &error, &errorCode);
+    if (result.size() != 1 || result.first().id != good.id
+        || error.isEmpty() || errorCode != ErrorCode::InvalidJson) return 7;
     qInfo() << "protocol tests passed";
     return 0;
 }

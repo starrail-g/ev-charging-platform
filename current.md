@@ -170,6 +170,8 @@ These are unresolved design items, not implementation defects.
     Qt TCP server skeleton
 -   aligned pile/order reservation and exception states, completion-ledger
     constraints, and settlement-date revenue with CI review feedback
+-   fixed atomic migration execution and valid-frame preservation when a TCP
+    read also contains a malformed frame
 
 Keep this history concise. Compress or replace old entries as the
 project progresses rather than appending indefinitely.

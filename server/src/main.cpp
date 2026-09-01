@@ -30,12 +30,11 @@ private:
         QString error;
         ErrorCode errorCode = ErrorCode::Ok;
         const QList<Message> requests = decoder_.feed(socket_->readAll(), &error, &errorCode);
+        for (const Message &request : requests) handle(request);
         if (!error.isEmpty()) {
             sendError(QString(), errorCode, error);
             socket_->disconnectFromHost();
-            return;
         }
-        for (const Message &request : requests) handle(request);
     }
 
     void handle(const Message &request)

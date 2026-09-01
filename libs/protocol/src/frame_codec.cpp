@@ -34,7 +34,7 @@ QList<Message> FrameDecoder::feed(const QByteArray &bytes, QString *error,
             if (error) *error = QStringLiteral("invalid payload length: %1").arg(size);
             if (errorCode) *errorCode = ErrorCode::InvalidFrame;
             reset();
-            return {};
+            return messages;
         }
         if (buffer_.size() < 4 + qint64(size)) return messages;
 
@@ -57,7 +57,7 @@ QList<Message> FrameDecoder::feed(const QByteArray &bytes, QString *error,
                 }
             }
             reset();
-            return {};
+            return messages;
         }
         messages.append(message);
     }

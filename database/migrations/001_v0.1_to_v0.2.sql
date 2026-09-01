@@ -76,6 +76,32 @@ INSERT INTO charging_piles_v02 SELECT * FROM charging_piles;
 INSERT INTO charging_orders_v02 SELECT * FROM charging_orders;
 INSERT INTO wallet_transactions_v02 SELECT * FROM wallet_transactions;
 
+-- Validate all copied cross-table settlement data before old tables are
+-- dropped. Any failure is rolled back by scripts/migrate_db.py.
+CREATE TABLE migration_v02_validation (id INTEGER PRIMARY KEY);
+CREATE TRIGGER migration_v02_validate_completed_orders
+BEFORE INSERT ON migration_v02_validation
+WHEN EXISTS (
+    SELECT 1
+    FROM charging_orders_v02 AS o
+    WHERE o.status = 'completed'
+      AND NOT EXISTS (
+          SELECT 1
+          FROM wallet_transactions_v02 AS w
+          WHERE w.order_id = o.id
+            AND w.user_id = o.user_id
+            AND w.transaction_type = 'charge'
+            AND w.amount_cents = -o.total_amount_cents
+            AND w.created_at = o.settled_at
+      )
+)
+BEGIN
+    SELECT RAISE(ABORT, 'legacy completed order lacks matching charge transaction');
+END;
+INSERT INTO migration_v02_validation DEFAULT VALUES;
+DROP TRIGGER migration_v02_validate_completed_orders;
+DROP TABLE migration_v02_validation;
+
 DROP TABLE wallet_transactions;
 DROP TABLE charging_orders;
 DROP TABLE charging_piles;
@@ -148,8 +174,6 @@ BEGIN
     SELECT RAISE(ABORT, 'cannot invalidate charge transaction for completed order');
 END;
 
--- Force validation of legacy completed rows after both tables are copied.
-UPDATE charging_orders SET status = status WHERE status = 'completed';
 CREATE INDEX ix_piles_station_status
     ON charging_piles(station_id, status);
 CREATE INDEX ix_orders_user_status
@@ -185,5 +209,5 @@ GROUP BY substr(settled_at, 1, 10);
 
 UPDATE schema_meta SET value = '0.2' WHERE key = 'schema_version';
 
-COMMIT;
-PRAGMA foreign_keys = ON;
+-- The migration runner owns COMMIT/ROLLBACK. Do not execute this file with a
+-- tool that continues after errors or commits automatically.
