@@ -6,7 +6,7 @@ Linux + Qt Widgets 的充电桩管理应用：管理员登录、概览、桩/站
 
 - **2026-09-01 与 A/B 确认：使用 qmake（`.pro`）**，不维护 CMake。
 - 理由：Ubuntu 验收环境 qmake6 现成；东软 Qt 教程以 `.pro` 为主线。
-- 决策记录见 `docs/requirements/README.md` 待确认清单与 `current.md`。
+- 决策记录见 `docs/requirements/README.md` §3（构建系统二选一，已确认）与 `current.md`。
 
 ## 环境要求
 
@@ -42,10 +42,16 @@ export PATH="/d/Qt/6.2.4/mingw_64/bin:/d/Qt/Tools/mingw1310_64/bin:$PATH"
 mkdir -p ../build/admin-client && cd ../build/admin-client
 qmake ../../ev-charging-platform/apps/admin-client/admin-client.pro  # Ubuntu 用 qmake6
 make -j
-make check        # 运行 Qt Test
+make check        # 运行 Qt Test（Ubuntu 验收环境）
 ```
 
 Windows 下 `make` 为 `mingw32-make`（需先 export PATH，见上）。
+⚠️ git-bash 下 `mingw32-make check` 会报 syntax error（MSYS sh 兼容问题），
+验证测试直接运行测试可执行文件：
+
+```bash
+./tests/release/tst_launchsmoke.exe -o result.txt,txt   # 退出码 0 且 Totals 全 PASS 即通过
+```
 
 ## 运行
 
