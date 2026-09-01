@@ -30,3 +30,17 @@
 详细开发约定参见 `CONTRIBUTING.md` 和 `AGENTS.md`。
 
 当前项目状态参见 `current.md`。
+
+## Workspace Boundary
+
+本目录只存放准备同步或已经同步到 GitHub 的项目内容，包括源码、测试、
+正式需求/架构/API/发布文档，以及项目状态文档 `current.md`。
+
+本地过程资料不放入本仓库：
+
+- brainstorming、设计规格、实施计划和每日计划：
+  `D:\work\chargingplatform\superpowers`
+- 个人构思与课程/需求原件：`D:\work\chargingplatform`
+- 本地构建产物：`D:\work\chargingplatform\build`
+
+正式缺陷日志和发布清单属于 GitHub 项目文档，存放在 `docs/release`。
