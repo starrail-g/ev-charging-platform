@@ -31,8 +31,8 @@ export PATH="/d/Qt/6.2.4/mingw_64/bin:/d/Qt/Tools/mingw1310_64/bin:$PATH"
 
 ## 工作区路径
 
-- 项目仓库：`D:/work/chargingplatform/ev-charging-platform`
-- 仓库外构建目录：`D:/work/chargingplatform/build/admin-client`
+- 项目仓库：仓库根目录（下文以 `<repo>` 指代）
+- 仓库外构建目录：`<repo>` 同级 `build/admin-client`（如 `../build/admin-client`）
 - 构建产物不得生成在项目仓库内部。
 
 ## 构建与测试（qmake 唯一路径）
@@ -42,7 +42,10 @@ export PATH="/d/Qt/6.2.4/mingw_64/bin:/d/Qt/Tools/mingw1310_64/bin:$PATH"
 mkdir -p ../build/admin-client && cd ../build/admin-client
 qmake ../../ev-charging-platform/apps/admin-client/admin-client.pro  # Ubuntu 用 qmake6
 make -j
-make check        # 运行 Qt Test（Ubuntu 验收环境）
+# 标准验收命令（Ubuntu/CI/无图形会话统一离屏运行，避免 xcb 连接失败）：
+QT_QPA_PLATFORM=offscreen make check
+# 有桌面会话时可省略环境变量：
+# make check
 ```
 
 Windows 下 `make` 为 `mingw32-make`（需先 export PATH，见上）。

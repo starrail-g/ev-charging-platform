@@ -14,7 +14,11 @@ SOURCES += \
     ../src/pages/overviewpage.cpp \
     ../src/pages/pilepage.cpp \
     ../src/pages/stationpage.cpp \
-    ../src/pages/userpage.cpp
+    ../src/pages/userpage.cpp \
+    ../src/data/mockadminrepository.cpp \
+    ../src/data/mockdataset.cpp \
+    ../src/models/adminmodels.cpp \
+    ../src/widgets/statestack.cpp
 
 HEADERS += \
     ../src/app/mainwindow.h \
@@ -22,4 +26,9 @@ HEADERS += \
     ../src/pages/overviewpage.h \
     ../src/pages/pilepage.h \
     ../src/pages/stationpage.h \
-    ../src/pages/userpage.h
+    ../src/pages/userpage.h \
+    ../src/data/adminrepository.h \
+    ../src/data/mockadminrepository.h \
+    ../src/data/mockdataset.h \
+    ../src/models/adminmodels.h \
+    ../src/widgets/statestack.h

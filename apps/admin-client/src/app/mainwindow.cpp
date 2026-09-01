@@ -7,20 +7,27 @@
 #include <QStatusBar>
 #include <QVBoxLayout>
 
+#include "data/adminrepository.h"
+#include "data/mockadminrepository.h"
 #include "pages/loginpage.h"
 #include "pages/overviewpage.h"
 #include "pages/pilepage.h"
 #include "pages/stationpage.h"
 #include "pages/userpage.h"
 
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(ev::AdminRepository *repository, QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle(QStringLiteral("充电桩管理端"));
     resize(1024, 700);
 
+    if (!repository) {
+        m_ownedRepository = std::make_unique<MockAdminRepository>();
+        repository = m_ownedRepository.get();
+    }
     m_stack = new QStackedWidget(this);
-    m_loginPage = new LoginPage(m_stack);
+    m_stack->setObjectName(QStringLiteral("mainStack"));
+    m_loginPage = new LoginPage(repository, m_stack);
     m_businessArea = new QWidget(m_stack);
     buildBusinessArea();
 
@@ -35,9 +42,13 @@ MainWindow::MainWindow(QWidget *parent)
             this, &MainWindow::onLoginSuccess);
 }
 
+// out-of-line：unique_ptr<AdminRepository> 需要完整类型（见 mainwindow.h）
+MainWindow::~MainWindow() = default;
+
 void MainWindow::buildBusinessArea()
 {
     m_navList = new QListWidget(m_businessArea);
+    m_navList->setObjectName(QStringLiteral("navList"));
     m_navList->addItem(QStringLiteral("概览"));
     m_navList->addItem(QStringLiteral("充电桩"));
     m_navList->addItem(QStringLiteral("充电站"));
@@ -68,6 +79,15 @@ void MainWindow::buildBusinessArea()
 
     connect(m_navList, &QListWidget::currentRowChanged,
             pageStack, &QStackedWidget::setCurrentIndex);
+    // 标题联动：状态栏显示当前页面
+    connect(m_navList, &QListWidget::currentRowChanged, this, [this](int row) {
+        const QString page = (row >= 0 && row < m_navList->count())
+            ? m_navList->item(row)->text()
+            : QString();
+        statusBar()->showMessage(page.isEmpty()
+            ? QStringLiteral("未登录")
+            : QStringLiteral("已登录（Mock 演示）· %1").arg(page));
+    });
     connect(logoutButton, &QPushButton::clicked,
             this, &MainWindow::onLogout);
 }
@@ -78,7 +98,8 @@ void MainWindow::onLoginSuccess()
     m_navList->setEnabled(true);
     m_navList->setCurrentRow(0);
     m_stack->setCurrentWidget(m_businessArea);
-    statusBar()->showMessage(QStringLiteral("已登录（Mock 演示）"));
+    statusBar()->showMessage(QStringLiteral("已登录（Mock 演示）· 概览"));
+    m_overviewPage->refresh(); // 概览页加载 Mock 数据
 }
 
 void MainWindow::onLogout()

@@ -3,6 +3,12 @@
 
 #include <QMainWindow>
 
+#include <memory>
+
+namespace ev {
+class AdminRepository;
+}
+
 class QStackedWidget;
 class QListWidget;
 class LoginPage;
@@ -10,23 +16,33 @@ class OverviewPage;
 class PilePage;
 class StationPage;
 class UserPage;
+class MockAdminRepository;
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
+    // repository 为空时自建 MockAdminRepository（第一阶段默认）；
+    // 注入实例生命周期归调用方。
+    explicit MainWindow(ev::AdminRepository *repository = nullptr,
+                        QWidget *parent = nullptr);
+    ~MainWindow() override;
 
     bool isLoggedIn() const { return m_loggedIn; }
 
 public slots:
-    void onLoginSuccess();
     void onLogout();
+
+private slots:
+    // 登录唯一入口：由 LoginPage::loggedIn 信号触发（认证成功后）。
+    // 保持 private：禁止外部直接绕过认证置为已登录。
+    void onLoginSuccess();
 
 private:
     void buildBusinessArea();
 
+    std::unique_ptr<ev::AdminRepository> m_ownedRepository;
     QStackedWidget *m_stack = nullptr;
     LoginPage *m_loginPage = nullptr;
     QWidget *m_businessArea = nullptr;

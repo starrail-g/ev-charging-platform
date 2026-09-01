@@ -36,11 +36,10 @@
 本目录只存放准备同步或已经同步到 GitHub 的项目内容，包括源码、测试、
 正式需求/架构/API/发布文档，以及项目状态文档 `current.md`。
 
-本地过程资料不放入本仓库：
+本地过程资料不放入本仓库（与仓库同级存放，下称 `superpowers/`、`build/`）：
 
-- brainstorming、设计规格、实施计划和每日计划：
-  `D:\work\chargingplatform\superpowers`
-- 个人构思与课程/需求原件：`D:\work\chargingplatform`
-- 本地构建产物：`D:\work\chargingplatform\build`
+- brainstorming、设计规格、实施计划和每日计划：仓库同级 `superpowers/` 目录
+- 个人构思与课程/需求原件：仓库同级外层目录
+- 本地构建产物：仓库同级 `build/` 目录
 
 正式缺陷日志和发布清单属于 GitHub 项目文档，存放在 `docs/release`。
