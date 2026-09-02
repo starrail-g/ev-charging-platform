@@ -14,6 +14,7 @@
 #include "pages/overviewpage.h"
 #include "theme/generated/theme_tokens.h"
 #include "theme/theme.h"
+#include "widgets/aurorabackdrop.h"
 #include "widgets/stationtopologywidget.h"
 #include "widgets/statuspulsewidget.h"
 #include "widgets/statustag.h"
@@ -33,6 +34,8 @@ private slots:
     void availabilityRateFormulaIsIndependent();
     void topologyUsesInformativeLineAndEmitsStationSelection();
     void attentionItemSwitchesToPilePage();
+    void auroraBackdropAnimatesWhenMotionEnabled();
+    void reducedMotionFreezesAuroraBackdrop();
 };
 
 void TestUi::statusTagsExposeProtocolState()
@@ -163,6 +166,21 @@ void TestUi::attentionItemSwitchesToPilePage()
                       firstRow.center());
     QTRY_COMPARE_WITH_TIMEOUT(pageStack->currentIndex(), 1, 1000); // 1 = 充电桩页
     QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("P-101-C")));
+}
+
+void TestUi::auroraBackdropAnimatesWhenMotionEnabled()
+{
+    // 背景呼吸与状态点同受 Theme 动效开关控制（spec §5.6 减少动态约束）
+    ev::Theme::setMotionEnabled(true);
+    AuroraBackdrop backdrop;
+    QVERIFY(backdrop.isAnimationRunning());
+}
+
+void TestUi::reducedMotionFreezesAuroraBackdrop()
+{
+    AuroraBackdrop backdrop;
+    backdrop.setMotionEnabled(false);
+    QVERIFY(!backdrop.isAnimationRunning());
 }
 
 QTEST_MAIN(TestUi)

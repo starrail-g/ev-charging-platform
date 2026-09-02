@@ -16,6 +16,7 @@
 #include "pages/pilepage.h"
 #include "pages/stationpage.h"
 #include "pages/userpage.h"
+#include "widgets/aurorabackdrop.h"
 
 MainWindow::MainWindow(ev::AdminRepository *repository, QWidget *parent)
     : QMainWindow(parent)
@@ -40,7 +41,14 @@ MainWindow::MainWindow(ev::AdminRepository *repository, QWidget *parent)
     m_stack->addWidget(m_businessArea);
     m_stack->setCurrentWidget(m_loginPage);
 
-    setCentralWidget(m_stack);
+    // 中央底层 = AuroraBackdrop（日班底色 + 青蓝呼吸光晕）；
+    // 页面根与裸容器已透明（theme.qss），氛围光从面板间隙与页面边缘透出
+    auto *backdrop = new AuroraBackdrop(this);
+    auto *backdropLayout = new QVBoxLayout(backdrop);
+    backdropLayout->setContentsMargins(0, 0, 0, 0);
+    backdropLayout->setSpacing(0);
+    backdropLayout->addWidget(m_stack);
+    setCentralWidget(backdrop);
     statusBar()->showMessage(QStringLiteral("未登录"));
 
     connect(m_loginPage, &LoginPage::loggedIn,
@@ -77,13 +85,26 @@ void MainWindow::buildBusinessArea(ev::AdminRepository *repository)
     auto *logoutButton = new QPushButton(QStringLiteral("退出登录"), navigationRail);
     logoutButton->setObjectName(QStringLiteral("logoutButton"));
 
+    // 垂直节奏：品牌区（产品标 + 会话徽章）成组，与导航区用分隔线断开，
+    // 导航项之间留空隙、退出按钮贴底——间距幅度要够大才能形成清晰分区
     auto *navigationLayout = new QVBoxLayout(navigationRail);
-    navigationLayout->setContentsMargins(18, 22, 18, 18);
-    navigationLayout->setSpacing(12);
+    navigationLayout->setContentsMargins(24, 44, 24, 28);
+    navigationLayout->setSpacing(0);
     navigationLayout->addWidget(productMark);
+    navigationLayout->addSpacing(26);
     navigationLayout->addWidget(m_sessionBadge);
-    navigationLayout->addSpacing(12);
-    navigationLayout->addWidget(m_navList, 1);
+    navigationLayout->addSpacing(36);
+
+    auto *separator = new QFrame(navigationRail);
+    separator->setObjectName(QStringLiteral("navSeparator"));
+    separator->setFixedHeight(1);
+    navigationLayout->addWidget(separator);
+
+    navigationLayout->addSpacing(34);
+    m_navList->setSpacing(10); // 导航项之间大幅留空，成独立可点行
+    // 导航组自然高度（4 项紧凑成组），下方弹性空间把退出按钮锚在 rail 底部
+    navigationLayout->addWidget(m_navList);
+    navigationLayout->addStretch(1);
     navigationLayout->addWidget(logoutButton);
 
     m_overviewPage = new OverviewPage(repository, m_businessArea);

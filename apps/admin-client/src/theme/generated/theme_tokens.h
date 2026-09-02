@@ -28,4 +28,9 @@ inline const QColor kNightCharging{"#4DD7FF"};
 inline const QColor kNightFault{"#FF806D"};
 inline const QColor kNightOffline{"#A6B0B4"};
 inline const QColor kNightUnknown{"#93A19B"};
+inline constexpr int kMotionMicroMs{150};
+inline constexpr int kMotionPanelMs{200};
+inline constexpr int kMotionChargingPulseMs{2600};
+inline constexpr int kMotionFaultPulseMs{2800};
+inline constexpr int kMotionAuroraMs{11000};
 } // namespace ev::theme

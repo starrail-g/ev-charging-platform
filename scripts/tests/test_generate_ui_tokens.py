@@ -42,6 +42,14 @@ class TokenGenerationTest(unittest.TestCase):
         ignored = Path(".gitignore").read_text(encoding="utf-8")
         self.assertIn("config/local.env", ignored)
 
+    def test_motion_duration_reaches_cpp_header(self):
+        # motion.aurora 必须进 C++ 头（Qt 端 AuroraBackdrop 读 kMotionAuroraMs，
+        # 禁止 C++ 手写与 design-tokens.json 重复的时长字面量）
+        header = Path("apps/admin-client/src/theme/generated/theme_tokens.h").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("kMotionAuroraMs{11000}", header)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -22,6 +22,7 @@ SOURCES += \
     data/mockdataset.cpp \
     models/adminmodels.cpp \
     theme/theme.cpp \
+    widgets/aurorabackdrop.cpp \
     widgets/metriccard.cpp \
     widgets/statestack.cpp \
     widgets/stationtopologywidget.cpp \
@@ -41,6 +42,7 @@ HEADERS += \
     models/adminmodels.h \
     theme/theme.h \
     theme/generated/theme_tokens.h \
+    widgets/aurorabackdrop.h \
     widgets/metriccard.h \
     widgets/statestack.h \
     widgets/stationtopologywidget.h \

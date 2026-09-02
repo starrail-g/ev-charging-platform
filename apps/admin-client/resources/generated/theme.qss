@@ -1,13 +1,17 @@
-QWidget { color: #18201D; background-color: #EDF0EE; }
+QWidget { color: #18201D; }
+/* 背景链透明化：底色与呼吸光晕由 AuroraBackdrop（主窗口底层）统一绘制，
+   页面根/裸容器透明以透出氛围光；面板(surface)仍不透明，文字对比度不受影响 */
 QFrame[panel="true"] { background-color: #F7F8F7; border: 1px solid #CBD2CE; border-radius: 8px; }
-QWidget#businessArea, QWidget#loginPage { background-color: #EDF0EE; }
+QWidget#businessArea, QWidget#loginPage { background: transparent; }
+QStackedWidget#mainStack, QStackedWidget#pageStack { background: transparent; }
 QFrame#navigationRail { background-color: #F7F8F7; border: none; border-right: 1px solid #CBD2CE; }
+QFrame#navSeparator { background-color: #CBD2CE; border: none; }
 QLabel#productMark, QLabel#loginProductMark { color: #18201D; font-size: 18px; font-weight: 700; }
 QLabel#sessionBadge { color: #2A7442; font-size: 12px; }
 QLabel#pageTitle, QLabel#loginTitle { color: #18201D; font-size: 22px; font-weight: 700; }
 QLabel#pageContext, QLabel#loginDescription { color: #5F7068; font-size: 12px; }
 QListWidget#navList { background: transparent; border: none; outline: none; padding: 0; }
-QListWidget#navList::item { color: #5F7068; min-height: 40px; padding-left: 12px; border-radius: 6px; }
+QListWidget#navList::item { color: #5F7068; min-height: 54px; padding-left: 16px; margin: 0 2px; border-radius: 6px; }
 QListWidget#navList::item:hover { background-color: #CBD2CE; color: #18201D; }
 QListWidget#navList::item:selected { background-color: #2A7442; color: #F7F8F7; }
 QFrame#loginPanel { background-color: #F7F8F7; border: 1px solid #CBD2CE; border-radius: 8px; }

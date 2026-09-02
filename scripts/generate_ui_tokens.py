@@ -95,6 +95,11 @@ def render_outputs(tokens: dict, root: Path) -> dict[Path, str]:
         for state, color in theme["states"].items():
             symbol = f"k{theme_name.title()}{state.title()}"
             header_lines.append(f'inline const QColor {symbol}{{"{color}"}};')
+    # motion 组：毫秒时长常量（Qt 端动画周期与令牌同源，如 kMotionAuroraMs{11000}；
+    # 禁止在 C++ 里手写与 design-tokens.json 重复的时长字面量）
+    for key, value in tokens["motion"].items():
+        symbol = f"kMotion{key[0].upper()}{key[1:]}Ms"
+        header_lines.append(f"inline constexpr int {symbol}{{{value}}};")
     header_lines.append("} // namespace ev::theme")
     javascript = (
         "export const themeTokens = "

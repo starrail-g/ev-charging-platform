@@ -17,6 +17,7 @@ SOURCES += \
     ../../src/data/mockadminrepository.cpp \
     ../../src/data/mockdataset.cpp \
     ../../src/theme/theme.cpp \
+    ../../src/widgets/aurorabackdrop.cpp \
     ../../src/widgets/metriccard.cpp \
     ../../src/widgets/statestack.cpp \
     ../../src/widgets/stationtopologywidget.cpp \
@@ -35,6 +36,7 @@ HEADERS += \
     ../../src/data/mockadminrepository.h \
     ../../src/data/mockdataset.h \
     ../../src/theme/theme.h \
+    ../../src/widgets/aurorabackdrop.h \
     ../../src/widgets/metriccard.h \
     ../../src/widgets/statestack.h \
     ../../src/widgets/stationtopologywidget.h \
