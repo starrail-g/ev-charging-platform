@@ -19,11 +19,11 @@
       }
     },
     "night": {
-      "background": "#0A1110",
-      "surface": "#101D19",
+      "background": "#080D10",
+      "surface": "#0F1E26",
       "text": "#E9F5ED",
       "mutedText": "#A6B0B4",
-      "decorativeStructure": "#294239",
+      "decorativeStructure": "#2A4554",
       "topologyLine": "#6B9184",
       "focusBlue": "#4DD7FF",
       "deepBlue": "#0A3552",

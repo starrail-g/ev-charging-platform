@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>充电网络实时态势（演示）</title>
+  <link rel="stylesheet" href="css/generated/theme.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body class="app-backdrop">
+  <noscript>
+    <p class="noscript-notice">本页面需要启用 JavaScript 才能展示充电网络实时态势。请启用脚本后刷新。</p>
+  </noscript>
+
+  <header class="command-header">
+    <h1 class="command-title">充电网络实时态势</h1>
+    <div class="command-meta">
+      <span id="sourceBadge" class="command-chip" title="数据口径与 Qt 管理端 Mock 同源">演示数据</span>
+      <span id="mapModeBadge" class="command-chip">地图模式未知</span>
+      <span id="freshness" class="command-freshness"></span>
+    </div>
+  </header>
+
+  <main class="dashboard-shell">
+    <section class="panorama" aria-label="充电网络实时态势主区">
+      <!-- 左栏：网络健康与关键指标（1920 全景态竖排；1366 起自动转顶部横向指标条） -->
+      <section id="overview-metrics" class="metric-strip" aria-label="网络健康与关键指标"></section>
+
+      <!-- 中央：实时态势地图（最高视觉层级；wrapper 承载聚焦详情卡的定位） -->
+      <div class="map-wrap">
+        <div id="map-surface" class="map-panel" role="application"
+             aria-label="站点分布地图（可点击站点查看告警，Esc 退出聚焦）"></div>
+        <aside id="focus-detail" class="focus-detail" hidden aria-label="异常聚焦详情"></aside>
+      </div>
+
+      <!-- 右栏：实时关注 + 站点利用率排行 + 预测预留 -->
+      <aside class="right-rail" aria-label="实时关注与经营摘要">
+        <div class="rail-block rail-alerts">
+          <h2 class="rail-title">实时关注<span id="attentionCount" class="count"></span></h2>
+          <div id="alertList" class="alert-list"></div>
+        </div>
+        <div class="rail-block">
+          <h2 class="rail-title">站点利用率<span class="count">平均 <span id="avgUtilization"></span></span></h2>
+          <ol id="utilizationList" class="util-list"></ol>
+        </div>
+        <div class="rail-block" aria-label="智能预测与调度">
+          <h2 class="rail-title">智能预测与调度 <span class="model-chip">模型待接入</span></h2>
+          <p class="model-note">预测模型尚未接入演示环境，此处不展示虚构的预测结果；模型接入后将呈现真实预测与调度建议。</p>
+        </div>
+      </aside>
+    </section>
+
+    <!-- 底部：经营与运行板块（全景态三图并列；紧凑态为页签，默认 24h 负荷） -->
+    <section id="operations-strip" class="operations-strip" aria-label="运行与经营效率">
+      <nav class="ops-tabs" aria-label="趋势图页签">
+        <button type="button" class="ops-tab is-active" data-chart-tab="chart-load" aria-pressed="true">24 小时充电负荷</button>
+        <button type="button" class="ops-tab" data-chart-tab="chart-states" aria-pressed="false">桩状态分布</button>
+        <button type="button" class="ops-tab" data-chart-tab="chart-revenue" aria-pressed="false">近 7 日营收</button>
+      </nav>
+      <div class="panel chart-panel" data-chart-panel="chart-load">
+        <h2 class="panel-title">24 小时充电负荷 <span class="demo-badge">演示</span></h2>
+        <div id="chart-load" class="chart-box" role="img" aria-label="24 小时充电负荷折线图（演示数据）"></div>
+      </div>
+      <div class="panel chart-panel" data-chart-panel="chart-states">
+        <h2 class="panel-title">桩状态分布 <span class="demo-badge">演示</span></h2>
+        <div id="chart-states" class="chart-box" role="img" aria-label="充电桩五态分布环图（演示数据）"></div>
+      </div>
+      <div class="panel chart-panel" data-chart-panel="chart-revenue">
+        <h2 class="panel-title">近 7 日营收趋势 <span class="demo-badge">演示</span></h2>
+        <div id="chart-revenue" class="chart-box" role="img" aria-label="近 7 日营收趋势图（演示数据）"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="globalState" role="status" aria-live="polite" class="sr-only"></div>
+
+  <script src="vendor/echarts.min.js"></script>
+  <script src="runtime-config.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
