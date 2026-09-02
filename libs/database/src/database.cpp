@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QRegularExpression>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -86,9 +87,10 @@ QStringList splitSchemaStatements(const QString &script)
 
 } // namespace
 
-Database::Database(QString databasePath, QString schemaPath)
+Database::Database(QString databasePath, QString schemaPath, QString seedPath)
     : connectionName_(QStringLiteral("ev_database_%1").arg(nextConnectionId.fetch_add(1))),
-      databasePath_(std::move(databasePath)), schemaPath_(std::move(schemaPath))
+      databasePath_(std::move(databasePath)), schemaPath_(std::move(schemaPath)),
+      seedPath_(std::move(seedPath))
 {
 }
 
@@ -156,7 +158,33 @@ bool Database::initializeSchema(QString *error)
         setError(error, QStringLiteral("unsupported or missing schema version (expected 0.2)"));
         return false;
     }
+    if (!ensureRequestTable(error)) return false;
+    if (!hasSchemaMeta && !seedPath_.isEmpty()) {
+        QFile seedFile(seedPath_);
+        if (!seedFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            setError(error, QStringLiteral("open seed file failed: %1").arg(seedFile.errorString()));
+            return false;
+        }
+        if (!executeSchemaScript(QString::fromUtf8(seedFile.readAll()), error)) return false;
+    }
     return true;
+}
+
+bool Database::ensureRequestTable(QString *error)
+{
+    QSqlQuery query(connection_);
+    if (query.exec(QStringLiteral(
+            "CREATE TABLE IF NOT EXISTS request_records ("
+            "request_id TEXT PRIMARY KEY CHECK(length(request_id) BETWEEN 1 AND 64),"
+            "operation TEXT NOT NULL CHECK(length(operation) BETWEEN 1 AND 64),"
+            "fingerprint TEXT NOT NULL CHECK(length(fingerprint) > 0),"
+            "response_json TEXT NOT NULL CHECK(length(response_json) > 0),"
+            "created_at TEXT NOT NULL)"))) {
+        return query.exec(QStringLiteral(
+            "CREATE INDEX IF NOT EXISTS ix_request_records_created ON request_records(created_at)"));
+    }
+    setError(error, QStringLiteral("initialize request records failed: %1").arg(queryError(query)));
+    return false;
 }
 
 bool Database::executeSchemaScript(const QString &script, QString *error)
@@ -323,6 +351,67 @@ bool Database::commit(QString *error, ErrorKind *kind)
     setFailure(error, kind, ErrorKind::Database,
                QStringLiteral("commit transaction failed: %1").arg(queryError(query)));
     rollback();
+    return false;
+}
+
+bool Database::loadRequest(const QString &requestId, const QString &operation,
+                           const QString &fingerprint, QJsonObject *response,
+                           bool *found, QString *error, ErrorKind *kind)
+{
+    if (found) *found = false;
+    if (requestId.isEmpty()) return true;
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "SELECT operation, fingerprint, response_json FROM request_records "
+        "WHERE request_id = :request_id"));
+    query.bindValue(QStringLiteral(":request_id"), requestId);
+    if (!query.exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("load request record failed: %1").arg(queryError(query)));
+        return false;
+    }
+    if (!query.next()) return true;
+    if (found) *found = true;
+    if (query.value(0).toString() != operation || query.value(1).toString() != fingerprint) {
+        setFailure(error, kind, ErrorKind::Conflict,
+                   QStringLiteral("request id was already used for a different operation"));
+        return false;
+    }
+    if (!response) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("request response output is null"));
+        return false;
+    }
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(
+        query.value(2).toString().toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("request record contains invalid response JSON"));
+        return false;
+    }
+    *response = document.object();
+    return true;
+}
+
+bool Database::saveRequest(const QString &requestId, const QString &operation,
+                           const QString &fingerprint, const QJsonObject &response,
+                           QString *error, ErrorKind *kind)
+{
+    if (requestId.isEmpty()) return true;
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "INSERT INTO request_records(request_id, operation, fingerprint, response_json, created_at) "
+        "VALUES (:request_id, :operation, :fingerprint, :response_json, :created_at)"));
+    query.bindValue(QStringLiteral(":request_id"), requestId);
+    query.bindValue(QStringLiteral(":operation"), operation);
+    query.bindValue(QStringLiteral(":fingerprint"), fingerprint);
+    query.bindValue(QStringLiteral(":response_json"),
+                    QString::fromUtf8(QJsonDocument(response).toJson(QJsonDocument::Compact)));
+    query.bindValue(QStringLiteral(":created_at"), utcNow());
+    if (query.exec()) return true;
+    setFailure(error, kind, ErrorKind::Database,
+               QStringLiteral("save request record failed: %1").arg(queryError(query)));
     return false;
 }
 
@@ -505,7 +594,53 @@ bool Database::getActiveOrder(qint64 userId, QJsonObject *order, bool *found,
     return readOrder(query, order, error);
 }
 
-bool Database::createReservation(qint64 userId, qint64 pileId, QJsonObject *order,
+bool Database::listOrderHistory(qint64 userId, QJsonArray *orders, QString *error,
+                                ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!orders || userId <= 0) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("user_id must be positive"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    QSqlQuery userQuery(connection_);
+    userQuery.prepare(QStringLiteral("SELECT 1 FROM users WHERE id = :id"));
+    userQuery.bindValue(QStringLiteral(":id"), userId);
+    if (!userQuery.exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("inspect user failed: %1").arg(queryError(userQuery)));
+        return false;
+    }
+    if (!userQuery.next()) {
+        setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found"));
+        return false;
+    }
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "SELECT id, order_no, user_id, pile_id, status, reserved_at, started_at, ended_at, "
+        "energy_wh, unit_price_cents_per_kwh, service_fee_cents, total_amount_cents, "
+        "settled_at, created_at, updated_at FROM charging_orders "
+        "WHERE user_id = :user_id ORDER BY created_at DESC, id DESC"));
+    query.bindValue(QStringLiteral(":user_id"), userId);
+    if (!query.exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("list order history failed: %1").arg(queryError(query)));
+        return false;
+    }
+    *orders = QJsonArray();
+    while (query.next()) {
+        QJsonObject order;
+        if (!readOrder(query, &order, error)) {
+            if (kind) *kind = ErrorKind::Database;
+            return false;
+        }
+        orders->append(order);
+    }
+    return true;
+}
+
+bool Database::createReservation(const QString &requestId, qint64 userId, qint64 pileId, QJsonObject *order,
                                  QJsonObject *pile, QString *error, ErrorKind *kind)
 {
     if (kind) *kind = ErrorKind::None;
@@ -514,7 +649,16 @@ bool Database::createReservation(qint64 userId, qint64 pileId, QJsonObject *orde
         return false;
     }
     if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    const QString fingerprint = QStringLiteral("%1:%2").arg(userId).arg(pileId);
     if (!begin(error, kind)) return false;
+    QJsonObject replay; bool found = false;
+    if (!loadRequest(requestId, QStringLiteral("reservation.create"), fingerprint,
+                     &replay, &found, error, kind)) { rollback(); return false; }
+    if (found) {
+        *order = replay.value(QStringLiteral("order")).toObject();
+        *pile = replay.value(QStringLiteral("pile")).toObject();
+        return commit(error, kind);
+    }
     QSqlQuery query(connection_);
     query.prepare(QStringLiteral("SELECT status FROM users WHERE id = :id"));
     query.bindValue(QStringLiteral(":id"), userId);
@@ -571,17 +715,37 @@ bool Database::createReservation(qint64 userId, qint64 pileId, QJsonObject *orde
         "total_charge_count, total_charge_seconds, restart_count, last_restart_at FROM charging_piles WHERE id = :id"));
     query.bindValue(QStringLiteral(":id"), pileId);
     if (!query.exec() || !query.next() || !readPile(query, pile, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read reserved pile failed")); return false; }
+    if (!saveRequest(requestId, QStringLiteral("reservation.create"), fingerprint,
+                     QJsonObject{{QStringLiteral("order"), *order},
+                                 {QStringLiteral("pile"), *pile}}, error, kind)) {
+        rollback();
+        return false;
+    }
     return commit(error, kind);
 }
 
-bool Database::confirmReservation(qint64 userId, qint64 orderId, QJsonObject *order,
+bool Database::confirmReservation(const QString &requestId, qint64 userId, qint64 orderId, QJsonObject *order,
                                   QString *error, ErrorKind *kind)
 {
     if (kind) *kind = ErrorKind::None;
     if (!order || userId <= 0 || orderId <= 0) { setFailure(error, kind, ErrorKind::InvalidArgument, QStringLiteral("user_id and order_id must be positive")); return false; }
     if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    const QString fingerprint = QStringLiteral("%1:%2").arg(userId).arg(orderId);
     if (!begin(error, kind)) return false;
+    QJsonObject replay; bool found = false;
+    if (!loadRequest(requestId, QStringLiteral("reservation.confirm"), fingerprint,
+                     &replay, &found, error, kind)) { rollback(); return false; }
+    if (found) { *order = replay.value(QStringLiteral("order")).toObject(); return commit(error, kind); }
     QSqlQuery query(connection_);
+    query.prepare(QStringLiteral("SELECT status FROM users WHERE id = :user_id"));
+    query.bindValue(QStringLiteral(":user_id"), userId);
+    if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, queryError(query)); return false; }
+    if (!query.next()) { rollback(); setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found")); return false; }
+    if (query.value(0).toString() != QStringLiteral("active")) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("user is frozen"));
+        return false;
+    }
     query.prepare(QStringLiteral("UPDATE charging_orders SET status = 'reserved', updated_at = :updated_at WHERE id = :id AND user_id = :user_id AND status = 'pending_reservation'"));
     query.bindValue(QStringLiteral(":updated_at"), utcNow());
     query.bindValue(QStringLiteral(":id"), orderId);
@@ -591,16 +755,30 @@ bool Database::confirmReservation(qint64 userId, qint64 orderId, QJsonObject *or
     query.prepare(QStringLiteral("SELECT id, order_no, user_id, pile_id, status, reserved_at, started_at, ended_at, energy_wh, unit_price_cents_per_kwh, service_fee_cents, total_amount_cents, settled_at, created_at, updated_at FROM charging_orders WHERE id = :id"));
     query.bindValue(QStringLiteral(":id"), orderId);
     if (!query.exec() || !query.next() || !readOrder(query, order, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read confirmed reservation failed")); return false; }
+    if (!saveRequest(requestId, QStringLiteral("reservation.confirm"), fingerprint,
+                     QJsonObject{{QStringLiteral("order"), *order}}, error, kind)) {
+        rollback();
+        return false;
+    }
     return commit(error, kind);
 }
 
-bool Database::cancelReservation(qint64 userId, qint64 orderId, QJsonObject *order,
+bool Database::cancelReservation(const QString &requestId, qint64 userId, qint64 orderId, QJsonObject *order,
                                  QJsonObject *pile, QString *error, ErrorKind *kind)
 {
     if (kind) *kind = ErrorKind::None;
     if (!order || !pile || userId <= 0 || orderId <= 0) { setFailure(error, kind, ErrorKind::InvalidArgument, QStringLiteral("user_id and order_id must be positive")); return false; }
     if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    const QString fingerprint = QStringLiteral("%1:%2").arg(userId).arg(orderId);
     if (!begin(error, kind)) return false;
+    QJsonObject replay; bool found = false;
+    if (!loadRequest(requestId, QStringLiteral("reservation.cancel"), fingerprint,
+                     &replay, &found, error, kind)) { rollback(); return false; }
+    if (found) {
+        *order = replay.value(QStringLiteral("order")).toObject();
+        *pile = replay.value(QStringLiteral("pile")).toObject();
+        return commit(error, kind);
+    }
     QSqlQuery query(connection_);
     query.prepare(QStringLiteral("SELECT pile_id, status FROM charging_orders WHERE id = :id AND user_id = :user_id"));
     query.bindValue(QStringLiteral(":id"), orderId); query.bindValue(QStringLiteral(":user_id"), userId);
@@ -622,21 +800,43 @@ bool Database::cancelReservation(qint64 userId, qint64 orderId, QJsonObject *ord
     query.prepare(QStringLiteral("SELECT id, station_id, pile_code, pile_type, power_kw, unit_price_cents_per_kwh, status, total_charge_count, total_charge_seconds, restart_count, last_restart_at FROM charging_piles WHERE id = :id"));
     query.bindValue(QStringLiteral(":id"), pileId);
     if (!query.exec() || !query.next() || !readPile(query, pile, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read released pile failed")); return false; }
+    if (!saveRequest(requestId, QStringLiteral("reservation.cancel"), fingerprint,
+                     QJsonObject{{QStringLiteral("order"), *order},
+                                 {QStringLiteral("pile"), *pile}}, error, kind)) {
+        rollback();
+        return false;
+    }
     return commit(error, kind);
 }
 
-bool Database::startCharging(qint64 userId, qint64 orderId, qint64 pileId,
+bool Database::startCharging(const QString &requestId, qint64 userId, qint64 orderId, qint64 pileId,
                              QJsonObject *order, QJsonObject *pile,
                              QString *error, ErrorKind *kind)
 {
     if (kind) *kind = ErrorKind::None;
     if (!order || !pile || userId <= 0 || (orderId <= 0 && pileId <= 0)) { setFailure(error, kind, ErrorKind::InvalidArgument, QStringLiteral("user_id and an order_id or pile_id are required")); return false; }
     if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    const QString fingerprint = QStringLiteral("%1:%2:%3").arg(userId).arg(orderId).arg(pileId);
     if (!begin(error, kind)) return false;
+    QJsonObject replay; bool found = false;
+    if (!loadRequest(requestId, QStringLiteral("charging.start"), fingerprint,
+                     &replay, &found, error, kind)) { rollback(); return false; }
+    if (found) {
+        *order = replay.value(QStringLiteral("order")).toObject();
+        *pile = replay.value(QStringLiteral("pile")).toObject();
+        return commit(error, kind);
+    }
     QSqlQuery query(connection_);
     const QString timestamp = utcNow();
     qint64 selectedPile = pileId;
     qint64 selectedOrder = orderId;
+    query.prepare(QStringLiteral("SELECT status FROM users WHERE id = :id"));
+    query.bindValue(QStringLiteral(":id"), userId);
+    if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, queryError(query)); return false; }
+    if (!query.next()) { rollback(); setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found")); return false; }
+    if (query.value(0).toString() != QStringLiteral("active")) {
+        rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("user is frozen")); return false;
+    }
     if (orderId > 0) {
         query.prepare(QStringLiteral("SELECT pile_id, status FROM charging_orders WHERE id = :id AND user_id = :user_id"));
         query.bindValue(QStringLiteral(":id"), orderId); query.bindValue(QStringLiteral(":user_id"), userId);
@@ -645,9 +845,6 @@ bool Database::startCharging(qint64 userId, qint64 orderId, qint64 pileId,
         selectedPile = query.value(0).toLongLong();
         if (query.value(1).toString() != QStringLiteral("reserved")) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("order is not reserved")); return false; }
     } else {
-        query.prepare(QStringLiteral("SELECT status FROM users WHERE id = :id")); query.bindValue(QStringLiteral(":id"), userId);
-        if (!query.exec() || !query.next()) { rollback(); setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found")); return false; }
-        if (query.value(0).toString() != QStringLiteral("active")) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("user is frozen")); return false; }
         query.prepare(QStringLiteral("SELECT 1 FROM charging_orders WHERE user_id = :id AND status IN ('pending_reservation','reserved','charging','pending_settlement') LIMIT 1")); query.bindValue(QStringLiteral(":id"), userId);
         if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, queryError(query)); return false; }
         if (query.next()) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("user already has an active order")); return false; }
@@ -661,9 +858,18 @@ bool Database::startCharging(qint64 userId, qint64 orderId, qint64 pileId,
         if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("start charging failed: %1").arg(queryError(query))); return false; }
         selectedOrder = query.lastInsertId().toLongLong();
     }
-    query.prepare(QStringLiteral("UPDATE charging_piles SET status = 'charging', updated_at = :updated_at WHERE id = :id AND status = 'reserved'"));
+    const QString expectedPileStatus = orderId > 0 ? QStringLiteral("reserved") : QStringLiteral("idle");
+    query.prepare(QStringLiteral("UPDATE charging_piles SET status = 'charging', updated_at = :updated_at WHERE id = :id AND status = :expected_status"));
     query.bindValue(QStringLiteral(":updated_at"), timestamp); query.bindValue(QStringLiteral(":id"), selectedPile);
-    if (!query.exec() || query.numRowsAffected() != 1) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("pile is not reserved")); return false; }
+    query.bindValue(QStringLiteral(":expected_status"), expectedPileStatus);
+    if (!query.exec() || query.numRowsAffected() != 1) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Conflict,
+                   expectedPileStatus == QStringLiteral("idle")
+                       ? QStringLiteral("pile is not idle")
+                       : QStringLiteral("pile is not reserved"));
+        return false;
+    }
     if (orderId > 0) {
         query.prepare(QStringLiteral("UPDATE charging_orders SET status = 'charging', started_at = :started_at, updated_at = :updated_at WHERE id = :id AND status = 'reserved'"));
         query.bindValue(QStringLiteral(":started_at"), timestamp); query.bindValue(QStringLiteral(":updated_at"), timestamp); query.bindValue(QStringLiteral(":id"), selectedOrder);
@@ -673,16 +879,27 @@ bool Database::startCharging(qint64 userId, qint64 orderId, qint64 pileId,
     if (!query.exec() || !query.next() || !readOrder(query, order, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read started order failed")); return false; }
     query.prepare(QStringLiteral("SELECT id, station_id, pile_code, pile_type, power_kw, unit_price_cents_per_kwh, status, total_charge_count, total_charge_seconds, restart_count, last_restart_at FROM charging_piles WHERE id = :id")); query.bindValue(QStringLiteral(":id"), selectedPile);
     if (!query.exec() || !query.next() || !readPile(query, pile, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read charging pile failed")); return false; }
+    if (!saveRequest(requestId, QStringLiteral("charging.start"), fingerprint,
+                     QJsonObject{{QStringLiteral("order"), *order},
+                                 {QStringLiteral("pile"), *pile}}, error, kind)) {
+        rollback();
+        return false;
+    }
     return commit(error, kind);
 }
 
-bool Database::stopCharging(qint64 userId, qint64 orderId, const QString &endedAt,
+bool Database::stopCharging(const QString &requestId, qint64 userId, qint64 orderId, const QString &endedAt,
                             QJsonObject *order, QString *error, ErrorKind *kind)
 {
     if (kind) *kind = ErrorKind::None;
     if (!order || userId <= 0 || orderId <= 0) { setFailure(error, kind, ErrorKind::InvalidArgument, QStringLiteral("user_id and order_id must be positive")); return false; }
     if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    const QString fingerprint = QStringLiteral("%1:%2:%3").arg(userId).arg(orderId).arg(endedAt);
     if (!begin(error, kind)) return false;
+    QJsonObject replay; bool found = false;
+    if (!loadRequest(requestId, QStringLiteral("charging.stop"), fingerprint,
+                     &replay, &found, error, kind)) { rollback(); return false; }
+    if (found) { *order = replay.value(QStringLiteral("order")).toObject(); return commit(error, kind); }
     QSqlQuery query(connection_);
     query.prepare(QStringLiteral("SELECT o.pile_id, o.started_at, o.unit_price_cents_per_kwh, p.power_kw FROM charging_orders AS o JOIN charging_piles AS p ON p.id = o.pile_id WHERE o.id = :order_id AND o.user_id = :owner_id AND o.status = 'charging'"));
     query.bindValue(QStringLiteral(":order_id"), orderId);
@@ -713,16 +930,31 @@ bool Database::stopCharging(qint64 userId, qint64 orderId, const QString &endedA
     readQuery.prepare(QStringLiteral("SELECT id, order_no, user_id, pile_id, status, reserved_at, started_at, ended_at, energy_wh, unit_price_cents_per_kwh, service_fee_cents, total_amount_cents, settled_at, created_at, updated_at FROM charging_orders WHERE id=?")); readQuery.bindValue(0, orderId);
     if (!readQuery.exec() || !readQuery.next() || !readOrder(readQuery, order, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read stopped order failed: %1").arg(queryError(readQuery))); return false; }
     Q_UNUSED(pileId);
+    if (!saveRequest(requestId, QStringLiteral("charging.stop"), fingerprint,
+                     QJsonObject{{QStringLiteral("order"), *order},
+                                 {QStringLiteral("estimated_amount_cents"), total}}, error, kind)) {
+        rollback();
+        return false;
+    }
     return commit(error, kind);
 }
 
-bool Database::settleCharging(qint64 userId, qint64 orderId, QJsonObject *order,
+bool Database::settleCharging(const QString &requestId, qint64 userId, qint64 orderId, QJsonObject *order,
                               qint64 *balanceCents, QString *error, ErrorKind *kind)
 {
     if (kind) *kind = ErrorKind::None;
     if (!order || !balanceCents || userId <= 0 || orderId <= 0) { setFailure(error, kind, ErrorKind::InvalidArgument, QStringLiteral("user_id and order_id must be positive")); return false; }
     if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    const QString fingerprint = QStringLiteral("%1:%2").arg(userId).arg(orderId);
     if (!begin(error, kind)) return false;
+    QJsonObject replay; bool found = false;
+    if (!loadRequest(requestId, QStringLiteral("charging.settle"), fingerprint,
+                     &replay, &found, error, kind)) { rollback(); return false; }
+    if (found) {
+        *order = replay.value(QStringLiteral("order")).toObject();
+        *balanceCents = replay.value(QStringLiteral("balance_cents")).toVariant().toLongLong();
+        return commit(error, kind);
+    }
     QSqlQuery query(connection_);
     query.prepare(QStringLiteral("SELECT pile_id, total_amount_cents, started_at, ended_at, status FROM charging_orders WHERE id=:id AND user_id=:user_id")); query.bindValue(QStringLiteral(":id"), orderId); query.bindValue(QStringLiteral(":user_id"), userId);
     if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, queryError(query)); return false; }
@@ -751,6 +983,12 @@ bool Database::settleCharging(qint64 userId, qint64 orderId, QJsonObject *order,
     query.prepare(QStringLiteral("SELECT id, order_no, user_id, pile_id, status, reserved_at, started_at, ended_at, energy_wh, unit_price_cents_per_kwh, service_fee_cents, total_amount_cents, settled_at, created_at, updated_at FROM charging_orders WHERE id=:id")); query.bindValue(QStringLiteral(":id"), orderId);
     if (!query.exec() || !query.next() || !readOrder(query, order, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read settled order failed")); return false; }
     *balanceCents = after;
+    if (!saveRequest(requestId, QStringLiteral("charging.settle"), fingerprint,
+                     QJsonObject{{QStringLiteral("order"), *order},
+                                 {QStringLiteral("balance_cents"), after}}, error, kind)) {
+        rollback();
+        return false;
+    }
     return commit(error, kind);
 }
 

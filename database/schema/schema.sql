@@ -203,6 +203,16 @@ CREATE TABLE IF NOT EXISTS pile_restart_logs (
     reason TEXT
 );
 
+-- Successful state-changing requests are retained so a client can safely
+-- replay the same request ID and receive the original response.
+CREATE TABLE IF NOT EXISTS request_records (
+    request_id TEXT PRIMARY KEY CHECK (length(request_id) BETWEEN 1 AND 64),
+    operation TEXT NOT NULL CHECK (length(operation) BETWEEN 1 AND 64),
+    fingerprint TEXT NOT NULL CHECK (length(fingerprint) > 0),
+    response_json TEXT NOT NULL CHECK (length(response_json) > 0),
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS ix_piles_station_status
     ON charging_piles(station_id, status);
 CREATE INDEX IF NOT EXISTS ix_orders_user_status
@@ -217,6 +227,8 @@ CREATE INDEX IF NOT EXISTS ix_wallet_user_created
     ON wallet_transactions(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_restart_logs_pile_requested
     ON pile_restart_logs(pile_id, requested_at DESC);
+CREATE INDEX IF NOT EXISTS ix_request_records_created
+    ON request_records(created_at);
 
 -- Read models used by admin-client/dashboard. They are derived from source tables.
 CREATE VIEW IF NOT EXISTS station_pile_status AS

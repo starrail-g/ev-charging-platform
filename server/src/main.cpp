@@ -21,8 +21,10 @@ using ev::database::ErrorKind;
 class ClientConnection final : public QObject {
 public:
     explicit ClientConnection(QTcpSocket *socket, QString databasePath, QString schemaPath,
+                              QString seedPath,
                               QObject *parent = nullptr)
-        : QObject(parent), socket_(socket), database_(std::move(databasePath), std::move(schemaPath))
+        : QObject(parent), socket_(socket),
+          database_(std::move(databasePath), std::move(schemaPath), std::move(seedPath))
     {
         socket_->setParent(this);
         connect(socket_, &QTcpSocket::readyRead, this, [this] { readAvailable(); });
@@ -62,6 +64,8 @@ private:
             handlePileList(request);
         } else if (request.type == QStringLiteral("order.active.get")) {
             handleActiveOrder(request);
+        } else if (request.type == QStringLiteral("order.history.list")) {
+            handleOrderHistory(request);
         } else if (request.type == QStringLiteral("reservation.create")) {
             handleReservationCreate(request);
         } else if (request.type == QStringLiteral("reservation.confirm")) {
@@ -166,6 +170,25 @@ private:
         sendResponse(request, QStringLiteral("order.active.get.result"), QJsonObject{{QStringLiteral("order"), found ? QJsonValue(order) : QJsonValue(QJsonValue::Null)}});
     }
 
+    void handleOrderHistory(const Message &request)
+    {
+        qint64 userId = 0;
+        if (!positiveId(request.payload.value(QStringLiteral("user_id")), &userId)) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("user_id must be a positive integer"));
+            return;
+        }
+        QJsonArray orders;
+        QString error; ErrorKind kind = ErrorKind::None;
+        if (!database_.listOrderHistory(userId, &orders, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error,
+                              QStringLiteral("list order history failed"));
+            return;
+        }
+        sendResponse(request, QStringLiteral("order.history.list.result"),
+                     QJsonObject{{QStringLiteral("orders"), orders}});
+    }
+
     void handleReservationCreate(const Message &request)
     {
         qint64 userId = 0, pileId = 0;
@@ -173,7 +196,7 @@ private:
             sendError(request.id, ErrorCode::InvalidRequest, QStringLiteral("user_id and pile_id must be positive integers")); return;
         }
         QJsonObject order, pile; QString error; ErrorKind kind = ErrorKind::None;
-        if (!database_.createReservation(userId, pileId, &order, &pile, &error, &kind)) {
+        if (!database_.createReservation(request.id, userId, pileId, &order, &pile, &error, &kind)) {
             sendDatabaseError(request.id, kind, error, QStringLiteral("create reservation failed")); return;
         }
         sendResponse(request, QStringLiteral("reservation.create.result"), QJsonObject{{QStringLiteral("order"), order}, {QStringLiteral("pile"), pile}});
@@ -184,7 +207,7 @@ private:
         qint64 userId = 0, orderId = 0;
         if (!requestIds(request.payload, &userId, &orderId, QStringLiteral("order_id"))) { sendError(request.id, ErrorCode::InvalidRequest, QStringLiteral("user_id and order_id must be positive integers")); return; }
         QJsonObject order; QString error; ErrorKind kind = ErrorKind::None;
-        if (!database_.confirmReservation(userId, orderId, &order, &error, &kind)) { sendDatabaseError(request.id, kind, error, QStringLiteral("confirm reservation failed")); return; }
+        if (!database_.confirmReservation(request.id, userId, orderId, &order, &error, &kind)) { sendDatabaseError(request.id, kind, error, QStringLiteral("confirm reservation failed")); return; }
         sendResponse(request, QStringLiteral("reservation.confirm.result"), QJsonObject{{QStringLiteral("order"), order}});
     }
 
@@ -193,7 +216,7 @@ private:
         qint64 userId = 0, orderId = 0;
         if (!requestIds(request.payload, &userId, &orderId, QStringLiteral("order_id"))) { sendError(request.id, ErrorCode::InvalidRequest, QStringLiteral("user_id and order_id must be positive integers")); return; }
         QJsonObject order, pile; QString error; ErrorKind kind = ErrorKind::None;
-        if (!database_.cancelReservation(userId, orderId, &order, &pile, &error, &kind)) { sendDatabaseError(request.id, kind, error, QStringLiteral("cancel reservation failed")); return; }
+        if (!database_.cancelReservation(request.id, userId, orderId, &order, &pile, &error, &kind)) { sendDatabaseError(request.id, kind, error, QStringLiteral("cancel reservation failed")); return; }
         sendResponse(request, QStringLiteral("reservation.cancel.result"), QJsonObject{{QStringLiteral("order"), order}, {QStringLiteral("pile"), pile}});
     }
 
@@ -207,7 +230,7 @@ private:
             sendError(request.id, ErrorCode::InvalidRequest, QStringLiteral("provide exactly one positive order_id or pile_id")); return;
         }
         QJsonObject order, pile; QString error; ErrorKind kind = ErrorKind::None;
-        if (!database_.startCharging(userId, orderId, pileId, &order, &pile, &error, &kind)) { sendDatabaseError(request.id, kind, error, QStringLiteral("start charging failed")); return; }
+        if (!database_.startCharging(request.id, userId, orderId, pileId, &order, &pile, &error, &kind)) { sendDatabaseError(request.id, kind, error, QStringLiteral("start charging failed")); return; }
         sendResponse(request, QStringLiteral("charging.start.result"), QJsonObject{{QStringLiteral("order"), order}, {QStringLiteral("pile"), pile}});
     }
 
@@ -218,7 +241,7 @@ private:
         const QJsonValue endedValue = request.payload.value(QStringLiteral("ended_at"));
         if (!endedValue.isUndefined() && !endedValue.isString()) { sendError(request.id, ErrorCode::InvalidRequest, QStringLiteral("ended_at must be an ISO-8601 string")); return; }
         QJsonObject order; QString error; ErrorKind kind = ErrorKind::None;
-        if (!database_.stopCharging(userId, orderId, endedValue.toString(), &order, &error, &kind)) { sendDatabaseError(request.id, kind, error, QStringLiteral("stop charging failed")); return; }
+        if (!database_.stopCharging(request.id, userId, orderId, endedValue.toString(), &order, &error, &kind)) { sendDatabaseError(request.id, kind, error, QStringLiteral("stop charging failed")); return; }
         sendResponse(request, QStringLiteral("charging.stop.result"), QJsonObject{{QStringLiteral("order"), order}, {QStringLiteral("estimated_amount_cents"), order.value(QStringLiteral("total_amount_cents"))}});
     }
 
@@ -227,7 +250,7 @@ private:
         qint64 userId = 0, orderId = 0;
         if (!requestIds(request.payload, &userId, &orderId, QStringLiteral("order_id"))) { sendError(request.id, ErrorCode::InvalidRequest, QStringLiteral("user_id and order_id must be positive integers")); return; }
         QJsonObject order; qint64 balance = 0; QString error; ErrorKind kind = ErrorKind::None;
-        if (!database_.settleCharging(userId, orderId, &order, &balance, &error, &kind)) { sendDatabaseError(request.id, kind, error, QStringLiteral("settle charging failed")); return; }
+        if (!database_.settleCharging(request.id, userId, orderId, &order, &balance, &error, &kind)) { sendDatabaseError(request.id, kind, error, QStringLiteral("settle charging failed")); return; }
         sendResponse(request, QStringLiteral("charging.settle.result"), QJsonObject{{QStringLiteral("order"), order}, {QStringLiteral("balance_cents"), balance}});
     }
 
@@ -254,6 +277,7 @@ int main(int argc, char **argv)
     QTcpServer server;
     const QString databasePath = qEnvironmentVariable("EV_DATABASE_PATH",
                                                        QStringLiteral("var/ev-charging.db"));
+    const QString seedPath = qEnvironmentVariable("EV_DATABASE_SEED_PATH");
     QString schemaPath = qEnvironmentVariable("EV_SCHEMA_PATH");
     if (schemaPath.isEmpty()) {
         const QStringList candidates = {
@@ -294,9 +318,9 @@ int main(int argc, char **argv)
     }
     qInfo() << "ev-server listening on" << host.toString() << listenPort;
     QObject::connect(&server, &QTcpServer::newConnection, &server,
-                     [&server, databasePath, schemaPath] {
+                     [&server, databasePath, schemaPath, seedPath] {
         while (server.hasPendingConnections())
-            new ClientConnection(server.nextPendingConnection(), databasePath, schemaPath, &server);
+            new ClientConnection(server.nextPendingConnection(), databasePath, schemaPath, seedPath, &server);
     });
     return app.exec();
 }

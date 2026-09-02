@@ -185,6 +185,13 @@ class MigrationTest(unittest.TestCase):
                 ).fetchone(),
                 ("0.2",),
             )
+            self.assertEqual(
+                db.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='request_records'"
+                ).fetchone(),
+                ("request_records",),
+            )
             self.assertEqual(db.execute(
                 "SELECT COUNT(*) FROM charging_orders"
             ).fetchone(), (1,))
@@ -198,6 +205,44 @@ class MigrationTest(unittest.TestCase):
                 db.execute("PRAGMA foreign_key_check").fetchall(), []
             )
             db.execute("UPDATE charging_piles SET status='reserved' WHERE id=1")
+
+    def test_migration_copy_failure_preserves_legacy_tables(self):
+        """A failed INSERT into rebuilt tables must not drop v0.1 data."""
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "legacy.sqlite"
+            db = sqlite3.connect(database)
+            db.executescript(V01_FIXTURE)
+            # This value is legal in the v0.1 table but rejected by the v0.2
+            # CHECK constraint while the migration copies charging_piles.
+            db.execute("UPDATE charging_piles SET status='invalid' WHERE id=1")
+            db.commit()
+            db.close()
+
+            result = self.run_migration(database)
+            self.assertNotEqual(result.returncode, 0)
+
+            db = sqlite3.connect(database)
+            self.addCleanup(db.close)
+            self.assertEqual(
+                db.execute(
+                    "SELECT value FROM schema_meta WHERE key='schema_version'"
+                ).fetchone(),
+                ("0.1",),
+            )
+            self.assertEqual(
+                db.execute("SELECT status FROM charging_piles WHERE id=1").fetchone(),
+                ("invalid",),
+            )
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM charging_orders").fetchone(),
+                (1,),
+            )
+            self.assertIsNone(
+                db.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='request_records'"
+                ).fetchone()
+            )
 
     def test_migration_rejects_completed_order_without_ledger(self):
         with tempfile.TemporaryDirectory() as directory:

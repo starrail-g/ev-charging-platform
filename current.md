@@ -38,9 +38,15 @@ Current implementation state:
 -   Socket protocol v1 framing/envelope/error codes are frozen in
     `docs/architecture/protocol.md`
 -   a Qt TCP server supports `health`, `echo`, user/station/pile/order
-    queries, reservation transitions, and charging start/stop/settlement
+    queries (including order history), reservation transitions, and charging
+    start/stop/settlement
 -   the database layer initializes Schema v0.2 and provides transaction-safe
-    user login, reservation, charging, settlement, and ledger updates
+    user login, reservation, charging, settlement, ledger updates, and
+    request-ID replay records
+-   state-changing lifecycle requests are idempotent by request ID; direct
+    idle-pile start and frozen-user guards are implemented
+-   a clean database can optionally load deterministic development seed data
+    through `EV_DATABASE_SEED_PATH`
 -   administrator, recharge, profile, and management mutation handlers plus
     Qt clients are not yet implemented
 -   module APIs are not yet finalized
@@ -108,6 +114,9 @@ High priority:
 -   [ ] initialize the admin-client buildable Qt project
 -   [x] define and implement the first end-to-end vertical feature
     (`user.login` request -> SQLite -> response)
+-   [x] implement stage-I station/pile queries and user charging lifecycle
+-   [x] add request-ID idempotency, order history, clean seed startup, and
+    migration failure-path coverage
 
 After foundations are stable:
 
@@ -125,8 +134,10 @@ After foundations are stable:
 -   authentication/session behavior beyond the protocol v1 payload contract
     needs design before mutating handlers are exposed
 -   charging-order state machine and settlement consistency rules are
-    documented in the v0.2 database/protocol contracts; handlers remain
-    unimplemented
+    implemented for the stage-I user lifecycle; administrative and wallet
+    mutation handlers remain pending
+-   frozen users are rejected by lifecycle mutations, but automatic closure
+    of already-running orders on an administrator freeze is not implemented
 -   dashboard-to-backend data interface is undecided
 -   ML framework/language and model approach are undecided
 -   external Tencent Maps API integration details and development-key
@@ -182,6 +193,10 @@ These are unresolved design items, not implementation defects.
     automatic user registration, with smoke coverage and startup documentation
 -   implemented station/pile/order queries and transactional reservation to
     charging settlement flow, including insufficient-balance rollback checks
+-   fixed direct charging start, frozen-user lifecycle guards, request-ID
+    idempotency, order history, automatic development seed loading, and
+    migration request-record compatibility; expanded protocol/API docs and
+    end-to-end smoke coverage
 
 Keep this history concise. Compress or replace old entries as the
 project progresses rather than appending indefinitely.

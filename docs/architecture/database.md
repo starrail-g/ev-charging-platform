@@ -26,6 +26,7 @@ the backend traceability matrix.
 | `charging_orders` | Reservation, charging, billing and settlement lifecycle | `pending_reservation`, `reserved`, `charging`, `pending_settlement`, `completed`, `cancelled`, `exception` |
 | `wallet_transactions` | Append-only wallet ledger | Positive recharge/refund, negative charge; one charge entry per order |
 | `pile_restart_logs` | Auditable remote restart attempts | Result is `succeeded`, `rejected` or `failed` |
+| `request_records` | Idempotency records for state-changing requests | Request ID is unique; stores operation, parameter fingerprint and original response |
 
 `station_pile_status` and `revenue_daily` are read-only views for management
 and dashboard queries. They derive values from source tables and must not be
@@ -146,7 +147,7 @@ audit event.
 these CHECK constraints in place, an existing v0.1 database must be backed up
 and upgraded with `scripts/migrate_db.py` while the server is stopped. The
 migration runner owns the transaction, stops on the first SQLite error, and
-rolls back before returning non-zero. The migration rebuilds the affected tables, preserves valid rows,
+rolls back before returning non-zero. The migration rebuilds the affected tables, creates the v0.2 `request_records` table, and preserves valid rows,
 recreates indexes/views, changes revenue grouping to `settled_at`, and updates
 `schema_meta`. Invalid legacy completed/charge rows cause the transaction to
 roll back instead of being silently accepted. Run `PRAGMA foreign_key_check`

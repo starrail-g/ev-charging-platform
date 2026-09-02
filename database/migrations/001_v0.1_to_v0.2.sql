@@ -72,6 +72,17 @@ CREATE TABLE wallet_transactions_v02 (
     CHECK (transaction_type <> 'charge' OR order_id IS NOT NULL)
 );
 
+-- Request replay records were introduced in v0.2. They have no legacy rows,
+-- but must be created in the same transaction so upgraded databases expose
+-- the same contract as freshly initialized databases.
+CREATE TABLE request_records (
+    request_id TEXT PRIMARY KEY CHECK (length(request_id) BETWEEN 1 AND 64),
+    operation TEXT NOT NULL CHECK (length(operation) BETWEEN 1 AND 64),
+    fingerprint TEXT NOT NULL CHECK (length(fingerprint) > 0),
+    response_json TEXT NOT NULL CHECK (length(response_json) > 0),
+    created_at TEXT NOT NULL
+);
+
 INSERT INTO charging_piles_v02 SELECT * FROM charging_piles;
 INSERT INTO charging_orders_v02 SELECT * FROM charging_orders;
 INSERT INTO wallet_transactions_v02 SELECT * FROM wallet_transactions;
@@ -184,6 +195,8 @@ CREATE INDEX ix_orders_ended_at ON charging_orders(ended_at);
 CREATE INDEX ix_orders_settled_at ON charging_orders(settled_at);
 CREATE INDEX ix_wallet_user_created
     ON wallet_transactions(user_id, created_at DESC);
+CREATE INDEX ix_request_records_created
+    ON request_records(created_at);
 
 CREATE VIEW station_pile_status AS
 SELECT s.id AS station_id,
