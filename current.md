@@ -69,3 +69,9 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 - 新增 `docs/role-a-delivery-plan.md`，记录同学 A 阶段 I/II 任务、依赖、验收标准和交付清单。
 - `A-S1-01`、`A-S1-02` 已完成；协议 v1 适配器已有实现，真实业务 Socket/SQLite 联调和端到端验证仍待 B 服务端业务处理器稳定后推进。
 - 后续 A 任务包括联调测试、腾讯地图导航优化、智能分析结果展示和最终 qmake6 交付；不得将 Mock 或适配器构建通过误记为真实闭环完成。
+## Main 合入后的 C 端状态
+
+- `main` 已包含 C 管理端基础工程：qmake 工程、五页导航、`AdminRepository`/`MockAdminRepository`、登录 TDD，以及概览页加载/空/错误/正常四态。
+- C 的真实管理业务接口、桩/站点/用户资源页面、ECharts 大屏数据链路和跨模块联调仍未完成；这些状态不能提前标记为完成。
+- C 的字段和接口必须继续对齐 B 的协议 v1、SQLite schema v0.2 和需求矩阵；不在 UI 文档中重新定义协议或数据库规则。
+- 阶段 I 仍以 2026-09-10 24:00 为截止；C 的接口对齐、qmake6 构建和联调证据按 `main` 当前计划推进。

@@ -1,7 +1,33 @@
-# API Reference
+# API 文档 / API Reference
+
+本目录记录跨模块接口契约。管理端（角色 C）依赖的服务端接口清单与冻结状态如下。
 
 The Socket API uses the protocol defined in
 [`docs/architecture/protocol.md`](../architecture/protocol.md). This directory
 will contain endpoint-level examples once the database-backed operation
 handlers are implemented. The current runnable diagnostic operations are
 `health` and `echo`.
+
+## C 依赖的管理接口（第一阶段）
+
+| 接口 | 用途 | 状态 | 依赖提供方 | 备注 |
+|---|---|---|---|---|
+| 管理员登录 | 认证 | 草案待交付 | B | 9/7 18:00 闸门 |
+| 概览统计 | 营收/桩状态/利用率摘要 | 草案待交付 | B | 字段口径未确认 |
+| 桩状态列表 | 桩列表与状态 | 草案待交付 | B | 状态枚举未确认 |
+| 站点查询 | 站点管理 | 第二阶段 | B | — |
+| 用户查询/冻结/解冻 | 用户管理 | 第二阶段 | B | — |
+
+## 冻结状态与风险
+
+- B 必须在 **9/7 18:00** 前冻结并提供可运行的登录、概览、桩状态三接口，以及字段、错误码和演示数据。
+- 未确认项（字段名、状态枚举、金额单位、时间格式、错误码）在确认前写入本节风险表：
+
+| 未确认项 | 风险 | 截止时间 |
+|---|---|---|
+| （待 B 草案后填写） | | 9/7 18:00 |
+
+## 降级规则
+
+- 闸门通过：9/8 起真实联调，保留 Mock 回退。
+- 闸门未通过：向 A 报告，经 A 书面确认后采用 Mock 降级标准；**不得自行把验收标准改为 Mock**。

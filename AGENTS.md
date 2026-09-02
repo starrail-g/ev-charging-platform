@@ -170,6 +170,49 @@ Use ECharts for the required dashboard visualization.
 Do not assume a specific frontend framework until the project explicitly
 adopts one.
 
+## UI, Theme, and Visual Design
+
+Treat user experience and visual quality as first-class product concerns
+across the Qt user client, Qt admin client, Web dashboard, and analytical
+outputs. After functional correctness, security, data integrity, and
+reliability are protected, the interface should be a distinguishing
+strength of the project rather than a cosmetic afterthought.
+
+When work materially affects layout, navigation, interaction, theming,
+data visualization, or the overall visual language:
+
+-   make the design choices an explicit part of the discussion before
+    implementation; compare meaningful alternatives when the direction
+    is not obvious
+-   search the Web for relevant, current examples, mature products,
+    design-system guidance, and lessons from comparable energy,
+    mobility, operations, and data-platform projects
+-   summarize the useful references and explain which ideas are being
+    adopted or rejected; do not copy another product's identity or use
+    unlicensed assets
+-   establish a coherent visual direction for color, typography,
+    spacing, shape, iconography, motion, hierarchy, and component states
+    before polishing individual screens
+-   reuse named design tokens and shared components so light/dark themes,
+    Qt screens, dashboards, charts, and exported analytical views feel
+    intentionally related
+-   design complete interaction states, including loading, empty,
+    success, warning, error, disabled, offline, and permission-denied
+    states where applicable
+-   keep visualizations truthful and legible: choose chart forms based on
+    the analytical question, preserve scale/context, label units and time
+    ranges, and do not trade comprehension for decoration
+-   validate important interfaces at representative window sizes and
+    with realistic Chinese content and data; check contrast, keyboard
+    navigation, focus visibility, readability, and color-independent
+    status cues
+
+Aim for a visual identity that is polished, contemporary, distinctive,
+and appropriate to an EV charging platform. Novelty must serve clarity
+and the product story. Visual refinement must never conceal system state,
+misrepresent data, weaken accessibility, or compromise secure and correct
+behavior.
+
 ### Intelligent Analysis
 
 `ml` owns the intelligent analysis subsystem.
@@ -254,6 +297,37 @@ API contracts      -> docs/api/
 ```
 
 Do not create documentation merely to duplicate implementation details.
+
+## Project State Tracking
+
+Every change to project code or architecture must also maintain
+`current.md`:
+
+-   reflect the new implementation/architecture state in `current.md`
+    (status, decisions, recent history) as part of the change
+-   compress `current.md` as it grows so it keeps only currently
+    valuable information; condense or drop stale entries instead of
+    appending indefinitely
+
+## Workspace Boundary
+
+This Git repository contains only source code and formal project
+artifacts intended for GitHub. Keep `current.md` here as the tracked
+project-state document.
+
+Store local process material outside the repository, typically in
+sibling directories (e.g. `superpowers/` and `build/` next to this repo):
+
+-   brainstorming, design specs, implementation plans, and daily plans
+    belong under a sibling `superpowers` folder
+-   personal ideas and source/course documents belong directly under
+    another clearly named outer folder
+-   generated build output belongs under a sibling `build` folder
+
+Do not create `IDEA.md`, `docs/superpowers`, or physical build output
+inside this repository. Formal requirements, architecture, API, test,
+defect, and release documents remain in their normal repository
+directories because they are GitHub project artifacts.
 
 ## Build and Validation
 
