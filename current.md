@@ -1,177 +1,58 @@
 # Current Project State
 
-## Overview
+## Project and stage
 
-Project: EV Charging Platform / 电动汽车充电桩应用管理平台
+- Project: 东软电动汽车充电桩应用管理平台。
+- Current stage: 第一阶段最小闭环开发；真实截止时间为 2026-09-10 24:00。第二阶段截止 2026-09-17 24:00，个人报告截止 2026-09-18 24:00。
+- This file was updated for `A-S1-02` on 2026-09-02. The requirements source of truth is `docs/requirements/requirements-matrix.md`.
 
-The project implements the application management platform defined by
-the project requirements.
+## Architecture and boundaries
 
-Required product areas include:
+- `apps/user-client` (A): Qt user UI, session state, station/pile discovery, navigation entry, reservation–charging–billing–settlement interaction, profile and wallet. It never accesses runtime SQLite directly.
+- `apps/admin-client` and `dashboard` (C): management UI and ECharts presentation. They consume server/provided data and do not define database or Socket rules.
+- `server`, `libs/protocol`, `libs/database`, and `database` (B): Socket, authentication, business/state validation, transactions, concurrency and SQLite persistence.
+- `ml` (B/C, S2): 1/6/24-hour load and idle-pile/peak prediction, low-congestion recommendation, load warning, and a callable model-service boundary.
 
--   Qt user client
--   Linux + Qt PC management application
--   server-side communication/business processing
--   SQLite-backed persistent data
--   ECharts Web big-data dashboard
--   intelligent charging-load analysis and forecasting
+Target flow: Qt clients/dashboard → unified protocol or data interface → server → database layer → SQLite.
 
-Current stage: **stage-I backend contract and diagnostic server
-foundation**.
+## Current status
 
-No production feature should currently be treated as complete unless
-verified in the repository.
+- `A-S1-01`: **已完成**. Requirements traceability, stage boundaries, dependencies and public-task assignments are recorded in `docs/requirements/requirements-matrix.md` and the project task records.
+- `A-S1-02`: **Mock baseline implemented and prepared for upload**. The Qt Widgets client, adapter boundary, deterministic data, order flow, error paths and tests are present. Real Tencent Maps address geocoding/basic routing and replacement of the Mock adapter by B's Socket client remain S1 integration work.
+- B backend baseline is merged into `main` (`3b8cf78` via merge `3c31826`): SQLite schema v0.2, deterministic seed/migration, protocol v1 framing/envelope/error codes, and health/echo diagnostic server are available. Database-backed business handlers, runtime data-access integration, and full endpoint tests remain to be completed before end-to-end closure.
+- C admin/dashboard work and cross-module testing remain in progress; no C task is marked complete by this update.
 
-## Status
+## A-S1-02 delivered scope
 
-Completed project setup work:
+- User-window navigation with a 420×760 mobile-style layout, centralized `SessionManager`, login/logout and two-step registration validation.
+- Deterministic Mock station/pile query with loading, empty, unavailable, timeout and service-error feedback; station cards show dynamic idle/total counts and pile details show type, power, status and price.
+- Adapter-only order flow: create/reserve, start charging, stop charging, settle, cancel reservation, current-order status and newest-first completed history with completion time, station address and amount.
+- Mock/offline navigation route with explicit Mock labeling and local-only `TENCENT_MAP_KEY` configuration placeholder. No real key is stored in source, documentation or Git.
+- Profile nickname/avatar and wallet Mock operations; no UI code contains SQL or direct SQLite access.
+- Regression fix for early `orderSummary_` access; the label is constructed before login refresh can run.
 
--   project requirements have been obtained and reviewed
--   monorepo skeleton has been created
--   basic Git/GitHub collaboration guidance has been prepared
--   project-level Codex instructions are defined in `AGENTS.md`
--   persistent project state is tracked in this file
+## Validation and evidence
 
-Current implementation state:
+- User-reported Ubuntu VM evidence: CMake configure/build **PASS**, QtTest **PASS**, user-client startup **PASS**, and `git diff --check` **PASS** after the latest UI/regression changes.
+- This Windows host has no local CMake, Qt/qmake or SQLite CLI, so those VM results are recorded as supplied evidence and are not independently rerun here. The real GUI/Socket/database end-to-end path is still pending.
+- Before each commit/PR, scan tracked content for credentials and inspect `git diff --check`; only placeholders may appear in `config/example.env`.
 
--   SQLite schema v0.2, deterministic seed data, migration from v0.1, and transaction rules are
-    documented and validated with Python's SQLite driver
--   Socket protocol v1 framing/envelope/error codes are frozen in
-    `docs/architecture/protocol.md`
--   a Qt TCP server skeleton supports `health` and `echo`
--   database-backed business handlers and Qt clients are not yet implemented
--   module APIs are not yet finalized
--   qmake6 project files exist for the protocol tests and server; project-wide
-    build-system adoption is still pending
--   automated CI is not currently a project priority
+## Dependencies and TODO
 
-## Architecture
+- `A-S1-02` real integration: implement a B-compatible `IUserService` adapter using the frozen protocol, preserving the Mock/offline switch and mapping server enums/errors without changing page code.
+- `A-S1-02` navigation: add Tencent Maps geocoding and basic driving/walking route display from local configuration; retain explicit Mock/offline fallback and record failure/Key-missing evidence.
+- `B-S1-01`/`B-S1-02`: finish runtime database access, transaction-backed login/station/pile/order handlers and stable request/response samples before client replacement.
+- `C-S1-01`/`C-S1-02`/`C-S1-03`: finish admin pages, dashboard data path, clean-build and cross-module evidence. End-to-end closure requires A, B and C paths plus abnormal-case tests.
+- S2 intelligent-analysis chain: data preparation → model-service contract → predictions/recommendation/warning → B service adaptation → C display → integrated validation. It must not block the S1 basic charging loop.
 
-Current target module layout:
+## Collaboration and security rules
 
-``` text
-apps/user-client       Qt user client
-apps/admin-client      Qt PC management application
+- Work on task branches and deliver through Pull Requests; do not push directly to `main` or force-push.
+- Any code or architecture change must update this file and the relevant design/API document, keeping only current, actionable information.
+- Never commit Tencent Maps keys, passwords, tokens, private keys, runtime databases, logs or generated build output. Real map credentials stay in ignored local configuration.
 
-server                 Socket/server business layer
+## Recent history
 
-libs/common            shared C++ utilities/types
-libs/protocol          shared communication protocol
-libs/database          database access layer
-
-database               schema, migrations, seed data
-
-dashboard              ECharts Web dashboard
-
-ml                     intelligent analysis subsystem
-
-docs                    project design/documentation
-tests/integration       cross-module integration tests
-```
-
-Current target data flow for networked application features:
-
-``` text
-User/Admin Qt Client
-        |
-        | Socket
-        v
-      Server
-        |
-        v
- Database Layer
-        |
-        v
-      SQLite
-```
-
-This separation is a project architecture decision for the current
-implementation plan, not a statement that the requirements document
-fixes the exact process layout.
-
-Important architectural details are still pending design.
-
-## TODO
-
-High priority:
-
--   [x] confirm team member responsibilities and first development tasks
--   [ ] decide and document the concrete system architecture
--   [x] design initial SQLite schema
--   [x] design Socket message framing and core protocol
--   [x] initialize the server buildable project and diagnostic path
--   [ ] choose the Qt/C++ build system used across all modules
--   [ ] initialize the user-client buildable Qt project
--   [ ] initialize the admin-client buildable Qt project
--   [ ] define the first end-to-end vertical feature
-
-After foundations are stable:
-
--   [ ] implement required user-client features
--   [ ] implement required admin-management features
--   [ ] establish dashboard data path and ECharts pages
--   [ ] define intelligent-analysis data pipeline
--   [ ] implement 1h / 6h / 24h charging-load forecasting
--   [ ] implement station recommendation and load warning
--   [ ] add integration and regression tests for stable flows
-
-## Known Issues
-
--   database-backed service handlers are not implemented yet
--   authentication/session behavior beyond the protocol v1 payload contract
-    needs design before mutating handlers are exposed
--   charging-order state machine and settlement consistency rules are
-    documented in the v0.2 database/protocol contracts; handlers remain
-    unimplemented
--   dashboard-to-backend data interface is undecided
--   ML framework/language and model approach are undecided
--   external Tencent Maps API integration details and development-key
-    handling need design
--   CMake versus qmake has not been decided for the whole repository; current
-    protocol/server validation uses `qmake6`
-
-These are unresolved design items, not implementation defects.
-
-## Decisions
-
--   use a single monorepo for the complete project
--   organize source code by module/responsibility rather than by
-    contributor
--   keep Qt presentation code separate from reusable
-    protocol/database/business logic
--   use `server` as the intended central Socket/business integration
-    layer
--   keep shared communication contracts under `libs/protocol`
--   keep persistent-data access separated from UI code
--   use `current.md` as concise persistent project state for Codex
-    sessions
--   keep global Codex delegation/runtime rules in the user's global
-    Codex configuration and global `AGENTS.md`; keep this repository's
-    `AGENTS.md` project-specific
--   do not prematurely lock in details that the requirements do not
-    specify
--   同学 B 负责 `server`、`libs/protocol`、`libs/database` 和
-    `database`；其阶段计划与系统整体认知记录在
-    `docs/development-plan.md`
-
-## Recent History
-
--   reviewed the project requirements and identified the main product
-    modules
--   created the initial monorepo directory skeleton
--   prepared a beginner-friendly Git/GitHub collaboration guide
--   established the project-specific `AGENTS.md`
--   initialized `current.md`
--   reviewed the original project brief and documented the team-B
-    development plan and subsystem dependencies
--   added a backend requirement traceability baseline for database and
-    protocol implementation
--   implemented and validated SQLite v0.2, protocol v1, and a diagnostic
-    Qt TCP server skeleton
--   aligned pile/order reservation and exception states, completion-ledger
-    constraints, and settlement-date revenue with CI review feedback
--   fixed atomic migration execution and valid-frame preservation when a TCP
-    read also contains a malformed frame
-
-Keep this history concise. Compress or replace old entries as the
-project progresses rather than appending indefinitely.
+- `A-S1-01` requirements baseline and repository/task records completed.
+- B schema/protocol foundation merged to `main`.
+- A user-client Mock baseline implemented, tested on Ubuntu VM, and prepared on branch `feature/user-client-s1-02` for PR review.
