@@ -47,6 +47,10 @@ dist/
 .vscode/
 .idea/
 
+# Local planning/process material (kept in D:/work/chargingplatform)
+/IDEA.md
+/docs/superpowers/
+
 # OS
 .DS_Store
 Thumbs.db

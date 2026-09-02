@@ -4,199 +4,120 @@
 
 Project: EV Charging Platform / 电动汽车充电桩应用管理平台
 
-The project implements the application management platform defined by
-the project requirements.
+The project implements the application management platform defined by the
+project requirements, including Qt user/admin clients, a Socket server,
+SQLite persistence, an ECharts dashboard, and intelligent analysis.
 
-Required product areas include:
+Current stage: **stage-I integration: backend user lifecycle + admin-client
+skeleton**.
 
--   Qt user client
--   Linux + Qt PC management application
--   server-side communication/business processing
--   SQLite-backed persistent data
--   ECharts Web big-data dashboard
--   intelligent charging-load analysis and forecasting
-
-Current stage: **stage-I backend user charging lifecycle**.
-
-No production feature should currently be treated as complete unless
-verified in the repository.
+No production feature should be treated as complete unless verified in the
+repository.
 
 ## Status
 
-Completed project setup work:
-
--   project requirements have been obtained and reviewed
--   monorepo skeleton has been created
--   basic Git/GitHub collaboration guidance has been prepared
--   project-level Codex instructions are defined in `AGENTS.md`
--   persistent project state is tracked in this file
-
-Current implementation state:
-
--   SQLite schema v0.2, deterministic seed data, migration from v0.1, and transaction rules are
-    documented and validated with Python's SQLite driver
--   Socket protocol v1 framing/envelope/error codes are frozen in
-    `docs/architecture/protocol.md`
--   a Qt TCP server supports `health`, `echo`, user/station/pile/order
-    queries (including order history), reservation transitions, and charging
-    start/stop/settlement
--   the database layer initializes Schema v0.2 and provides transaction-safe
-    user login, reservation, charging, settlement, ledger updates, and
-    request-ID replay records
--   state-changing lifecycle requests are idempotent by request ID; direct
-    idle-pile start and frozen-user guards are implemented
--   a clean database can optionally load deterministic development seed data
-    through `EV_DATABASE_SEED_PATH`
--   administrator, recharge, profile, and management mutation handlers plus
-    Qt clients are not yet implemented
--   module APIs are not yet finalized
--   qmake6 project files exist for the protocol tests and server; project-wide
-    build-system adoption is still pending
--   automated CI is not currently a project priority
+-   The repository keeps source and formal project artifacts; local plans and
+    generated builds belong in sibling `superpowers/` and `build/` folders.
+-   qmake (`.pro`) is the project build system; CMake is not maintained.
+-   SQLite schema v0.2, deterministic seed data, atomic migration, and
+    settlement consistency rules are documented and tested.
+-   The Qt TCP server implements `health`, `echo`, `user.login`, station/pile
+    queries, active/history order queries, reservation transitions, and
+    charging start/stop/settlement.
+-   Lifecycle mutations use request-ID replay records; direct idle-pile start
+    and frozen-user guards are implemented.
+-   A clean database can load repeatable development seed data through
+    `EV_DATABASE_SEED_PATH`; existing databases are not reseeded.
+-   The admin client now has a buildable Qt Widgets shell, login flow,
+    repository abstraction, Mock data source, overview state handling, and
+    Qt Test coverage. It does not yet use a Socket repository.
+-   Administrator, recharge, profile, statistics, and management mutation
+    handlers remain pending on the server; user-client, dashboard, and ML
+    implementations remain in later stages.
 
 ## Architecture
 
-Current target module layout:
-
 ``` text
-apps/user-client       Qt user client
-apps/admin-client      Qt PC management application
+Qt user client / Qt admin client
+              |
+              | Socket / protocol v1
+              v
+        server business layer
+              |
+              v
+        database layer -> SQLite
 
-server                 Socket/server business layer
-
-libs/common            shared C++ utilities/types
-libs/protocol          shared communication protocol
-libs/database          database access layer
-
-database               schema, migrations, seed data
-
-dashboard              ECharts Web dashboard
-
-ml                     intelligent analysis subsystem
-
-docs                    project design/documentation
-tests/integration       cross-module integration tests
+dashboard and ML consume defined, traceable data interfaces separately.
 ```
 
-Current target data flow for networked application features:
-
-``` text
-User/Admin Qt Client
-        |
-        | Socket
-        v
-      Server
-        |
-        v
- Database Layer
-        |
-        v
-      SQLite
-```
-
-This separation is a project architecture decision for the current
-implementation plan, not a statement that the requirements document
-fixes the exact process layout.
-
-Important architectural details are still pending design.
+Presentation code remains separate from networking, business rules, and
+persistence. Admin pages use `AdminRepository`; they do not create sockets or
+write SQL directly. The current admin repository is Mock and is designed to be
+replaced by a Socket adapter after the interface gate.
 
 ## TODO
 
-High priority:
+Completed foundations:
 
--   [x] confirm team member responsibilities and first development tasks
--   [ ] decide and document the concrete system architecture
--   [x] design initial SQLite schema
--   [x] design Socket message framing and core protocol
--   [x] initialize the server buildable project and diagnostic path
--   [ ] choose the Qt/C++ build system used across all modules
--   [ ] initialize the user-client buildable Qt project
--   [ ] initialize the admin-client buildable Qt project
--   [x] define and implement the first end-to-end vertical feature
-    (`user.login` request -> SQLite -> response)
--   [x] implement stage-I station/pile queries and user charging lifecycle
+-   [x] design and validate SQLite schema v0.2, seed, migration, and
+    transaction constraints
+-   [x] freeze protocol v1 framing, envelope, error codes, and user lifecycle
+    operations
+-   [x] implement and validate stage-I server/database user lifecycle
 -   [x] add request-ID idempotency, order history, clean seed startup, and
-    migration failure-path coverage
+    migration failure-path tests
+-   [x] merge the admin-client qmake skeleton and login/overview tests from
+    the updated `main`
 
-After foundations are stable:
+Next priorities:
 
--   [ ] implement required user-client features
--   [ ] implement required admin-management features
--   [ ] establish dashboard data path and ECharts pages
--   [ ] define intelligent-analysis data pipeline
--   [ ] implement 1h / 6h / 24h charging-load forecasting
--   [ ] implement station recommendation and load warning
--   [ ] add integration and regression tests for stable flows
+-   [ ] freeze administrator/statistics/pile/station/user API fields with A/C
+    and implement the corresponding server handlers
+-   [ ] build `SocketAdminRepository` against the frozen admin contract
+-   [ ] complete admin pile/station/user pages and ECharts dashboard
+-   [ ] initialize the user-client Qt project and its Socket integration
+-   [ ] define and implement the intelligent-analysis data pipeline and
+    1h/6h/24h forecasting, recommendation, and warning
+-   [ ] add cross-module integration and regression tests
 
 ## Known Issues
 
--   administrator, recharge, profile, and statistics handlers remain pending
--   authentication/session behavior beyond the protocol v1 payload contract
-    needs design before mutating handlers are exposed
--   charging-order state machine and settlement consistency rules are
-    implemented for the stage-I user lifecycle; administrative and wallet
-    mutation handlers remain pending
--   frozen users are rejected by lifecycle mutations, but automatic closure
-    of already-running orders on an administrator freeze is not implemented
--   dashboard-to-backend data interface is undecided
--   ML framework/language and model approach are undecided
--   external Tencent Maps API integration details and development-key
-    handling need design
--   CMake versus qmake has not been decided for the whole repository; current
-    protocol/server validation uses `qmake6`
-
-These are unresolved design items, not implementation defects.
+-   Existing in-progress orders are not automatically closed when an
+    administrator freezes a user; freeze currently blocks subsequent lifecycle
+    mutations.
+-   Administrator login, statistics, recharge, profile, and management
+    mutation operations are contracted but not implemented by the server.
+-   The admin client remains Mock-backed until the Socket adapter and interface
+    gate are complete.
+-   Authentication/session behavior beyond payload-level ID checks needs a
+    later token/session design.
+-   Dashboard data ownership, ML framework/language, and Tencent Maps key
+    handling remain design items.
 
 ## Decisions
 
--   use a single monorepo for the complete project
--   organize source code by module/responsibility rather than by
-    contributor
--   keep Qt presentation code separate from reusable
-    protocol/database/business logic
--   use `server` as the intended central Socket/business integration
-    layer
--   keep shared communication contracts under `libs/protocol`
--   keep persistent-data access separated from UI code
--   use `current.md` as concise persistent project state for Codex
-    sessions
--   keep global Codex delegation/runtime rules in the user's global
-    Codex configuration and global `AGENTS.md`; keep this repository's
-    `AGENTS.md` project-specific
--   do not prematurely lock in details that the requirements do not
-    specify
--   同学 B 负责 `server`、`libs/protocol`、`libs/database` 和
-    `database`；其阶段计划与系统整体认知记录在
-    `docs/development-plan.md`
+-   Use one monorepo organized by module responsibility.
+-   Keep `server` as the central Socket/business integration layer and keep
+    SQLite behind the database module.
+-   Use qmake `.pro` files as the supported build path.
+-   Use `current.md` as concise persistent project state and update it with
+    meaningful code or architecture changes.
+-   Keep process material and build output outside the repository; do not
+    commit credentials, tokens, or generated binaries.
+-   B owns `server`, `libs/protocol`, `libs/database`, and `database`;
+    C owns the admin client/dashboard/test-release material; A owns the user
+    client.
 
 ## Recent History
 
--   reviewed the project requirements and identified the main product
-    modules
--   created the initial monorepo directory skeleton
--   prepared a beginner-friendly Git/GitHub collaboration guide
--   established the project-specific `AGENTS.md`
--   initialized `current.md`
--   reviewed the original project brief and documented the team-B
-    development plan and subsystem dependencies
--   added a backend requirement traceability baseline for database and
-    protocol implementation
--   implemented and validated SQLite v0.2, protocol v1, and a diagnostic
-    Qt TCP server skeleton
--   aligned pile/order reservation and exception states, completion-ledger
-    constraints, and settlement-date revenue with CI review feedback
--   fixed atomic migration execution and valid-frame preservation when a TCP
-    read also contains a malformed frame
--   verified local/remote PR parity and merged PR #1 into `main` as
-    `3c31826f`
--   implemented the first SQLite-backed service slice: atomic phone login and
-    automatic user registration, with smoke coverage and startup documentation
--   implemented station/pile/order queries and transactional reservation to
-    charging settlement flow, including insufficient-balance rollback checks
--   fixed direct charging start, frozen-user lifecycle guards, request-ID
-    idempotency, order history, automatic development seed loading, and
-    migration request-record compatibility; expanded protocol/API docs and
-    end-to-end smoke coverage
+-   merged updated `origin/main` admin-client skeleton into the backend feature
+    branch and resolved API/state-document conflicts
+-   validated the merged backend with database tests, protocol tests, qmake
+    server build, seeded smoke flow, and concurrent idempotency replay
+-   fixed direct charging start, frozen-user guards, request-ID idempotency,
+    order history, seed startup, and migration request-record compatibility
+-   implemented SQLite v0.2, protocol v1, and the initial TCP server
+-   established the monorepo, team responsibilities, development plan, and
+    project collaboration guidance
 
-Keep this history concise. Compress or replace old entries as the
-project progresses rather than appending indefinitely.
+Keep this history concise; replace stale details instead of appending raw logs.
