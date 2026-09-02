@@ -22,7 +22,9 @@ SOURCES += \
     data/mockdataset.cpp \
     models/adminmodels.cpp \
     theme/theme.cpp \
+    widgets/metriccard.cpp \
     widgets/statestack.cpp \
+    widgets/stationtopologywidget.cpp \
     widgets/statuspulsewidget.cpp \
     widgets/statustag.cpp
 
@@ -39,7 +41,9 @@ HEADERS += \
     models/adminmodels.h \
     theme/theme.h \
     theme/generated/theme_tokens.h \
+    widgets/metriccard.h \
     widgets/statestack.h \
+    widgets/stationtopologywidget.h \
     widgets/statuspulsewidget.h \
     widgets/statustag.h
 

@@ -123,6 +123,13 @@ void MainWindow::buildBusinessArea(ev::AdminRepository *repository)
 
     connect(m_navList, &QListWidget::currentRowChanged,
             pageStack, &QStackedWidget::setCurrentIndex);
+    // 概览"需关注"异常项 → 切到充电桩页（列表内定位/筛选由 Task 6 focusPile 完成）
+    connect(m_overviewPage, &OverviewPage::pileAttentionRequested,
+            this, [this](const QString &pileCode) {
+                m_navList->setCurrentRow(1); // 1 = 充电桩
+                statusBar()->showMessage(
+                    QStringLiteral("需关注充电桩 %1，已切至充电桩页").arg(pileCode));
+            });
     // 标题联动：状态栏显示当前页面（来源标识来自 Repository，见 loggedInStatusText）
     connect(m_navList, &QListWidget::currentRowChanged, this, [this](int row) {
         const QString page = (row >= 0 && row < m_navList->count())

@@ -55,6 +55,27 @@ public:
                            });
     }
 
+    // 桩/站明细：本用例只验证概览四态与来源标签，返回空 ok 列表即可
+    void fetchPiles(QObject *context,
+                    std::function<void(const ev::ListResult<ev::PileInfo> &)> callback) override
+    {
+        QTimer::singleShot(0, context,
+                           [callback = std::move(callback)] {
+                               if (callback)
+                                   callback(ev::ListResult<ev::PileInfo>{});
+                           });
+    }
+
+    void fetchStations(QObject *context,
+                       std::function<void(const ev::ListResult<ev::StationInfo> &)> callback) override
+    {
+        QTimer::singleShot(0, context,
+                           [callback = std::move(callback)] {
+                               if (callback)
+                                   callback(ev::ListResult<ev::StationInfo>{});
+                           });
+    }
+
     QString dataSourceName() const override
     {
         return QStringLiteral("Socket 测试源");

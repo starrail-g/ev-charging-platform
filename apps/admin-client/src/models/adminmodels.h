@@ -67,9 +67,20 @@ struct OverviewStats {
     QString updatedAt;                    // UTC ISO-8601，如 2026-09-01T10:15:00Z
 };
 
-// 概览结果包装（数据层与页面层共用，P2 review 修复后上移为通用模型）：
-//   ok=false     —— 接口失败（调用方按 ok 分支展示错误态）
-//   hasData=false —— 空数据，由数据层显式声明；禁止从指标全零反推
+// 通用列表结果包装(数据层与页面层共用;原 mockdataset::MockResult 语义):
+//   ok=false    —— 接口失败(调用方必须按 ok 分支展示错误态,不能只依赖列表长度)
+//   error       —— 失败原因文案(展示/日志用)
+//   items       —— 成功时的数据列表
+template <typename T>
+struct ListResult {
+    bool ok = true;
+    QString error;
+    QList<T> items;
+};
+
+// 概览结果包装(数据层与页面层共用,P2 review 修复后上移为通用模型):
+//   ok=false     —— 接口失败(调用方按 ok 分支展示错误态)
+//   hasData=false —— 空数据,由数据层显式声明;禁止从指标全零反推
 //                    （新站点/当日无营收时全零可能是有效数据）
 struct OverviewResult {
     bool ok = true;

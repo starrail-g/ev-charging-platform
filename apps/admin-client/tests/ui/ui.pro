@@ -17,7 +17,9 @@ SOURCES += \
     ../../src/data/mockadminrepository.cpp \
     ../../src/data/mockdataset.cpp \
     ../../src/theme/theme.cpp \
+    ../../src/widgets/metriccard.cpp \
     ../../src/widgets/statestack.cpp \
+    ../../src/widgets/stationtopologywidget.cpp \
     ../../src/widgets/statuspulsewidget.cpp \
     ../../src/widgets/statustag.cpp \
     ../../src/models/adminmodels.cpp
@@ -33,7 +35,9 @@ HEADERS += \
     ../../src/data/mockadminrepository.h \
     ../../src/data/mockdataset.h \
     ../../src/theme/theme.h \
+    ../../src/widgets/metriccard.h \
     ../../src/widgets/statestack.h \
+    ../../src/widgets/stationtopologywidget.h \
     ../../src/widgets/statuspulsewidget.h \
     ../../src/widgets/statustag.h \
     ../../src/models/adminmodels.h
