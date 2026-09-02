@@ -48,6 +48,19 @@ def frame(request):
 assert exchange({"v": 1, "id": "smoke-1", "type": "health", "payload": {}})["payload"]["status"] == "ok"
 assert exchange({"v": 1, "id": "smoke-2", "type": "echo", "payload": {"value": 7}})["payload"]["value"] == 7
 assert exchange({"v": 1, "id": "smoke-3", "type": "unknown", "payload": {}})["type"] == "error"
+login = exchange({"v": 1, "id": "smoke-login-1", "type": "user.login",
+                  "payload": {"phone": "13912345678"}})
+assert login["type"] == "user.login.result"
+user = login["payload"]["user"]
+assert user["phone"] == "13912345678"
+assert {"id", "phone", "nickname", "avatar_path", "balance_cents", "status"}.issubset(user)
+repeat_login = exchange({"v": 1, "id": "smoke-login-2", "type": "user.login",
+                         "payload": {"phone": "13912345678"}})
+assert repeat_login["payload"]["user"]["id"] == user["id"]
+invalid_login = exchange({"v": 1, "id": "smoke-login-invalid", "type": "user.login",
+                          "payload": {"phone": "139123"}})
+assert invalid_login["type"] == "error"
+assert invalid_login["payload"]["code"] == 1002
 batch = exchange_batch([
     frame({"v": 1, "id": "smoke-good", "type": "echo", "payload": {"value": 8}}),
     b"\x00\x00\x00\x01!",

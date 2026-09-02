@@ -16,8 +16,7 @@ Required product areas include:
 -   ECharts Web big-data dashboard
 -   intelligent charging-load analysis and forecasting
 
-Current stage: **stage-I backend contract and diagnostic server
-foundation**.
+Current stage: **stage-I backend user charging lifecycle**.
 
 No production feature should currently be treated as complete unless
 verified in the repository.
@@ -38,8 +37,12 @@ Current implementation state:
     documented and validated with Python's SQLite driver
 -   Socket protocol v1 framing/envelope/error codes are frozen in
     `docs/architecture/protocol.md`
--   a Qt TCP server skeleton supports `health` and `echo`
--   database-backed business handlers and Qt clients are not yet implemented
+-   a Qt TCP server supports `health`, `echo`, user/station/pile/order
+    queries, reservation transitions, and charging start/stop/settlement
+-   the database layer initializes Schema v0.2 and provides transaction-safe
+    user login, reservation, charging, settlement, and ledger updates
+-   administrator, recharge, profile, and management mutation handlers plus
+    Qt clients are not yet implemented
 -   module APIs are not yet finalized
 -   qmake6 project files exist for the protocol tests and server; project-wide
     build-system adoption is still pending
@@ -103,7 +106,8 @@ High priority:
 -   [ ] choose the Qt/C++ build system used across all modules
 -   [ ] initialize the user-client buildable Qt project
 -   [ ] initialize the admin-client buildable Qt project
--   [ ] define the first end-to-end vertical feature
+-   [x] define and implement the first end-to-end vertical feature
+    (`user.login` request -> SQLite -> response)
 
 After foundations are stable:
 
@@ -117,7 +121,7 @@ After foundations are stable:
 
 ## Known Issues
 
--   database-backed service handlers are not implemented yet
+-   administrator, recharge, profile, and statistics handlers remain pending
 -   authentication/session behavior beyond the protocol v1 payload contract
     needs design before mutating handlers are exposed
 -   charging-order state machine and settlement consistency rules are
@@ -172,6 +176,12 @@ These are unresolved design items, not implementation defects.
     constraints, and settlement-date revenue with CI review feedback
 -   fixed atomic migration execution and valid-frame preservation when a TCP
     read also contains a malformed frame
+-   verified local/remote PR parity and merged PR #1 into `main` as
+    `3c31826f`
+-   implemented the first SQLite-backed service slice: atomic phone login and
+    automatic user registration, with smoke coverage and startup documentation
+-   implemented station/pile/order queries and transactional reservation to
+    charging settlement flow, including insufficient-balance rollback checks
 
 Keep this history concise. Compress or replace old entries as the
 project progresses rather than appending indefinitely.

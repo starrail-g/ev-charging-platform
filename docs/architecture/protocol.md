@@ -7,10 +7,12 @@ client, Qt administration client, and `server`. It is the authoritative
 contract for `libs/protocol`.
 
 Version 1 freezes framing, common fields, error responses, and operation
-names needed for the first project stage. Only `health` and `echo` are
-implemented by the initial server skeleton; the remaining operations are
-contracted for client parallel development and will be implemented against
-the database service.
+names needed for the first project stage. The current server implements the
+read/query and user charging lifecycle operations (`health`, `echo`,
+`user.login`, `station.list`, `pile.list`, `order.active.get`,
+`reservation.*`, and `charging.*`). Administrator and wallet recharge
+operations remain contracted and will be implemented against the database
+service.
 
 ## Transport and Framing
 
@@ -155,7 +157,9 @@ Order status values are `pending_reservation`, `reserved`, `charging`,
 
 `libs/protocol` implements envelope validation and incremental frame
 encoding/decoding. `server` accepts multiple TCP clients and currently
-implements `health` and `echo`; unknown operations return `INVALID_REQUEST`.
+implements `health`, `echo`, `user.login`, station/pile and active-order
+queries, reservation transitions, and charging start/stop/settlement;
+unknown operations return `INVALID_REQUEST`.
 When a read contains valid messages before a malformed frame, the server
 dispatches the valid messages before returning the frame error and closing
 that connection.
