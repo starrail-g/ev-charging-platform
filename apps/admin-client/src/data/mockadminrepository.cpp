@@ -5,6 +5,9 @@
 namespace {
 constexpr int kCodeOk = 0;
 constexpr int kCodeUnauthorized = 1100;
+// 模拟真实网络往返延迟：让"登录中…"/Loading 状态肉眼可见、演示更真实；
+// 测试用 QTRY 等待不受影响（9/6 Socket 接入后为真实网络延迟）
+constexpr int kMockNetworkDelayMs = 500;
 } // namespace
 
 MockAdminRepository::MockAdminRepository(LoginMode mode)
@@ -19,8 +22,20 @@ void MockAdminRepository::login(const QString &username, const QString &password
     ++m_loginCallCount;
     const ev::LoginResult result = doLogin(username, password);
 
-    // 异步投递：singleShot(0) 模拟一次网络往返；context 销毁后 Qt 自动不再调用（防悬垂回调）。
-    QTimer::singleShot(0, context, [result, callback = std::move(callback)] {
+    // 异步投递：模拟一次网络往返（500ms 延迟）；context 销毁后 Qt 自动不再调用（防悬垂回调）。
+    QTimer::singleShot(kMockNetworkDelayMs, context, [result, callback = std::move(callback)] {
+        if (callback)
+            callback(result);
+    });
+}
+
+void MockAdminRepository::fetchOverview(QObject *context,
+                                        std::function<void(const ev::OverviewResult &)> callback)
+{
+    const ev::OverviewResult result = ev::mockdata::overview(m_overviewMode);
+
+    // 与 login 同构：模拟网络往返后异步投递，context 销毁后不再回调
+    QTimer::singleShot(kMockNetworkDelayMs, context, [result, callback = std::move(callback)] {
         if (callback)
             callback(result);
     });

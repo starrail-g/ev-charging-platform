@@ -12,6 +12,7 @@
 
 #include "app/mainwindow.h"
 #include "data/adminrepository.h"
+#include "data/mockadminrepository.h"
 #include "data/mockdataset.h"
 #include "pages/loginpage.h"
 #include "pages/overviewpage.h"
@@ -31,6 +32,22 @@ public:
         result.errorCode = 0;
         result.admin = ev::AdminInfo{1, QStringLiteral("admin"),
                                      QStringLiteral("super_admin"), QStringLiteral("active")};
+        QTimer::singleShot(0, context,
+                           [result, callback = std::move(callback)] {
+                               if (callback)
+                                   callback(result);
+                           });
+    }
+
+    // 模拟真实数据源：概览返回一份最小正常数据
+    void fetchOverview(QObject *context,
+                       std::function<void(const ev::OverviewResult &)> callback) override
+    {
+        ev::OverviewResult result;
+        result.ok = true;
+        result.hasData = true;
+        result.stats.revenueCents = 100;
+        result.stats.updatedAt = QStringLiteral("2026-09-02T00:00:00Z");
         QTimer::singleShot(0, context,
                            [result, callback = std::move(callback)] {
                                if (callback)
@@ -114,7 +131,8 @@ void TestLaunchSmoke::businessAreaLockedUntilLogin()
 void TestLaunchSmoke::overviewFourStatesShowMockData()
 {
     // 初始态：未刷新前必须为 Loading（StateStack 构造默认）
-    OverviewPage standalone;
+    MockAdminRepository mock; // 生命周期须长于 standalone（standalone 持有其指针）
+    OverviewPage standalone(&mock);
     auto *standaloneStack = standalone.findChild<StateStack *>();
     QVERIFY(standaloneStack);
     QCOMPARE(int(standaloneStack->currentState()), int(StateStack::State::Loading));
@@ -134,25 +152,25 @@ void TestLaunchSmoke::overviewFourStatesShowMockData()
     auto *stack = overview->findChild<StateStack *>();
     QVERIFY(combo && stack);
 
-    // 正常：Content 态 + 摘要含营收
+    // 正常：Content 态（数据经 Repository 链路异步返回，QTRY 等待）
     combo->setCurrentIndex(int(ev::mockdata::DataMode::Normal));
-    QCOMPARE(int(stack->currentState()), int(StateStack::State::Content));
+    QTRY_COMPARE(int(stack->currentState()), int(StateStack::State::Content));
 
     // 空：Empty 态（hasData=false 显式声明，不靠数值反推）
     combo->setCurrentIndex(int(ev::mockdata::DataMode::Empty));
-    QCOMPARE(int(stack->currentState()), int(StateStack::State::Empty));
+    QTRY_COMPARE(int(stack->currentState()), int(StateStack::State::Empty));
 
     // 错误：Error 态 + 重试按钮存在且可点击（触发 refresh，不崩溃）
     combo->setCurrentIndex(int(ev::mockdata::DataMode::Error));
-    QCOMPARE(int(stack->currentState()), int(StateStack::State::Error));
+    QTRY_COMPARE(int(stack->currentState()), int(StateStack::State::Error));
     auto *retry = stack->findChild<QPushButton *>("retryButton");
     QVERIFY2(retry, "错误态必须提供重试按钮");
     QTest::mouseClick(retry, Qt::LeftButton);
-    QCOMPARE(int(stack->currentState()), int(StateStack::State::Error)); // 重试后仍为错误态（数据未变）
+    QTRY_COMPARE(int(stack->currentState()), int(StateStack::State::Error)); // 重试后仍为错误态（数据未变）
 
     // 切回正常：恢复 Content
     combo->setCurrentIndex(int(ev::mockdata::DataMode::Normal));
-    QCOMPARE(int(stack->currentState()), int(StateStack::State::Content));
+    QTRY_COMPARE(int(stack->currentState()), int(StateStack::State::Content));
 }
 
 // 状态栏来源标识必须来自 Repository（P2 review）：注入非 Mock 实现时

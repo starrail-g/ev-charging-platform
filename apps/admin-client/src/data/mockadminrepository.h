@@ -3,6 +3,8 @@
 
 #include "adminrepository.h"
 
+#include "mockdataset.h"
+
 #include <functional>
 
 class QObject;
@@ -27,7 +29,16 @@ public:
                QObject *context,
                std::function<void(const ev::LoginResult &)> callback) override;
 
+    // 异步概览：按当前演示模式返回 mockdata 三态数据（模拟网络往返）
+    void fetchOverview(QObject *context,
+                       std::function<void(const ev::OverviewResult &)> callback) override;
+
     QString dataSourceName() const override { return QStringLiteral("Mock 演示"); }
+
+    // 演示数据模式（Mock 特有，不进抽象接口；供概览页下拉驱动，
+    // 9/6 Socket 接入后由数据层自动驱动）
+    void setOverviewMode(ev::mockdata::DataMode mode) { m_overviewMode = mode; }
+    ev::mockdata::DataMode overviewMode() const { return m_overviewMode; }
 
     LoginMode mode() const { return m_mode; }
     void setMode(LoginMode mode) { m_mode = mode; }
@@ -40,6 +51,7 @@ private:
 
     LoginMode m_mode = LoginMode::Ok;
     int m_loginCallCount = 0;
+    ev::mockdata::DataMode m_overviewMode = ev::mockdata::DataMode::Normal;
 };
 
 #endif // MOCKADMINREPOSITORY_H

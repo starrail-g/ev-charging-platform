@@ -31,7 +31,7 @@ MainWindow::MainWindow(ev::AdminRepository *repository, QWidget *parent)
     m_stack->setObjectName(QStringLiteral("mainStack"));
     m_loginPage = new LoginPage(repository, m_stack);
     m_businessArea = new QWidget(m_stack);
-    buildBusinessArea();
+    buildBusinessArea(repository);
 
     m_stack->addWidget(m_loginPage);
     m_stack->addWidget(m_businessArea);
@@ -47,7 +47,7 @@ MainWindow::MainWindow(ev::AdminRepository *repository, QWidget *parent)
 // out-of-line：unique_ptr<AdminRepository> 需要完整类型（见 mainwindow.h）
 MainWindow::~MainWindow() = default;
 
-void MainWindow::buildBusinessArea()
+void MainWindow::buildBusinessArea(ev::AdminRepository *repository)
 {
     m_navList = new QListWidget(m_businessArea);
     m_navList->setObjectName(QStringLiteral("navList"));
@@ -58,7 +58,7 @@ void MainWindow::buildBusinessArea()
     m_navList->setFixedWidth(160);
     m_navList->setEnabled(false); // 业务页默认不可进入（未登录）
 
-    m_overviewPage = new OverviewPage(m_businessArea);
+    m_overviewPage = new OverviewPage(repository, m_businessArea);
     m_pilePage = new PilePage(m_businessArea);
     m_stationPage = new StationPage(m_businessArea);
     m_userPage = new UserPage(m_businessArea);
@@ -101,7 +101,7 @@ void MainWindow::onLoginSuccess()
     m_navList->setCurrentRow(0);
     m_stack->setCurrentWidget(m_businessArea);
     statusBar()->showMessage(loggedInStatusText(QStringLiteral("概览")));
-    m_overviewPage->refresh(); // 概览页加载 Mock 数据
+    m_overviewPage->refresh(); // 概览页加载数据（经 Repository 链路）
 }
 
 void MainWindow::onLogout()

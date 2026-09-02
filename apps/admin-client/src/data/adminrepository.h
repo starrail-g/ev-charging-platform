@@ -5,6 +5,8 @@
 
 #include <functional>
 
+#include "models/adminmodels.h"
+
 class QObject;
 
 namespace ev {
@@ -42,6 +44,13 @@ public:
     virtual void login(const QString &username, const QString &password,
                        QObject *context,
                        std::function<void(const LoginResult &)> callback) = 0;
+
+    // 异步获取概览数据：语义同 login（立即返回、结果经 callback 在事件循环派发、
+    // context 销毁后自动不再回调）。
+    // 第一阶段 Mock 返回三态演示数据；9/6 Socket 适配层返回真实协议数据，
+    // 页面只依赖本接口，不直接触达数据源（P2 review 修复：标签与数据同源）。
+    virtual void fetchOverview(QObject *context,
+                               std::function<void(const OverviewResult &)> callback) = 0;
 
     // 数据来源标识（状态栏展示用）：Mock 返回 "Mock 演示"，
     // 未来 Socket 适配层返回自身标识；空串表示不展示来源。

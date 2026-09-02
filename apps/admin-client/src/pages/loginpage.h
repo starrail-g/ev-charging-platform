@@ -39,7 +39,9 @@ private:
     QPushButton *m_loginButton = nullptr;
     QLabel *m_errorLabel = nullptr;
     QTimer m_timeoutTimer;       // 单触发：登录请求超时保护
-    bool m_loginPending = false; // 有在飞请求时置位（防重入 + 超时/取消判定）
+    bool m_loginPending = false; // 有在飞请求时置位（按钮态管理）
+    int m_requestId = 0;         // 每次发起登录递增；回调携带的 ID 失配即丢弃
+                                 // （超时/登出/新请求后旧回调永久失效，防旧回调竞态）
 };
 
 #endif // LOGINPAGE_H

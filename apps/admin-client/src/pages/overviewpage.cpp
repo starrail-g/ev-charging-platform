@@ -5,14 +5,16 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
+#include "data/mockadminrepository.h"
 #include "widgets/statestack.h"
 
 namespace {
 const QString kSimulatedErrorDisplay = QStringLiteral("接口错误：模拟数据层失败");
 }
 
-OverviewPage::OverviewPage(QWidget *parent)
+OverviewPage::OverviewPage(ev::AdminRepository *repository, QWidget *parent)
     : QWidget(parent)
+    , m_repository(repository)
 {
     auto *title = new QLabel(QStringLiteral("概览"), this);
 
@@ -51,13 +53,18 @@ OverviewPage::OverviewPage(QWidget *parent)
 
 void OverviewPage::refresh()
 {
-    const auto mode = dataMode();
-
     m_stateStack->showState(StateStack::State::Loading,
                             QStringLiteral("正在加载概览数据…"));
 
-    const ev::mockdata::OverviewResult result = ev::mockdata::overview(mode);
+    // 数据一律经 Repository 链路获取（P2 review 修复：数据源标签与数据同源）。
+    // 9/6 Socket 适配层实现 fetchOverview 后，本页零改动。
+    m_repository->fetchOverview(this, [this](const ev::OverviewResult &result) {
+        onOverviewReady(result);
+    });
+}
 
+void OverviewPage::onOverviewReady(const ev::OverviewResult &result)
+{
     if (!result.ok) {
         // 错误态：展示错误文案 + 重试按钮（StateStack 已绑定 refresh）
         m_stateStack->showState(StateStack::State::Error,
@@ -96,5 +103,9 @@ ev::mockdata::DataMode OverviewPage::dataMode() const
 
 void OverviewPage::onModeChanged(int)
 {
+    // 第一阶段演示：模式下拉驱动 Mock 数据层（setOverviewMode 为 Mock 特有接口，
+    // 不在抽象层；9/6 Socket 接入后由数据层自动驱动，下拉移除）
+    if (auto *mock = dynamic_cast<MockAdminRepository *>(m_repository))
+        mock->setOverviewMode(dataMode());
     refresh();
 }

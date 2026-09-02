@@ -42,7 +42,7 @@ private slots:
     void onLoginSuccess();
 
 private:
-    void buildBusinessArea();
+    void buildBusinessArea(ev::AdminRepository *repository);
     // 状态栏登录态文案：数据来源标识来自 Repository（dataSourceName），
     // 不硬编码具体实现名（P2 review 修复）
     QString loggedInStatusText(const QString &page) const;

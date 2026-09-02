@@ -27,14 +27,6 @@ struct MockResult {
     QList<T> items;
 };
 
-struct OverviewResult {
-    bool ok = true;
-    QString error;
-    OverviewStats stats;
-    bool hasData = false;  // 数据状态由字段明确表达：false=空数据。
-                           // 不从数值反推——新站点/当日无营收时"全零"可能是有效数据（P2 review 修复）
-};
-
 MockResult<PileInfo> piles(DataMode mode);
 MockResult<StationInfo> stations(DataMode mode);
 MockResult<UserInfo> users(DataMode mode);

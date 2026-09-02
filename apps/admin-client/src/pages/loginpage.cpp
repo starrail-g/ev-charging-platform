@@ -63,8 +63,9 @@ void LoginPage::clearCredentials()
     m_passwordEdit->clear();
     m_errorLabel->clear();
     m_errorLabel->setVisible(false);
-    // 作废在飞登录请求（防御性：正常流程登出时无在飞请求）；
-    // 迟到的回调会因 m_loginPending=false 被 onLoginFinished 丢弃。
+    // 作废在飞登录请求（防御性：正常流程登出时无在飞请求）：
+    // 递增令牌使旧回调 ID 失配被丢弃，不依赖底层请求取消
+    ++m_requestId;
     m_loginPending = false;
     m_timeoutTimer.stop();
     resetLoginButton();
@@ -86,20 +87,25 @@ void LoginPage::attemptLogin()
     }
 
     // 提交中状态：异步请求在飞，期间禁用按钮（防连点产生多个请求）
+    const int requestId = ++m_requestId; // 新请求令牌：旧回调 ID 失配即丢弃（防旧回调竞态）
     m_loginPending = true;
     m_loginButton->setEnabled(false);
     m_loginButton->setText(QStringLiteral("登录中…"));
     m_timeoutTimer.start(kLoginTimeoutMs);
 
-    // 异步调用：结果经回调投递；context=this 保证页面销毁后不再回调（生命周期保护）
+    // 异步调用：结果经回调投递；context=this 保证页面销毁后不再回调（生命周期保护）；
+    // 回调内校验 requestId 只认最新请求（超时/重新登录后旧回调被丢弃）
     m_repository->login(username, password, this,
-                        [this](const ev::LoginResult &result) { onLoginFinished(result); });
+                        [this, requestId](const ev::LoginResult &result) {
+                            if (requestId == m_requestId)
+                                onLoginFinished(result);
+                        });
 }
 
 void LoginPage::onLoginFinished(const ev::LoginResult &result)
 {
     if (!m_loginPending)
-        return; // 已超时或已取消：丢弃迟到的结果
+        return; // 防御：仅当前请求会走到这里（requestId 已在回调处过滤）
     m_loginPending = false;
     m_timeoutTimer.stop();
     resetLoginButton();
@@ -129,6 +135,7 @@ void LoginPage::onLoginTimeout()
 {
     if (!m_loginPending)
         return;
+    ++m_requestId; // 作废在飞请求：迟到回调 ID 失配被丢弃（不依赖底层请求取消）
     m_loginPending = false; // 作废在飞请求：迟到的回调将被 onLoginFinished 丢弃
     resetLoginButton();
     m_errorLabel->setText(QStringLiteral("登录超时，请稍后重试"));
