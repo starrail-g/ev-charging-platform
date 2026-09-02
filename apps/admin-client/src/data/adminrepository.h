@@ -62,6 +62,10 @@ public:
     virtual void fetchStations(QObject *context,
                                std::function<void(const ListResult<StationInfo> &)> callback) = 0;
 
+    // 异步获取用户列表:语义同 fetchOverview(统一 UI Task 6,用户工作页)。
+    virtual void fetchUsers(QObject *context,
+                            std::function<void(const ListResult<UserInfo> &)> callback) = 0;
+
     // 数据来源标识（状态栏展示用）：Mock 返回 "Mock 演示"，
     // 未来 Socket 适配层返回自身标识；空串表示不展示来源。
     virtual QString dataSourceName() const { return QString(); }

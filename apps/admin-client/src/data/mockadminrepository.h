@@ -38,6 +38,8 @@ public:
                     std::function<void(const ev::ListResult<ev::PileInfo> &)> callback) override;
     void fetchStations(QObject *context,
                        std::function<void(const ev::ListResult<ev::StationInfo> &)> callback) override;
+    void fetchUsers(QObject *context,
+                    std::function<void(const ev::ListResult<ev::UserInfo> &)> callback) override;
 
     QString dataSourceName() const override { return QStringLiteral("Mock 演示"); }
 

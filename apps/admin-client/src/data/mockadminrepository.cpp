@@ -65,6 +65,18 @@ void MockAdminRepository::fetchStations(
     });
 }
 
+void MockAdminRepository::fetchUsers(
+    QObject *context, std::function<void(const ev::ListResult<ev::UserInfo> &)> callback)
+{
+    const ev::ListResult<ev::UserInfo> result = ev::mockdata::users(m_overviewMode);
+
+    // 与 fetchOverview 同构：同一演示模式、模拟网络往返
+    QTimer::singleShot(kMockNetworkDelayMs, context, [result, callback = std::move(callback)] {
+        if (callback)
+            callback(result);
+    });
+}
+
 ev::LoginResult MockAdminRepository::doLogin(const QString &username, const QString &password) const
 {
     ev::LoginResult result;

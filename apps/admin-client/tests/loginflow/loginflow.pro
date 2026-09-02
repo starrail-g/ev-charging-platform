@@ -22,7 +22,8 @@ SOURCES += \
     ../../src/widgets/aurorabackdrop.cpp \
     ../../src/widgets/metriccard.cpp \
     ../../src/widgets/statestack.cpp \
-    ../../src/widgets/stationtopologywidget.cpp
+    ../../src/widgets/stationtopologywidget.cpp \
+    ../../src/widgets/statustag.cpp
 
 HEADERS += \
     ../../src/app/mainwindow.h \
@@ -39,4 +40,5 @@ HEADERS += \
     ../../src/widgets/aurorabackdrop.h \
     ../../src/widgets/metriccard.h \
     ../../src/widgets/statestack.h \
-    ../../src/widgets/stationtopologywidget.h
+    ../../src/widgets/stationtopologywidget.h \
+    ../../src/widgets/statustag.h

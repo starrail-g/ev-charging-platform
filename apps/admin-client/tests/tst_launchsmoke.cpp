@@ -76,6 +76,16 @@ public:
                            });
     }
 
+    void fetchUsers(QObject *context,
+                    std::function<void(const ev::ListResult<ev::UserInfo> &)> callback) override
+    {
+        QTimer::singleShot(0, context,
+                           [callback = std::move(callback)] {
+                               if (callback)
+                                   callback(ev::ListResult<ev::UserInfo>{});
+                           });
+    }
+
     QString dataSourceName() const override
     {
         return QStringLiteral("Socket 测试源");

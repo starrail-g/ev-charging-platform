@@ -12,6 +12,9 @@
 #include "models/adminmodels.h"
 #include "pages/loginpage.h"
 #include "pages/overviewpage.h"
+#include "pages/pilepage.h"
+#include "pages/stationpage.h"
+#include "pages/userpage.h"
 #include "theme/generated/theme_tokens.h"
 #include "theme/theme.h"
 #include "widgets/aurorabackdrop.h"
@@ -36,6 +39,8 @@ private slots:
     void attentionItemSwitchesToPilePage();
     void auroraBackdropAnimatesWhenMotionEnabled();
     void reducedMotionFreezesAuroraBackdrop();
+    void pilePageFiltersByAttentionStateAndCode();
+    void stationAndUserPagesRenderMockRows();
 };
 
 void TestUi::statusTagsExposeProtocolState()
@@ -181,6 +186,28 @@ void TestUi::reducedMotionFreezesAuroraBackdrop()
     AuroraBackdrop backdrop;
     backdrop.setMotionEnabled(false);
     QVERIFY(!backdrop.isAnimationRunning());
+}
+
+void TestUi::pilePageFiltersByAttentionStateAndCode()
+{
+    // 页面经 Repository 链路异步加载（Task 5 方案 A 模式），QTRY 等待渲染
+    PilePage page;
+    page.refresh(ev::mockdata::DataMode::Normal);
+    QTRY_COMPARE_WITH_TIMEOUT(page.visibleRowCount(), 6, 3000);
+    page.setStatusFilter(QStringLiteral("attention"));
+    QCOMPARE(page.visibleRowCount(), 2); // 故障 P-101-C + 离线 P-202-C
+    page.focusPile(QStringLiteral("P-101-C"));
+    QCOMPARE(page.currentPileCode(), QStringLiteral("P-101-C"));
+}
+
+void TestUi::stationAndUserPagesRenderMockRows()
+{
+    StationPage stations;
+    stations.refresh(ev::mockdata::DataMode::Normal);
+    QTRY_COMPARE_WITH_TIMEOUT(stations.visibleRowCount(), 2, 3000);
+    UserPage users;
+    users.refresh(ev::mockdata::DataMode::Normal);
+    QTRY_COMPARE_WITH_TIMEOUT(users.visibleRowCount(), 3, 3000);
 }
 
 QTEST_MAIN(TestUi)

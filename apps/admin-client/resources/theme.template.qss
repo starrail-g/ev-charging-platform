@@ -6,6 +6,15 @@ QWidget#businessArea, QWidget#loginPage { background: transparent; }
 QStackedWidget#mainStack, QStackedWidget#pageStack { background: transparent; }
 QFrame#navigationRail { background-color: @themes.day.surface; border: none; border-right: 1px solid @themes.day.decorativeStructure; }
 QFrame#navSeparator { background-color: @themes.day.decorativeStructure; border: none; }
+/* 工作页表格与筛选控件（统一 UI Task 6） */
+QTableWidget { background-color: @themes.day.surface; border: 1px solid @themes.day.decorativeStructure; border-radius: @shape.panelRadiuspx; selection-background-color: @themes.day.focusBlue; selection-color: @themes.day.surface; }
+QTableWidget:focus { border-color: @themes.day.focusBlue; }
+QHeaderView::section { background-color: @themes.day.surface; color: @themes.day.mutedText; border: none; border-bottom: 1px solid @themes.day.decorativeStructure; padding: 9px 12px; font-weight: 600; }
+QTableWidget::item { padding: 4px 12px; }
+QComboBox { background-color: @themes.day.surface; color: @themes.day.text; border: 1px solid @themes.day.topologyLine; border-radius: @shape.controlRadiuspx; padding: 6px 10px; min-height: 20px; }
+QComboBox:hover { border-color: @themes.day.mutedText; }
+QComboBox:focus { border: 2px solid @themes.day.focusBlue; padding: 5px 9px; }
+QComboBox:disabled { background-color: @themes.day.decorativeStructure; color: @themes.day.mutedText; }
 QLabel#productMark, QLabel#loginProductMark { color: @themes.day.text; font-size: 18px; font-weight: 700; }
 QLabel#sessionBadge { color: @themes.day.states.idle; font-size: 12px; }
 QLabel#pageTitle, QLabel#loginTitle { color: @themes.day.text; font-size: 22px; font-weight: 700; }
