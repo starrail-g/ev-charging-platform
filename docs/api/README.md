@@ -1,6 +1,12 @@
-# API 文档
+# API 文档 / API Reference
 
 本目录记录跨模块接口契约。管理端（角色 C）依赖的服务端接口清单与冻结状态如下。
+
+The Socket API uses the protocol defined in
+[`docs/architecture/protocol.md`](../architecture/protocol.md). This directory
+will contain endpoint-level examples once the database-backed operation
+handlers are implemented. The current runnable diagnostic operations are
+`health` and `echo`.
 
 ## C 依赖的管理接口（第一阶段）
 
