@@ -141,6 +141,16 @@ bool Database::initializeSchema(QString *error)
         return false;
     }
     const bool hasSchemaMeta = query.next();
+    bool emptyDatabase = !hasSchemaMeta;
+    if (!hasSchemaMeta) {
+        if (!query.exec(QStringLiteral(
+                "SELECT COUNT(*) FROM sqlite_master "
+                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"))) {
+            setError(error, QStringLiteral("inspect database tables failed: %1").arg(queryError(query)));
+            return false;
+        }
+        emptyDatabase = query.next() && query.value(0).toInt() == 0;
+    }
     if (!hasSchemaMeta) {
         QFile schemaFile(schemaPath_);
         if (!schemaFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -159,7 +169,7 @@ bool Database::initializeSchema(QString *error)
         return false;
     }
     if (!ensureRequestTable(error)) return false;
-    if (!hasSchemaMeta && !seedPath_.isEmpty()) {
+    if (emptyDatabase && !seedPath_.isEmpty()) {
         QFile seedFile(seedPath_);
         if (!seedFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
             setError(error, QStringLiteral("open seed file failed: %1").arg(seedFile.errorString()));
