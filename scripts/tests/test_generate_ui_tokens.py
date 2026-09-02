@@ -30,6 +30,18 @@ class TokenGenerationTest(unittest.TestCase):
         second = render_outputs(tokens, Path("."))
         self.assertEqual(first, second)
 
+    def test_qmake_uses_platform_specific_python_for_pre_link_check(self):
+        project = Path("apps/admin-client/src/src.pro").read_text(encoding="utf-8")
+        self.assertIn("win32:UI_TOKEN_PYTHON = python", project)
+        self.assertIn("unix:UI_TOKEN_PYTHON = python3", project)
+        self.assertIn("QMAKE_PRE_LINK", project)
+        self.assertIn("generate_ui_tokens.py", project)
+        self.assertIn("--check", project)
+
+    def test_local_map_key_file_is_ignored(self):
+        ignored = Path(".gitignore").read_text(encoding="utf-8")
+        self.assertIn("config/local.env", ignored)
+
 
 if __name__ == "__main__":
     unittest.main()

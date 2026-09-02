@@ -5,6 +5,11 @@ TEMPLATE = app
 CONFIG += c++17
 CONFIG -= app_bundle
 
+win32:UI_TOKEN_PYTHON = python
+unix:UI_TOKEN_PYTHON = python3
+UI_TOKEN_SCRIPT = $$system_path($$clean_path($$PWD/../../../scripts/generate_ui_tokens.py))
+QMAKE_PRE_LINK += $$UI_TOKEN_PYTHON "$$UI_TOKEN_SCRIPT" --check
+
 SOURCES += \
     main.cpp \
     app/mainwindow.cpp \
