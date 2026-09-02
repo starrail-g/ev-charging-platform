@@ -1,195 +1,77 @@
 # Current Project State
 
-## Overview
+## Project and stage
 
-Project: EV Charging Platform / 电动汽车充电桩应用管理平台
+- Project: 东软电动汽车充电桩应用管理平台。
+- Current stage: 第一阶段最小闭环开发；真实截止时间为 2026-09-10 24:00。第二阶段截止 2026-09-17 24:00，个人报告截止 2026-09-18 24:00。
+- This file was updated for `A-S1-02` on 2026-09-02. The requirements source of truth is `docs/requirements/requirements-matrix.md`.
 
-The project implements the application management platform defined by
-the project requirements.
+## Architecture and boundaries
 
-Required product areas include:
+- `apps/user-client` (A): Qt user UI, session state, station/pile discovery, navigation entry, reservation–charging–billing–settlement interaction, profile and wallet. It never accesses runtime SQLite directly.
+- `apps/admin-client` and `dashboard` (C): management UI and ECharts presentation. They consume server/provided data and do not define database or Socket rules.
+- `server`, `libs/protocol`, `libs/database`, and `database` (B): Socket, authentication, business/state validation, transactions, concurrency and SQLite persistence.
+- `ml` (B/C, S2): 1/6/24-hour load and idle-pile/peak prediction, low-congestion recommendation, load warning, and a callable model-service boundary.
+- Mandatory build protocol: all Qt/C++ modules must use `qmake6`; CMake is forbidden as a build, test, acceptance, or release path. See `docs/meetings/build-system-protocol-2026-09-02.md`.
 
--   Qt user client
--   Linux + Qt PC management application
--   server-side communication/business processing
--   SQLite-backed persistent data
--   ECharts Web big-data dashboard
--   intelligent charging-load analysis and forecasting
+Target flow: Qt clients/dashboard → unified protocol or data interface → server → database layer → SQLite.
 
-Current stage: **阶段一开发中（角色 C：管理端工程骨架已可构建）**。
+## Current status
 
-No production feature should currently be treated as complete unless
-verified in the repository.
+- `A-S1-01`: **已完成**. Requirements traceability, stage boundaries, dependencies and public-task assignments are recorded in `docs/requirements/requirements-matrix.md` and the project task records.
+- `A-S1-02`: Mock baseline plus an opt-in protocol-v1 `SocketUserService` adapter are implemented. The adapter is build-verified but real business responses remain pending B handlers; Mock remains the default runtime path.
+- B backend baseline is merged into `main` (`3b8cf78` via merge `3c31826`): SQLite schema v0.2, deterministic seed/migration, protocol v1 framing/envelope/error codes, and health/echo diagnostic server are available. Database-backed business handlers, runtime data-access integration, and full endpoint tests remain to be completed before end-to-end closure.
+- C admin/dashboard work and cross-module testing remain in progress; no C task is marked complete by this update.
 
-## Status
+## A-S1-02 delivered scope
 
-Completed project setup work:
+- User-window navigation with a 420×760 mobile-style layout, centralized `SessionManager`, login/logout and two-step registration validation.
+- Deterministic Mock station/pile query with loading, empty, unavailable, timeout and service-error feedback; station cards show dynamic idle/total counts and pile details show type, power, status and price.
+- Adapter-only order flow: create/reserve, start charging, stop charging, settle, cancel reservation, current-order status and newest-first completed history with completion time, station address and amount.
+- Mock/offline navigation route with explicit Mock labeling and local-only `TENCENT_MAP_KEY` configuration placeholder. No real key is stored in source, documentation or Git.
+- Profile nickname/avatar and wallet Mock operations; no UI code contains SQL or direct SQLite access.
+- Regression fix for early `orderSummary_` access; the label is constructed before login refresh can run.
+- Review fixes applied: all business methods reject empty user IDs; profile/avatar changes persist in Mock; registration is reachable from login; route mode is passed to the adapter and coordinates are range/finite checked. Login now follows protocol v1 phone-only behavior.
+- Monetary DTOs use integer cents (`walletBalanceCents`, `priceCentsPerKwh`, `amountCents`). Mock reservation now returns `PendingReservation` and requires `confirmReservation`; settlement checks balance, deducts cents atomically on success, and leaves the order pending on insufficient balance.
+- DTO includes a temporary `UserStatus` and `Offline` pile state. Mock external IDs remain strings for the current demo; `SocketUserService` maps them to protocol integer IDs at the wire boundary and rejects empty/invalid user IDs before sending business requests.
+- Protocol v1 adapter status: shared frame codec, request IDs, numeric error codes, phone-only `user.login`, environment-configured host/port, complete-frame writes, response-type validation, integer wire-ID conversion, user/station/pile/order JSON mapping and v1 operation names are implemented in `SocketUserService`. The adapter remains opt-in because B business handlers are not yet available; registration/history/routes are explicitly reported as unsupported where v1 has no operation. Frozen-user enforcement and full transaction/idempotency guarantees remain server responsibilities. Calls are currently synchronous and should move off the GUI thread before production use.
 
--   project requirements have been obtained and reviewed
--   monorepo skeleton has been created
--   basic Git/GitHub collaboration guidance has been prepared
--   project-level Codex instructions are defined in `AGENTS.md`
--   persistent project state is tracked in this file
+## Validation and evidence
 
-Current implementation state (2026-09-02):
+- Ubuntu VM qmake6 evidence: `qmake6 --version` reports Qt 6.2.4; clean application and QtTest builds **PASS**; QtTest **PASS** with 8 cases; GUI startup binary is produced. SSH test execution uses `QT_QPA_PLATFORM=offscreen` because no display is attached.
+- This Windows host has no local qmake6 or SQLite CLI; qmake6 verification is performed in the Ubuntu VM. The real GUI/Socket/database end-to-end path is still pending.
+- Before each commit/PR, scan tracked content for credentials and inspect `git diff --check`; only placeholders may appear in `config/example.env`.
 
--   workspace boundary fixed: this repository keeps only GitHub project
-    artifacts; local plans/specs live in a sibling `superpowers` folder
-    and generated builds live in a sibling `build` folder
--   **build system decided: qmake（CMake 不维护）**；admin-client 可构建
--   **B 的 PR #1 已合入 origin/main（T-B0.1/0.2/0.3）**：协议 v1 冻结（信封/错误码/操作名/
-    桩五态/金额分/UTC 时间）、database schema v0.2 + seed（admin/123456）、
-    migration 原子性与帧解码 P0/P1 已修（C 复验计划 9/5-6）
--   admin-client 登录 TDD 完成（9/2）：`AdminRepository` 抽象 + `MockAdminRepository`
-    （admin/123456，对齐 B seed）+ `tst_loginflow` 四场景（成功/密码错误 1100/服务不可用/
-    空输入 3 组）Totals 6 passed 全绿；空输入断言 Repository 未被调用；
-    `onLoginSuccess` 已收紧 private（无绕过入口）；登录错误按协议码分支（1100/网络错误）
--   admin-client 四态组件 `StateStack`（加载/空/错误/正常）+ 概览页 Mock 摘要接入（9/2 初版）
--   adminmodels（桩/站/用户/概览字段按 schema.sql 自拟，待 9/4 对齐 B）+ `mockdataset` 三组
-    Mock 数据（正常/空/错误，金额分、UTC、五态）
--   冒烟测试 3 个测试函数（窗口创建/登录锁定与防回退/概览四态）Totals 5 passed；
-    登录测试 Totals 6 passed；`git diff --check` 通过
--   材料：需求矩阵 +"计划实现日期"列；测试用例登录 4 场景（test-cases-login.md）；
-    缺陷日志登记 C-S1-001(P0)/002(P1) 责任人 B；B 待办清单已生成（待转发）
--   角色 C 需求追溯表（C-S1-001~032）建于 `docs/requirements/README.md`
--   架构文档 `docs/architecture/admin-client.md`（页面层/Repository/Mock-Socket 双实现）
--   Socket protocol v1 已冻结（信封/错误码/操作名/桩五态/金额分/UTC 时间）；
-    对象字段级冻结待 9/4 评审（B）；9/7 18:00 接口闸门确认可运行范围
--   CI 非当前优先级
+## Dependencies and TODO
 
-## Architecture
+- `A-S1-02` real integration: `SocketUserService` now provides the B-compatible protocol-v1 adapter with an opt-in transport switch; replace/extend only this adapter when B business handlers and final response fields are available.
+- `A-S1-02` navigation: add Tencent Maps geocoding and basic driving/walking route display from local configuration; retain explicit Mock/offline fallback and record failure/Key-missing evidence.
+- Detailed user-client requirements and Tencent Maps investigation are recorded in `docs/ui/user-client-detailed-requirements.md`, including the Linux + Qt baseline, acceptance flow, API probe command, Key-safety rules and GitHub reference projects. Real POI fields are not yet treated as business prices/pile counts/statuses; those remain B/Mock data until verified.
+- `B-S1-01`/`B-S1-02`: finish runtime database access, transaction-backed login/station/pile/order handlers and stable request/response samples before client replacement.
+- `C-S1-01`/`C-S1-02`/`C-S1-03`: finish admin pages, dashboard data path, clean-build and cross-module evidence. End-to-end closure requires A, B and C paths plus abnormal-case tests.
+- S2 intelligent-analysis chain: data preparation → model-service contract → predictions/recommendation/warning → B service adaptation → C display → integrated validation. It must not block the S1 basic charging loop.
 
-Current target module layout:
+## Collaboration and security rules
 
-``` text
-apps/user-client       Qt user client
-apps/admin-client      Qt PC management application
+- Work on task branches and deliver through Pull Requests; do not push directly to `main` or force-push.
+- Any code or architecture change must update this file and the relevant design/API document, keeping only current, actionable information.
+- All Qt/C++ build and test evidence must use `qmake6`; CMake is not an accepted project path.
+- Never commit Tencent Maps keys, passwords, tokens, private keys, runtime databases, logs or generated build output. Real map credentials stay in ignored local configuration.
 
-server                 Socket/server business layer
+## Recent history
 
-libs/common            shared C++ utilities/types
-libs/protocol          shared communication protocol
-libs/database          database access layer
+- `A-S1-01` requirements baseline and repository/task records completed.
+- B schema/protocol foundation merged to `main`.
+- A user-client Mock baseline implemented, tested on Ubuntu VM, and prepared on branch `member-a-user-client` for PR review.
+- User-client detailed requirements file added; Tencent Maps POI/API probe and similar-project research are the next integration step.
+## 同学 A 任务计划
 
-database               schema, migrations, seed data
+- 新增 `docs/role-a-delivery-plan.md`，记录同学 A 阶段 I/II 任务、依赖、验收标准和交付清单。
+- `A-S1-01`、`A-S1-02` 已完成；协议 v1 适配器已有实现，真实业务 Socket/SQLite 联调和端到端验证仍待 B 服务端业务处理器稳定后推进。
+- 后续 A 任务包括联调测试、腾讯地图导航优化、智能分析结果展示和最终 qmake6 交付；不得将 Mock 或适配器构建通过误记为真实闭环完成。
+## Main 合入后的 C 端状态
 
-dashboard              ECharts Web dashboard
-
-ml                     intelligent analysis subsystem
-
-docs                    project design/documentation
-tests/integration       cross-module integration tests
-```
-
-Current target data flow for networked application features:
-
-``` text
-User/Admin Qt Client
-        |
-        | Socket
-        v
-      Server
-        |
-        v
- Database Layer
-        |
-        v
-      SQLite
-```
-
-This separation is a project architecture decision for the current
-implementation plan, not a statement that the requirements document
-fixes the exact process layout.
-
-Important architectural details are still pending design.
-
-## TODO
-
-High priority（9/2 完成项已勾）:
-
--   [x] 登录 TDD：tst_loginflow 四场景（成功/密码错误/服务不可用/空输入 3 组）
-    6 passed 全绿，空输入断言 Repository 未调用（9/2）
--   [x] 侧边导航、五页切换、退出登录防回退（9/1 骨架 + 9/2 防回退断言）
--   [x] MockAdminRepository + adminmodels + mockdataset 三组数据（9/2）
--   [ ] 概览页 Mock 指标完善 + 桩/站/用户列表页（9/3-9/5）
--   [ ] ECharts 大屏骨架与 demo JSON（9/3，对齐 mockdataset 口径）
--   [ ] 与 B 确认三接口草案（9/7 18:00 闸门）；B 字段冻结 9/4
--   [ ] SocketAdminRepository 适配层（9/6）
-
-After foundations are stable:
-
--   [ ] implement required user-client features
--   [ ] implement required admin-management features
--   [ ] establish dashboard data path and ECharts pages
--   [ ] define intelligent-analysis data pipeline
--   [ ] implement 1h / 6h / 24h charging-load forecasting
--   [ ] implement station recommendation and load warning
--   [ ] add integration and regression tests for stable flows
-
-## Known Issues
-
--   exact Socket protocol and serialization format are undecided (B, gate 9/7 18:00)（admin.login 契约已冻结，其余随 B 字段冻结 9/4）
--   exact SQLite tables, fields, constraints, and relationships are undecided (B)（schema v0.2 已合入，字段最终冻结 9/4）
--   管理端 statistics/admin/pile/station/user 字段未冻结（B，9/4 评审；C 按 schema.sql 自拟）
--   authentication/session behavior beyond the stated product
-    requirements needs design
--   charging-order state machine and settlement consistency rules need
-    design
--   dashboard-to-backend data interface is undecided
--   ML framework/language and model approach are undecided
--   external Tencent Maps API integration details and development-key
-    handling need design
--   课堂派五份材料模板未发布（先以 docs/ 下 Markdown 为内容源）
-
-These are unresolved design items, not implementation defects.
-
-## Decisions
-
--   use a single monorepo for the complete project
--   organize source code by module/responsibility rather than by
-    contributor
--   keep Qt presentation code separate from reusable
-    protocol/database/business logic
--   use `server` as the intended central Socket/business integration
-    layer
--   keep shared communication contracts under `libs/protocol`
--   keep persistent-data access separated from UI code
--   use `current.md` as concise persistent project state for Codex
-    sessions
--   keep global Codex delegation/runtime rules in the user's global
-    Codex configuration and global `AGENTS.md`; keep this repository's
-    `AGENTS.md` project-specific
--   do not prematurely lock in details that the requirements do not
-    specify
--   maintain `current.md` on every code/architecture change and
-    compress it regularly so it keeps only currently valuable
-    information
--   **2026-09-01: 工作区采用双区边界**：`current.md`、源码和正式项目文档
-    保留在 GitHub 仓库；构思、spec、plan、每日进度与构建产物存放在
-    仓库同级外层目录（如 `superpowers/`、`build/`）
--   **2026-09-01: admin-client 构建系统选定 qmake（.pro），不维护 CMake**；理由：Ubuntu 验收环境 qmake6 现成、东软教程以 .pro 为主线；唯一构建命令见 `apps/admin-client/README.md`
--   **2026-09-01: 角色 C 管理端采用页面层 + AdminRepository 抽象 + Mock/Socket 双实现**，页面不建 Socket 不写 SQL；9/7 18:00 闸门决定真实联调或经 A 批准 Mock 降级
--   **2026-09-01: UI、主题与整体美术风格列为全项目的一等质量目标**：
-    涉及布局、交互、主题或数据可视化的重要设计须先讨论并检索优秀项目与
-    设计体系作为参考；跨 Qt 客户端、大屏和分析产物保持统一视觉语言，
-    在功能正确、安全、数据真实、可靠和无障碍底线之上追求新颖、美观与辨识度
-
-## Recent History
-
--   2026-09-02: 登录 TDD 完成（AdminRepository/MockAdminRepository/tst_loginflow 四场景
-    Totals 6 passed）；onLoginSuccess 收紧 private；StateStack 四态组件（概览页可切换
-    正常/空/错误+重试，冒烟 5 passed）；adminmodels + mockdataset（ok/error 可区分）；
-    需求矩阵加计划实现日期列；测试用例登录 4 场景；缺陷日志 C-S1-001/002；路径硬编码清理
--   2026-09-01: separated local plans/ideas/build output from GitHub project artifacts; restored the formal defect log under `docs/release`
--   2026-09-01: admin-client qmake 工程可构建；冒烟测试 4/4 通过；需求追溯表 C-S1-001~032；架构/缺陷/API/UI 文档初始化
--   2026-09-01: established project-wide UI/theme/visual-design principles, including design discussion, Web reference research, cross-surface consistency, complete interaction states, and truthful data visualization
--   2026-08-31: 团队分工确认（A 用户端、B 服务端、C 管理端/大屏/测试发布）；第一阶段截止校正为 9/10
--   reviewed the project requirements and identified the main product
-    modules
--   created the initial monorepo directory skeleton
--   prepared a beginner-friendly Git/GitHub collaboration guide
--   established the project-specific `AGENTS.md`
--   initialized `current.md`
-
-Keep this history concise. Compress or replace old entries as the
-project progresses rather than appending indefinitely.
+- `main` 已包含 C 管理端基础工程：qmake 工程、五页导航、`AdminRepository`/`MockAdminRepository`、登录 TDD，以及概览页加载/空/错误/正常四态。
+- C 的真实管理业务接口、桩/站点/用户资源页面、ECharts 大屏数据链路和跨模块联调仍未完成；这些状态不能提前标记为完成。
+- C 的字段和接口必须继续对齐 B 的协议 v1、SQLite schema v0.2 和需求矩阵；不在 UI 文档中重新定义协议或数据库规则。
+- 阶段 I 仍以 2026-09-10 24:00 为截止；C 的接口对齐、qmake6 构建和联调证据按 `main` 当前计划推进。
