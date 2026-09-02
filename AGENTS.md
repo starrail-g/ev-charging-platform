@@ -331,10 +331,16 @@ directories because they are GitHub project artifacts.
 
 ## Build and Validation
 
-The project requirements do not mandate CMake or qmake.
+The repository has explicitly adopted `qmake6` as its only authoritative
+Qt/C++ build and test system. Do not use `cmake` or CMake files for build,
+test, acceptance, or release evidence. Each Qt module must provide a `.pro`
+file that can be configured with `qmake6`; existing CMake files are legacy
+and non-authoritative until removed in a separate cleanup task.
 
-Do not treat either as authoritative until the repository explicitly
-adopts a build system.
+Before claiming a build or test result, record `qmake6 --version`, the exact
+`.pro` command, the `make` command, and the executable/test result. If
+`qmake6` is unavailable, report the environment limitation and move the
+verification to the Ubuntu/VM environment; do not substitute CMake.
 
 For implementation work, validate the affected module using the
 build/test path that actually exists in the repository.
