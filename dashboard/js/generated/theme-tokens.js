@@ -11,6 +11,7 @@ export const themeTokens = {
       "mutedText": "#5F7068",
       "decorativeStructure": "#CBD2CE",
       "topologyLine": "#5F7068",
+      "focusBlue": "#0E6E8C",
       "states": {
         "idle": "#2A7442",
         "reserved": "#8A5A00",

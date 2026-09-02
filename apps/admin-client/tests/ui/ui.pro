@@ -8,13 +8,32 @@ INCLUDEPATH += ../../src
 
 SOURCES += \
     tst_ui.cpp \
+    ../../src/app/mainwindow.cpp \
+    ../../src/pages/loginpage.cpp \
+    ../../src/pages/overviewpage.cpp \
+    ../../src/pages/pilepage.cpp \
+    ../../src/pages/stationpage.cpp \
+    ../../src/pages/userpage.cpp \
+    ../../src/data/mockadminrepository.cpp \
+    ../../src/data/mockdataset.cpp \
     ../../src/theme/theme.cpp \
+    ../../src/widgets/statestack.cpp \
     ../../src/widgets/statuspulsewidget.cpp \
     ../../src/widgets/statustag.cpp \
     ../../src/models/adminmodels.cpp
 
 HEADERS += \
+    ../../src/app/mainwindow.h \
+    ../../src/pages/loginpage.h \
+    ../../src/pages/overviewpage.h \
+    ../../src/pages/pilepage.h \
+    ../../src/pages/stationpage.h \
+    ../../src/pages/userpage.h \
+    ../../src/data/adminrepository.h \
+    ../../src/data/mockadminrepository.h \
+    ../../src/data/mockdataset.h \
     ../../src/theme/theme.h \
+    ../../src/widgets/statestack.h \
     ../../src/widgets/statuspulsewidget.h \
     ../../src/widgets/statustag.h \
     ../../src/models/adminmodels.h

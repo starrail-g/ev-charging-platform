@@ -1,5 +1,26 @@
 QWidget { color: #18201D; background-color: #EDF0EE; }
 QFrame[panel="true"] { background-color: #F7F8F7; border: 1px solid #CBD2CE; border-radius: 8px; }
+QWidget#businessArea, QWidget#loginPage { background-color: #EDF0EE; }
+QFrame#navigationRail { background-color: #F7F8F7; border: none; border-right: 1px solid #CBD2CE; }
+QLabel#productMark, QLabel#loginProductMark { color: #18201D; font-size: 18px; font-weight: 700; }
+QLabel#sessionBadge { color: #2A7442; font-size: 12px; }
+QLabel#pageTitle, QLabel#loginTitle { color: #18201D; font-size: 22px; font-weight: 700; }
+QLabel#pageContext, QLabel#loginDescription { color: #5F7068; font-size: 12px; }
+QListWidget#navList { background: transparent; border: none; outline: none; padding: 0; }
+QListWidget#navList::item { color: #5F7068; min-height: 40px; padding-left: 12px; border-radius: 6px; }
+QListWidget#navList::item:hover { background-color: #CBD2CE; color: #18201D; }
+QListWidget#navList::item:selected { background-color: #2A7442; color: #F7F8F7; }
+QFrame#loginPanel { background-color: #F7F8F7; border: 1px solid #CBD2CE; border-radius: 8px; }
+QLineEdit { background-color: #F7F8F7; color: #18201D; border: 1px solid #5F7068; border-radius: 6px; padding: 9px 11px; min-height: 22px; selection-background-color: #0E6E8C; }
+QLineEdit:hover { border-color: #5F7068; }
+QLineEdit:focus { border: 2px solid #0E6E8C; padding: 8px 10px; }
+QPushButton { background-color: #0E6E8C; color: #F7F8F7; border: 1px solid #0E6E8C; border-radius: 6px; padding: 9px 14px; min-height: 20px; }
+QPushButton:hover { background-color: #18201D; border-color: #18201D; }
+QPushButton:focus { border: 2px solid #18201D; padding: 8px 13px; }
+QPushButton:disabled { background-color: #CBD2CE; color: #5F7068; border-color: #CBD2CE; }
+QPushButton#logoutButton { background: transparent; color: #5F7068; border-color: #5F7068; }
+QPushButton#logoutButton:hover { color: #18201D; background-color: #CBD2CE; }
+QLabel[role="alert"] { color: #A94B38; }
 QLabel[state="idle"] { color: #2A7442; }
 QLabel[state="reserved"] { color: #8A5A00; }
 QLabel[state="charging"] { color: #0E6E8C; }

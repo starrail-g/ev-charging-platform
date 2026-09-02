@@ -1,6 +1,13 @@
 #include <QtTest>
 
+#include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+
+#include "app/mainwindow.h"
+#include "data/mockadminrepository.h"
 #include "models/adminmodels.h"
+#include "pages/loginpage.h"
 #include "theme/theme.h"
 #include "widgets/statuspulsewidget.h"
 #include "widgets/statustag.h"
@@ -14,6 +21,8 @@ private slots:
     void chargingAndFaultAnimateWhenMotionEnabled();
     void reducedMotionStopsAnimation();
     void themeLoadsGeneratedQss();
+    void shellExposesProductAndSessionContext();
+    void loginFieldsHaveAccessibleNames();
 };
 
 void TestUi::statusTagsExposeProtocolState()
@@ -56,6 +65,26 @@ void TestUi::themeLoadsGeneratedQss()
     QVERIFY(!qss.isEmpty());
     QVERIFY(qss.contains(QStringLiteral("#2A7442")));
     QVERIFY(qss.contains(QStringLiteral("#A94B38")));
+}
+
+void TestUi::shellExposesProductAndSessionContext()
+{
+    MainWindow window;
+    QVERIFY(window.findChild<QLabel *>("productMark"));
+    QVERIFY(window.findChild<QLabel *>("sessionBadge"));
+    auto *nav = window.findChild<QListWidget *>("navList");
+    QVERIFY(nav);
+    QCOMPARE(nav->count(), 4);
+}
+
+void TestUi::loginFieldsHaveAccessibleNames()
+{
+    MockAdminRepository repository;
+    LoginPage page(&repository);
+    QCOMPARE(page.findChild<QLineEdit *>("usernameEdit")->accessibleName(),
+             QStringLiteral("管理员账号"));
+    QCOMPARE(page.findChild<QLineEdit *>("passwordEdit")->accessibleName(),
+             QStringLiteral("管理员密码"));
 }
 
 QTEST_MAIN(TestUi)

@@ -7,6 +7,7 @@ inline const QColor kDayText{"#18201D"};
 inline const QColor kDayMutedText{"#5F7068"};
 inline const QColor kDayDecorativeStructure{"#CBD2CE"};
 inline const QColor kDayTopologyLine{"#5F7068"};
+inline const QColor kDayFocusBlue{"#0E6E8C"};
 inline const QColor kDayIdle{"#2A7442"};
 inline const QColor kDayReserved{"#8A5A00"};
 inline const QColor kDayCharging{"#0E6E8C"};
