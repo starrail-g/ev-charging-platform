@@ -21,7 +21,10 @@ SOURCES += \
     data/mockadminrepository.cpp \
     data/mockdataset.cpp \
     models/adminmodels.cpp \
-    widgets/statestack.cpp
+    theme/theme.cpp \
+    widgets/statestack.cpp \
+    widgets/statuspulsewidget.cpp \
+    widgets/statustag.cpp
 
 HEADERS += \
     app/mainwindow.h \
@@ -34,7 +37,11 @@ HEADERS += \
     data/mockadminrepository.h \
     data/mockdataset.h \
     models/adminmodels.h \
-    widgets/statestack.h
+    theme/theme.h \
+    theme/generated/theme_tokens.h \
+    widgets/statestack.h \
+    widgets/statuspulsewidget.h \
+    widgets/statustag.h
 
 RESOURCES += \
     ../resources/admin-client.qrc

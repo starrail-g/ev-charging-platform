@@ -113,6 +113,8 @@ High priority（9/2 完成项已勾）:
 -   [x] 统一 UI Task 1：唯一视觉令牌源、四端生成文件与对比度/漂移测试
 -   [x] 统一 UI Task 2：qmake 跨平台 token 漂移 pre-link 校验、QSS 资源接入、
     `config/local.env` 密钥隔离与 dashboard 示例配置
+-   [x] 统一 UI Task 3：Qt 日班主题启动加载、协议五态标签、充电/故障低幅状态脉冲，
+    支持 `EV_UI_REDUCED_MOTION=1` 与测试显式停用动画
 -   [x] 登录 TDD：tst_loginflow 四场景（成功/密码错误/服务不可用/空输入 3 组）
     6 passed 全绿，空输入断言 Repository 未调用（9/2）
 -   [x] 侧边导航、五页切换、退出登录防回退（9/1 骨架 + 9/2 防回退断言）
