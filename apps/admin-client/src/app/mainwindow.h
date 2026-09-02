@@ -3,6 +3,8 @@
 
 #include <QMainWindow>
 
+#include <QString>
+
 #include <memory>
 
 namespace ev {
@@ -41,8 +43,12 @@ private slots:
 
 private:
     void buildBusinessArea();
+    // 状态栏登录态文案：数据来源标识来自 Repository（dataSourceName），
+    // 不硬编码具体实现名（P2 review 修复）
+    QString loggedInStatusText(const QString &page) const;
 
     std::unique_ptr<ev::AdminRepository> m_ownedRepository;
+    QString m_dataSourceLabel; // 状态栏来源标识（构造时取自已注入的 Repository）
     QStackedWidget *m_stack = nullptr;
     LoginPage *m_loginPage = nullptr;
     QWidget *m_businessArea = nullptr;

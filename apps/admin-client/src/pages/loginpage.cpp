@@ -10,6 +10,7 @@ namespace {
 constexpr int kCodeUnauthorized = 1100;
 constexpr int kMaxUsernameLength = 64; // 对齐 administrators.username CHECK 1..64
 constexpr int kMaxPasswordLength = 64; // Mock 层约定，与后端哈希输入口径一致
+constexpr int kLoginTimeoutMs = 10000; // Socket 接入后的传输超时保护（P1 review）
 } // namespace
 
 LoginPage::LoginPage(ev::AdminRepository *repository, QWidget *parent)
@@ -48,13 +49,33 @@ LoginPage::LoginPage(ev::AdminRepository *repository, QWidget *parent)
     layout->addWidget(m_loginButton, 0, Qt::AlignHCenter);
     layout->addStretch();
 
+    m_timeoutTimer.setSingleShot(true);
+    connect(&m_timeoutTimer, &QTimer::timeout, this, &LoginPage::onLoginTimeout);
+
     connect(m_loginButton, &QPushButton::clicked, this, &LoginPage::attemptLogin);
     connect(m_usernameEdit, &QLineEdit::returnPressed, this, &LoginPage::attemptLogin);
     connect(m_passwordEdit, &QLineEdit::returnPressed, this, &LoginPage::attemptLogin);
 }
 
+void LoginPage::clearCredentials()
+{
+    m_usernameEdit->clear();
+    m_passwordEdit->clear();
+    m_errorLabel->clear();
+    m_errorLabel->setVisible(false);
+    // 作废在飞登录请求（防御性：正常流程登出时无在飞请求）；
+    // 迟到的回调会因 m_loginPending=false 被 onLoginFinished 丢弃。
+    m_loginPending = false;
+    m_timeoutTimer.stop();
+    resetLoginButton();
+}
+
 void LoginPage::attemptLogin()
 {
+    // 防重入：在飞请求期间按钮已禁用，理论上不可达
+    if (m_loginPending)
+        return;
+
     // 输入校验：非空 + 长度上限（QLineEdit::setMaxLength 已兜底长度）
     const QString username = m_usernameEdit->text().trimmed();
     const QString password = m_passwordEdit->text();
@@ -64,14 +85,24 @@ void LoginPage::attemptLogin()
         return;
     }
 
-    // 提交中状态（Mock 同步返回；状态机保留给 9/6 Socket 异步接入）
+    // 提交中状态：异步请求在飞，期间禁用按钮（防连点产生多个请求）
+    m_loginPending = true;
     m_loginButton->setEnabled(false);
     m_loginButton->setText(QStringLiteral("登录中…"));
+    m_timeoutTimer.start(kLoginTimeoutMs);
 
-    const ev::LoginResult result = m_repository->login(username, password);
+    // 异步调用：结果经回调投递；context=this 保证页面销毁后不再回调（生命周期保护）
+    m_repository->login(username, password, this,
+                        [this](const ev::LoginResult &result) { onLoginFinished(result); });
+}
 
-    m_loginButton->setEnabled(true);
-    m_loginButton->setText(QStringLiteral("登 录"));
+void LoginPage::onLoginFinished(const ev::LoginResult &result)
+{
+    if (!m_loginPending)
+        return; // 已超时或已取消：丢弃迟到的结果
+    m_loginPending = false;
+    m_timeoutTimer.stop();
+    resetLoginButton();
 
     if (result.ok) {
         m_errorLabel->setVisible(false);
@@ -92,4 +123,20 @@ void LoginPage::attemptLogin()
     }
     m_errorLabel->setText(text);
     m_errorLabel->setVisible(true);
+}
+
+void LoginPage::onLoginTimeout()
+{
+    if (!m_loginPending)
+        return;
+    m_loginPending = false; // 作废在飞请求：迟到的回调将被 onLoginFinished 丢弃
+    resetLoginButton();
+    m_errorLabel->setText(QStringLiteral("登录超时，请稍后重试"));
+    m_errorLabel->setVisible(true);
+}
+
+void LoginPage::resetLoginButton()
+{
+    m_loginButton->setEnabled(true);
+    m_loginButton->setText(QStringLiteral("登 录"));
 }

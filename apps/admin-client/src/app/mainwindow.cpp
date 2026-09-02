@@ -25,6 +25,8 @@ MainWindow::MainWindow(ev::AdminRepository *repository, QWidget *parent)
         m_ownedRepository = std::make_unique<MockAdminRepository>();
         repository = m_ownedRepository.get();
     }
+    // 数据来源标识来自 Repository 自身（不硬编码 "Mock 演示"，P2 review 修复）
+    m_dataSourceLabel = repository->dataSourceName();
     m_stack = new QStackedWidget(this);
     m_stack->setObjectName(QStringLiteral("mainStack"));
     m_loginPage = new LoginPage(repository, m_stack);
@@ -79,14 +81,14 @@ void MainWindow::buildBusinessArea()
 
     connect(m_navList, &QListWidget::currentRowChanged,
             pageStack, &QStackedWidget::setCurrentIndex);
-    // 标题联动：状态栏显示当前页面
+    // 标题联动：状态栏显示当前页面（来源标识来自 Repository，见 loggedInStatusText）
     connect(m_navList, &QListWidget::currentRowChanged, this, [this](int row) {
         const QString page = (row >= 0 && row < m_navList->count())
             ? m_navList->item(row)->text()
             : QString();
         statusBar()->showMessage(page.isEmpty()
             ? QStringLiteral("未登录")
-            : QStringLiteral("已登录（Mock 演示）· %1").arg(page));
+            : loggedInStatusText(page));
     });
     connect(logoutButton, &QPushButton::clicked,
             this, &MainWindow::onLogout);
@@ -98,7 +100,7 @@ void MainWindow::onLoginSuccess()
     m_navList->setEnabled(true);
     m_navList->setCurrentRow(0);
     m_stack->setCurrentWidget(m_businessArea);
-    statusBar()->showMessage(QStringLiteral("已登录（Mock 演示）· 概览"));
+    statusBar()->showMessage(loggedInStatusText(QStringLiteral("概览")));
     m_overviewPage->refresh(); // 概览页加载 Mock 数据
 }
 
@@ -108,5 +110,14 @@ void MainWindow::onLogout()
     m_navList->setCurrentRow(-1);
     m_navList->setEnabled(false);
     m_stack->setCurrentWidget(m_loginPage);
+    // 清空登录页凭据：下一位使用者不得沿用上一位账号/密码（P1 review 修复）
+    m_loginPage->clearCredentials();
     statusBar()->showMessage(QStringLiteral("未登录"));
+}
+
+QString MainWindow::loggedInStatusText(const QString &page) const
+{
+    if (m_dataSourceLabel.isEmpty())
+        return QStringLiteral("已登录 · %1").arg(page);
+    return QStringLiteral("已登录（%1）· %2").arg(m_dataSourceLabel, page);
 }

@@ -5,12 +5,46 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QStackedWidget>
+#include <QStatusBar>
+#include <QTimer>
+
+#include <functional>
 
 #include "app/mainwindow.h"
+#include "data/adminrepository.h"
 #include "data/mockdataset.h"
 #include "pages/loginpage.h"
 #include "pages/overviewpage.h"
 #include "widgets/statestack.h"
+
+namespace {
+
+// 模拟未来 Socket 适配层：登录成功 + 自定义数据来源标识（P2 review 用例）
+class FakeSocketRepository : public ev::AdminRepository
+{
+public:
+    void login(const QString &, const QString &, QObject *context,
+               std::function<void(const ev::LoginResult &)> callback) override
+    {
+        ev::LoginResult result;
+        result.ok = true;
+        result.errorCode = 0;
+        result.admin = ev::AdminInfo{1, QStringLiteral("admin"),
+                                     QStringLiteral("super_admin"), QStringLiteral("active")};
+        QTimer::singleShot(0, context,
+                           [result, callback = std::move(callback)] {
+                               if (callback)
+                                   callback(result);
+                           });
+    }
+
+    QString dataSourceName() const override
+    {
+        return QStringLiteral("Socket 测试源");
+    }
+};
+
+} // namespace
 
 class TestLaunchSmoke : public QObject
 {
@@ -21,6 +55,7 @@ private slots:
     void windowCreatesWithoutCrash();
     void businessAreaLockedUntilLogin();
     void overviewFourStatesShowMockData();
+    void dataSourceLabelReflectsRepository();
 };
 
 void TestLaunchSmoke::initTestCase()
@@ -57,8 +92,8 @@ void TestLaunchSmoke::businessAreaLockedUntilLogin()
     pass->setText(QStringLiteral("123456"));
     QTest::mouseClick(button, Qt::LeftButton);
 
-    // 登录后：导航可用
-    QVERIFY(window.isLoggedIn());
+    // 登录后：导航可用（异步登录，等待回调派发）
+    QTRY_VERIFY(window.isLoggedIn());
     QVERIFY(nav->isEnabled());
 
     // 退出登录后：再次锁定
@@ -91,7 +126,7 @@ void TestLaunchSmoke::overviewFourStatesShowMockData()
     loginPage->findChild<QLineEdit *>("usernameEdit")->setText(QStringLiteral("admin"));
     loginPage->findChild<QLineEdit *>("passwordEdit")->setText(QStringLiteral("123456"));
     QTest::mouseClick(loginPage->findChild<QPushButton *>("loginButton"), Qt::LeftButton);
-    QVERIFY(window.isLoggedIn());
+    QTRY_VERIFY(window.isLoggedIn());
 
     auto *overview = window.findChild<OverviewPage *>();
     QVERIFY(overview);
@@ -103,7 +138,7 @@ void TestLaunchSmoke::overviewFourStatesShowMockData()
     combo->setCurrentIndex(int(ev::mockdata::DataMode::Normal));
     QCOMPARE(int(stack->currentState()), int(StateStack::State::Content));
 
-    // 空：Empty 态
+    // 空：Empty 态（hasData=false 显式声明，不靠数值反推）
     combo->setCurrentIndex(int(ev::mockdata::DataMode::Empty));
     QCOMPARE(int(stack->currentState()), int(StateStack::State::Empty));
 
@@ -118,6 +153,27 @@ void TestLaunchSmoke::overviewFourStatesShowMockData()
     // 切回正常：恢复 Content
     combo->setCurrentIndex(int(ev::mockdata::DataMode::Normal));
     QCOMPARE(int(stack->currentState()), int(StateStack::State::Content));
+}
+
+// 状态栏来源标识必须来自 Repository（P2 review）：注入非 Mock 实现时
+// 不得再显示"Mock 演示"。
+void TestLaunchSmoke::dataSourceLabelReflectsRepository()
+{
+    FakeSocketRepository repo;
+    MainWindow window(&repo);
+    window.show();
+    auto *loginPage = window.findChild<LoginPage *>();
+    QVERIFY(loginPage);
+    loginPage->findChild<QLineEdit *>("usernameEdit")->setText(QStringLiteral("admin"));
+    loginPage->findChild<QLineEdit *>("passwordEdit")->setText(QStringLiteral("123456"));
+    QTest::mouseClick(loginPage->findChild<QPushButton *>("loginButton"), Qt::LeftButton);
+    QTRY_VERIFY(window.isLoggedIn());
+
+    const QString msg = window.statusBar()->currentMessage();
+    QVERIFY2(msg.contains(QStringLiteral("Socket 测试源")),
+             qPrintable(QStringLiteral("状态栏应显示 Repository 提供的来源标识，实际：%1").arg(msg)));
+    QVERIFY2(!msg.contains(QStringLiteral("Mock 演示")),
+             "注入真实 Repository 时状态栏不得再显示 Mock 演示");
 }
 
 QTEST_MAIN(TestLaunchSmoke)

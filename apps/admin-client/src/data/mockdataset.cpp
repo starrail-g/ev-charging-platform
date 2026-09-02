@@ -90,6 +90,7 @@ OverviewResult overview(DataMode mode)
     result.stats.pileOffline = 1;
     result.stats.avgStationUtilization = 0.42;      // 42%
     result.stats.updatedAt = QStringLiteral("2026-09-01T10:15:00Z");
+    result.hasData = true;
     return result;
 }
 

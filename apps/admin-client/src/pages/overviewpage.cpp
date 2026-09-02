@@ -65,15 +65,15 @@ void OverviewPage::refresh()
         return;
     }
 
-    const ev::OverviewStats &s = result.stats;
-    if (s.revenueCents == 0 && s.pileIdle == 0 && s.pileReserved == 0
-        && s.pileCharging == 0 && s.pileFault == 0 && s.pileOffline == 0) {
-        // 空态（Empty 模式指标全零）：展示空态文案
+    if (!result.hasData) {
+        // 空态由数据层显式声明（hasData=false），不从数值反推——
+        // 新站点/当日无营收时"全零"可能是有效数据（P2 review 修复）
         m_stateStack->showState(StateStack::State::Empty,
-                                QStringLiteral("暂无概览数据（营收与桩状态均为零）"));
+                                QStringLiteral("暂无概览数据"));
         return;
     }
 
+    const ev::OverviewStats &s = result.stats;
     m_summaryLabel->setText(
         QStringLiteral("近 7 日营收：%1 元\n")
             .arg(s.revenueCents / 100.0, 0, 'f', 2)

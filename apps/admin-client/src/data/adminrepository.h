@@ -3,6 +3,10 @@
 
 #include <QString>
 
+#include <functional>
+
+class QObject;
+
 namespace ev {
 
 // 管理员对象。
@@ -32,8 +36,16 @@ class AdminRepository
 public:
     virtual ~AdminRepository() = default;
 
-    // 语义：成功 -> ok=true + admin；失败 -> ok=false + errorCode/networkError
-    virtual LoginResult login(const QString &username, const QString &password) = 0;
+    // 异步登录：立即返回，结果经 callback 投递（同一线程事件循环内派发）。
+    // context 非空时，callback 仅在 context 存活期间被调用（context 销毁后自动取消，防悬垂）；
+    // 调用方负责超时保护（LoginPage 内置 10s 超时）。
+    virtual void login(const QString &username, const QString &password,
+                       QObject *context,
+                       std::function<void(const LoginResult &)> callback) = 0;
+
+    // 数据来源标识（状态栏展示用）：Mock 返回 "Mock 演示"，
+    // 未来 Socket 适配层返回自身标识；空串表示不展示来源。
+    virtual QString dataSourceName() const { return QString(); }
 };
 
 } // namespace ev
