@@ -1,0 +1,8 @@
+QWidget { color: #18201D; background-color: #EDF0EE; }
+QFrame[panel="true"] { background-color: #F7F8F7; border: 1px solid #CBD2CE; border-radius: 8px; }
+QLabel[state="idle"] { color: #2A7442; }
+QLabel[state="reserved"] { color: #8A5A00; }
+QLabel[state="charging"] { color: #0E6E8C; }
+QLabel[state="fault"] { color: #A94B38; }
+QLabel[state="offline"] { color: #5B666B; }
+QLabel[state="unknown"] { color: #4E5A55; }

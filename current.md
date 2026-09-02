@@ -16,7 +16,7 @@ Required product areas include:
 -   ECharts Web big-data dashboard
 -   intelligent charging-load analysis and forecasting
 
-Current stage: **阶段一开发中（角色 C：管理端工程骨架已可构建）**。
+Current stage: **阶段一开发中（角色 C：统一 UI 视觉令牌已落地，管理端主题基础开发中）**。
 
 No production feature should currently be treated as complete unless
 verified in the repository.
@@ -33,6 +33,9 @@ Completed project setup work:
 
 Current implementation state (2026-09-02):
 
+-   统一 UI 已冻结为“A 运营调度台构图 + 原始昼夜电网配色 + 11 秒闭合呼吸极光”；
+    `libs/common/ui/design-tokens.json` 成为昼/夜主题、五态色与动效时长的唯一来源，
+    Python 生成器输出 Qt QSS/C++ 与 Web CSS/JS，并对五态 4.5:1、拓扑线 3:1 执行门禁
 -   workspace boundary fixed: this repository keeps only GitHub project
     artifacts; local plans/specs live in a sibling `superpowers` folder
     and generated builds live in a sibling `build` folder
@@ -107,6 +110,7 @@ Important architectural details are still pending design.
 
 High priority（9/2 完成项已勾）:
 
+-   [x] 统一 UI Task 1：唯一视觉令牌源、四端生成文件与对比度/漂移测试
 -   [x] 登录 TDD：tst_loginflow 四场景（成功/密码错误/服务不可用/空输入 3 组）
     6 passed 全绿，空输入断言 Repository 未调用（9/2）
 -   [x] 侧边导航、五页切换、退出登录防回退（9/1 骨架 + 9/2 防回退断言）
@@ -176,6 +180,8 @@ These are unresolved design items, not implementation defects.
 
 ## Recent History
 
+-   2026-09-02: unified UI Task 1 completed via TDD: shared day/night design tokens,
+    deterministic Qt/Web generation, state-color AA gate, and topology-line contrast gate
 -   2026-09-02: 登录 TDD 完成（AdminRepository/MockAdminRepository/tst_loginflow 四场景
     Totals 6 passed）；onLoginSuccess 收紧 private；StateStack 四态组件（概览页可切换
     正常/空/错误+重试，冒烟 5 passed）；adminmodels + mockdataset（ok/error 可区分）；

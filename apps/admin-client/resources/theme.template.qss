@@ -1,0 +1,8 @@
+QWidget { color: @themes.day.text; background-color: @themes.day.background; }
+QFrame[panel="true"] { background-color: @themes.day.surface; border: 1px solid @themes.day.decorativeStructure; border-radius: @shape.panelRadiuspx; }
+QLabel[state="idle"] { color: @themes.day.states.idle; }
+QLabel[state="reserved"] { color: @themes.day.states.reserved; }
+QLabel[state="charging"] { color: @themes.day.states.charging; }
+QLabel[state="fault"] { color: @themes.day.states.fault; }
+QLabel[state="offline"] { color: @themes.day.states.offline; }
+QLabel[state="unknown"] { color: @themes.day.states.unknown; }
