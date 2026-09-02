@@ -19,7 +19,7 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 ## Current status
 
 - `A-S1-01`: **已完成**. Requirements traceability, stage boundaries, dependencies and public-task assignments are recorded in `docs/requirements/requirements-matrix.md` and the project task records.
-- `A-S1-02`: Mock baseline plus an opt-in protocol-v1 `SocketUserService` adapter are implemented. The adapter is build-verified but real business responses remain pending B handlers; Mock remains the default runtime path.
+- `A-S1-02`: Mock baseline is implemented in the submitted user-client sources. Only `MockUserService` is present; no `SocketUserService` or user-client protocol adapter is included.
 - B backend baseline is merged into `main` (`3b8cf78` via merge `3c31826`): SQLite schema v0.2, deterministic seed/migration, protocol v1 framing/envelope/error codes, and health/echo diagnostic server are available. Database-backed business handlers, runtime data-access integration, and full endpoint tests remain to be completed before end-to-end closure.
 - C admin/dashboard work and cross-module testing remain in progress; no C task is marked complete by this update.
 
@@ -27,24 +27,24 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 
 - User-window navigation with a 420×760 mobile-style layout, centralized `SessionManager`, login/logout and two-step registration validation.
 - Deterministic Mock station/pile query with loading, empty, unavailable, timeout and service-error feedback; station cards show dynamic idle/total counts and pile details show type, power, status and price.
-- Adapter-only order flow: create/reserve, start charging, stop charging, settle, cancel reservation, current-order status and newest-first completed history with completion time, station address and amount.
+- Mock-only order flow: create/reserve, start charging, stop charging, settle, cancel reservation, current-order status and newest-first completed history with completion time, station address and amount.
 - Mock/offline navigation route with explicit Mock labeling and local-only `TENCENT_MAP_KEY` configuration placeholder. No real key is stored in source, documentation or Git.
 - Profile nickname/avatar and wallet Mock operations; no UI code contains SQL or direct SQLite access.
 - Regression fix for early `orderSummary_` access; the label is constructed before login refresh can run.
-- Review fixes applied: all business methods reject empty user IDs; profile/avatar changes persist in Mock; registration is reachable from login; route mode is passed to the adapter and coordinates are range/finite checked. Login now follows protocol v1 phone-only behavior.
+- Review fixes applied: all business methods reject empty user IDs; profile/avatar changes persist in Mock; registration is reachable from login; route mode is passed to the Mock service and coordinates are range/finite checked. Login behavior follows the documented phone-only Mock flow.
 - Monetary DTOs use integer cents (`walletBalanceCents`, `priceCentsPerKwh`, `amountCents`). Mock reservation now returns `PendingReservation` and requires `confirmReservation`; settlement checks balance, deducts cents atomically on success, and leaves the order pending on insufficient balance.
-- DTO includes a temporary `UserStatus` and `Offline` pile state. Mock external IDs remain strings for the current demo; `SocketUserService` maps them to protocol integer IDs at the wire boundary and rejects empty/invalid user IDs before sending business requests.
-- Protocol v1 adapter status: shared frame codec, request IDs, numeric error codes, phone-only `user.login`, environment-configured host/port, complete-frame writes, response-type validation, integer wire-ID conversion, user/station/pile/order JSON mapping and v1 operation names are implemented in `SocketUserService`. The adapter remains opt-in because B business handlers are not yet available; registration/history/routes are explicitly reported as unsupported where v1 has no operation. Frozen-user enforcement and full transaction/idempotency guarantees remain server responsibilities. Calls are currently synchronous and should move off the GUI thread before production use.
+- DTO includes a temporary `UserStatus` and `Offline` pile state. Mock external IDs remain strings for the current demo; no wire-ID conversion or Socket mapping is present in the submitted user-client sources.
+- Socket/Protocol status: no user-client `SocketUserService`, frame codec integration, request/response mapping, or protocol operation implementation is included in this PR. A-S1-03 remains pending until B freezes the contract and a separate adapter implementation is added and verified.
 
 ## Validation and evidence
 
-- Ubuntu VM qmake6 evidence: `qmake6 --version` reports Qt 6.2.4; clean application and QtTest builds **PASS**; QtTest **PASS** with 8 cases; GUI startup binary is produced. SSH test execution uses `QT_QPA_PLATFORM=offscreen` because no display is attached.
+- qmake6 project files and QtTest sources are present, but this PR does not contain independent qmake6 build, test, or GUI-startup evidence. Re-run the commands in Ubuntu/VM and record the output before marking build verification as PASS.
 - This Windows host has no local qmake6 or SQLite CLI; qmake6 verification is performed in the Ubuntu VM. The real GUI/Socket/database end-to-end path is still pending.
 - Before each commit/PR, scan tracked content for credentials and inspect `git diff --check`; only placeholders may appear in `config/example.env`.
 
 ## Dependencies and TODO
 
-- `A-S1-02` real integration: `SocketUserService` now provides the B-compatible protocol-v1 adapter with an opt-in transport switch; replace/extend only this adapter when B business handlers and final response fields are available.
+- `A-S1-02` real integration: implement a B-compatible `IUserService` Socket adapter only after the protocol and response fields are frozen; preserve the Mock/offline switch and map server errors without changing page code.
 - `A-S1-02` navigation: add Tencent Maps geocoding and basic driving/walking route display from local configuration; retain explicit Mock/offline fallback and record failure/Key-missing evidence.
 - Detailed user-client requirements and Tencent Maps investigation are recorded in `docs/ui/user-client-detailed-requirements.md`, including the Linux + Qt baseline, acceptance flow, API probe command, Key-safety rules and GitHub reference projects. Real POI fields are not yet treated as business prices/pile counts/statuses; those remain B/Mock data until verified.
 - `B-S1-01`/`B-S1-02`: finish runtime database access, transaction-backed login/station/pile/order handlers and stable request/response samples before client replacement.
@@ -62,12 +62,12 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 
 - `A-S1-01` requirements baseline and repository/task records completed.
 - B schema/protocol foundation merged to `main`.
-- A user-client Mock baseline implemented, tested on Ubuntu VM, and prepared on branch `member-a-user-client` for PR review.
+- A user-client Mock baseline was added; independent real Socket/SQLite integration and reproducible qmake6 verification remain pending.
 - User-client detailed requirements file added; Tencent Maps POI/API probe and similar-project research are the next integration step.
 ## 同学 A 任务计划
 
 - 新增 `docs/role-a-delivery-plan.md`，记录同学 A 阶段 I/II 任务、依赖、验收标准和交付清单。
-- `A-S1-01`、`A-S1-02` 已完成；协议 v1 适配器已有实现，真实业务 Socket/SQLite 联调和端到端验证仍待 B 服务端业务处理器稳定后推进。
+- `A-S1-01`、`A-S1-02` 已完成范围仅包括需求追踪和 Mock 用户端；当前没有用户端 Socket/Protocol v1 适配器，真实业务联调仍待后续 A-S1-03。
 - 后续 A 任务包括联调测试、腾讯地图导航优化、智能分析结果展示和最终 qmake6 交付；不得将 Mock 或适配器构建通过误记为真实闭环完成。
 ## Main 合入后的 C 端状态
 
