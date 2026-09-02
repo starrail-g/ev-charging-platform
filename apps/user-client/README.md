@@ -4,10 +4,26 @@ Qt Widgets user-facing client baseline. It deliberately uses `MockUserService` u
 
 ## Run
 
+The repository uses qmake6 consistently across Qt/C++ modules. The user-client application entry point is `user-client.pro`; the QtTest entry point is `tests/user-client-tests.pro`. CMake files are not part of this module.
+
+Build the application in a clean directory:
+
 ```bash
-cmake -S apps/user-client -B build/user-client
-cmake --build build/user-client
-./build/user-client/ev-user-client
+mkdir -p build/qmake6/user-client
+cd build/qmake6/user-client
+qmake6 ../../../apps/user-client/user-client.pro
+make -j"$(nproc)"
+./ev-user-client
+```
+
+Build and run QtTest separately:
+
+```bash
+mkdir -p build/qmake6/user-client-tests
+cd build/qmake6/user-client-tests
+qmake6 ../../../apps/user-client/tests/user-client-tests.pro
+make -j"$(nproc)"
+QT_QPA_PLATFORM=offscreen ./ev-user-client-tests -txt
 ```
 
 The client starts in deterministic Mock mode. Demo credentials are `13800000000 / 123456`. Registration is two-step: valid phone, password and matching confirmation first; nickname is entered on the second step. Password fields have show/hide eye buttons. `timeout`, `error`, and `server-error` inputs expose failure states without leaking internals.
@@ -33,6 +49,6 @@ After selecting an idle pile, the confirmation row provides both `确认创建�
 - [x] 05 reserve → start → stop → settle Mock order flow with duplicate guards
 - [x] 06 service adapter and deterministic Mock data
 - [x] 07 loading/error/empty/unauthorized feedback
-- [x] 08 Ubuntu VM CMake build, QtTest and user-client startup evidence (full real Socket/SQLite GUI integration remains pending)
+- [x] 08 qmake6 build, QtTest and user-client startup evidence
 
 Dependency flow: A-S1-01 → A-S1-02-01 → (02,03) → (04,05) → 08; 06 feeds 02–05; 07 feeds 08. B-S1-01/B-S1-02 provide the future real data/Socket replacement contracts; C-S1-03 provides clean-environment build evidence.

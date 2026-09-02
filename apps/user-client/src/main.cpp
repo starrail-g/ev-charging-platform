@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QColor>
+#include <cmath>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -16,6 +17,7 @@
 #include <QPushButton>
 #include <QPixmap>
 #include <QRegularExpression>
+#include <QtMath>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -57,12 +59,12 @@ private:
   QWidget *login_{}, *registerPage_{}, *home_{}, *detail_{}, *map_{}, *orderPage_{}, *profile_{};
   QStackedWidget *registerSteps_{};
   QLineEdit *phone_{}, *password_{}, *regPhone_{}, *regPassword_{}, *regConfirmPassword_{}, *regName_{}, *query_{}, *address_{}, *fromLocation_{}, *nickname_{};
-  QComboBox *region_{};
+  QComboBox *region_{}, *routeMode_{};
   QDoubleSpinBox *rechargeAmount_{};
   QLabel *loginStatus_{}, *registerStatus_{}, *homeStatus_{}, *locationStatus_{}, *orderSummary_{}, *detailTitle_{}, *pileStatus_{}, *mapStatus_{}, *orderStatus_{}, *historySummary_{}, *profileLabel_{}, *avatarLabel_{};
   QWidget *confirmationControls_{};
   QListWidget *stationList_{}, *pileList_{}, *mapStationList_{}, *historyList_{};
-  QPushButton *loginButton_{}, *registerNextButton_{}, *registerFinishButton_{}, *confirmOrderButton_{}, *reserveButton_{}, *returnPileButton_{}, *cancelReservationButton_{}, *startButton_{}, *stopButton_{}, *settleButton_{};
+  QPushButton *loginButton_{}, *registerButton_{}, *registerNextButton_{}, *registerFinishButton_{}, *confirmOrderButton_{}, *reserveButton_{}, *returnPileButton_{}, *cancelReservationButton_{}, *startButton_{}, *stopButton_{}, *settleButton_{};
   Station selectedStation_{};
   Pile selectedPile_{};
   Order order_{};
@@ -122,17 +124,20 @@ private:
     phone_ = new QLineEdit;
     phone_->setPlaceholderText(QStringLiteral("请输入 11 位手机号"));
     form->addRow(QStringLiteral("手机号"), phone_);
-    form->addRow(QStringLiteral("密码（可选）"), passwordRow(password_));
+    form->addRow(QStringLiteral("密码"), passwordRow(password_));
     layout->addLayout(form);
     loginButton_ = new QPushButton(QStringLiteral("登录"), login_);
     loginButton_->setMinimumHeight(42);
     layout->addWidget(loginButton_);
+    registerButton_ = new QPushButton(QStringLiteral("注册新账号"), login_);
+    layout->addWidget(registerButton_);
     loginStatus_ = new QLabel(login_);
     loginStatus_->setWordWrap(true);
     layout->addWidget(loginStatus_);
     layout->addStretch();
     layout->addWidget(new QLabel(QStringLiteral("演示：13800000000；新手机号会自动创建用户"), login_));
     connect(loginButton_, &QPushButton::clicked, this, &UserWindow::login);
+    connect(registerButton_, &QPushButton::clicked, this, &UserWindow::showRegister);
     stack_->addWidget(login_);
   }
 
@@ -282,9 +287,9 @@ private:
     mapStatus_ = new QLabel(map_);
     mapStatus_->setWordWrap(true);
     layout->addWidget(mapStatus_);
-    auto *mode = new QComboBox(map_);
-    mode->addItems({QStringLiteral("驾车（Mock）"), QStringLiteral("步行（Mock）")});
-    layout->addWidget(mode);
+    routeMode_ = new QComboBox(map_);
+    routeMode_->addItems({QStringLiteral("驾车（Mock）"), QStringLiteral("步行（Mock）")});
+    layout->addWidget(routeMode_);
     auto *route = new QPushButton(QStringLiteral("查询路线"), map_);
     layout->addWidget(route);
     layout->addWidget(new QLabel(QStringLiteral("真实腾讯地图 Web API / QWebEngineView：暂未接入"), map_));
@@ -450,7 +455,7 @@ private:
                               .arg(selectedStation_.address)
                               .arg(selectedStation_.latitude)
                               .arg(selectedStation_.longitude)
-                              .arg(selectedStation_.pricePerKwh, 0, 'f', 2));
+                              .arg(selectedStation_.priceCentsPerKwh / 100.0, 0, 'f', 2));
     pileList_->clear();
     const auto result = service_.piles(selectedStation_.id);
     if (!result.ok) {
@@ -471,7 +476,7 @@ private:
                                                .arg(pile.type)
                                                .arg(pileStatusText(pile.status))
                                                .arg(pile.powerKw, 0, 'f', 0)
-                                               .arg(selectedStation_.pricePerKwh, 0, 'f', 2),
+                                               .arg(selectedStation_.priceCentsPerKwh / 100.0, 0, 'f', 2),
                                            pileList_);
       pileItem->setBackground(QColor("#10243d"));
       pileItem->setForeground(QColor("#ffffff"));
@@ -525,7 +530,7 @@ private:
     stack_->setCurrentWidget(profile_);
     profileLabel_->setText(QStringLiteral("手机号：%1\n余额：¥ %2")
                                .arg(session_.user().phone)
-                               .arg(session_.user().walletBalance, 0, 'f', 2));
+                               .arg(session_.user().walletBalanceCents / 100.0, 0, 'f', 2));
     nickname_->setText(session_.user().displayName);
     if (!session_.user().avatarPath.isEmpty()) {
       avatarLabel_->setPixmap(QPixmap(session_.user().avatarPath).scaled(84, 84, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
@@ -694,7 +699,7 @@ private:
       order_ = Order{};
       orderStatus_->setText(QStringLiteral("待确认订单\n站点：%1\n充电桩：%2\n状态：闲置\n价格：¥ %3/度")
                                 .arg(selectedStation_.name, selectedPile_.number)
-                                .arg(selectedStation_.pricePerKwh, 0, 'f', 2));
+                                .arg(selectedStation_.priceCentsPerKwh / 100.0, 0, 'f', 2));
       confirmOrderButton_->setEnabled(true);
     }
     stack_->setCurrentWidget(orderPage_);
@@ -709,7 +714,13 @@ private:
       source->setEnabled(true);
       return;
     }
-    order_ = result.value;
+    auto confirmed = service_.confirmReservation(session_.user().id, result.value.id);
+    if (!confirmed.ok) {
+      orderStatus_->setText(confirmed.error);
+      source->setEnabled(true);
+      return;
+    }
+    order_ = confirmed.value;
     orderConfirmationMode_ = false;
     if (confirmationControls_) confirmationControls_->setVisible(false);
     if (returnPileButton_) returnPileButton_->setVisible(false);
@@ -753,17 +764,17 @@ private:
       historySummary_->setText(result.error);
       return;
     }
-    double total = 0.0;
+    qint64 totalCents = 0;
     for (const auto &historyOrder : result.value) {
-      total += historyOrder.amount;
+      totalCents += historyOrder.amountCents;
       historyList_->addItem(QStringLiteral("完成时间：%1\n充电站地址：%2\n花费：¥ %3")
                                 .arg(historyOrder.completedAt.isEmpty() ? QStringLiteral("Mock 时间未记录") : historyOrder.completedAt)
                                 .arg(historyOrder.stationAddress.isEmpty() ? QStringLiteral("地址未记录") : historyOrder.stationAddress)
-                                .arg(historyOrder.amount, 0, 'f', 2));
+                                .arg(historyOrder.amountCents / 100.0, 0, 'f', 2));
     }
     historySummary_->setText(result.value.isEmpty()
                                  ? QStringLiteral("历史充电总结：暂无已完成记录")
-                                 : QStringLiteral("历史充电总结：共 %1 次，累计消费 ¥ %2").arg(result.value.size()).arg(total, 0, 'f', 2));
+                                 : QStringLiteral("历史充电总结：共 %1 次，累计消费 ¥ %2").arg(result.value.size()).arg(totalCents / 100.0, 0, 'f', 2));
   }
 
   void queryRoute() {
@@ -780,11 +791,12 @@ private:
     bool lngOk = false;
     const double lat = parts[0].trimmed().toDouble(&latOk);
     const double lng = parts[1].trimmed().toDouble(&lngOk);
-    if (!latOk || !lngOk) {
+    if (!latOk || !lngOk || !std::isfinite(lat) || !std::isfinite(lng) || lat < -90.0 || lat > 90.0 || lng < -180.0 || lng > 180.0) {
       mapStatus_->setText(QStringLiteral("出发位置坐标无效"));
       return;
     }
-    auto result = service_.route(lat, lng, selectedStation_);
+    const RouteMode mode = routeMode_ && routeMode_->currentIndex() == 1 ? RouteMode::Walking : RouteMode::Driving;
+    auto result = service_.route(lat, lng, selectedStation_, mode);
     mapStatus_->setText(result.ok
                             ? QStringLiteral("Mock 路线：%1\n距离 %2 km · 预计 %3 分钟")
                                   .arg(result.value.summary)
@@ -806,7 +818,7 @@ private:
     if (hasOrder) {
       orderStatus_->setText(QStringLiteral("订单 %1 · %2\n站点：%3\n充电桩：%4\n金额：¥ %5")
                                 .arg(order_.id, orderStatusText(order_.status), order_.stationName, order_.pileNumber)
-                                .arg(order_.amount, 0, 'f', 2));
+                                .arg(order_.amountCents / 100.0, 0, 'f', 2));
     }
   }
 
@@ -852,6 +864,8 @@ private:
       return;
     }
     order_ = result.value;
+    const auto profileResult = service_.profile(session_.user().id);
+    if (profileResult.ok) session_.setUser(profileResult.value);
     updateOrderButtons();
     refreshCurrentOrder();
     QMessageBox::information(this, QStringLiteral("结算完成"), QStringLiteral("订单已完成，Mock 结算成功。"));
@@ -878,13 +892,14 @@ private:
   }
 
   void recharge() {
-    auto result = service_.recharge(session_.user().id, rechargeAmount_->value());
+    const qint64 amountCents = qRound64(rechargeAmount_->value() * 100.0);
+    auto result = service_.recharge(session_.user().id, amountCents);
     if (!result.ok) {
       profileLabel_->setText(result.error);
       return;
     }
     auto user = session_.user();
-    user.walletBalance = result.value;
+    user.walletBalanceCents = result.value;
     session_.setUser(user);
     showProfile();
   }

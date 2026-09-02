@@ -69,7 +69,7 @@
 
 ## 5. 验收与证据
 
-- 在仓库实际采用的 Qt 构建/测试路径中完成配置、构建和单元/组件测试；若 CMake/qmake 或 Qt 依赖不可用，记录真实阻塞而不是填写“通过”。
+- 按 `docs/meetings/build-system-protocol-2026-09-02.md` 使用 `qmake6` 完成配置、构建和单元/组件测试；CMake 不得作为验证路径。若 qmake6 或 Qt 依赖不可用，记录真实阻塞而不是改用 CMake。
 - GUI 冒烟覆盖：登录/自动注册 → 地址 → 站点列表 → 站点详情/桩状态 → 驾车/步行导航（真实或明确 Mock/离线）→ 预约 → 开始/停止 → 结算 → 历史/退出。
 - 提供协议适配测试、状态映射/输入校验测试、Mock 失败场景、脱敏日志/截图和可复现运行步骤。
 - `git diff --check` 通过；分支只含本任务文件；通过 Pull Request 交付；同步根目录 `current.md` 的状态、依赖、证据和限制。
@@ -89,4 +89,4 @@
 | A-S1-02-02 地址/站点/桩查询 | 已实现 Mock，待真实接口联调 | 同上 | 保留空/错/超时路径 |
 | A-S1-02-03 真实导航与离线回退 | 进行中 | 当前有离线路线；真实 API 待联调 | S1 必须完成真实主链路 |
 | A-S1-02-04 预约至结算 | 已实现 Mock，待真实接口联调 | `apps/user-client/README.md`、`current.md` | 服务端状态为最终事实 |
-| A-S1-02-05 构建与 GUI 冒烟 | Ubuntu VM CMake/QtTest/启动已通过；完整真实联调待补 | `current.md` 记录的用户提供证据 | Windows 主机无 Qt 工具，真实 Socket/SQLite 闭环仍待联调 |
+| A-S1-02-05 构建与 GUI 冒烟 | qmake6 应用和 QtTest 已在 Ubuntu VM 验证；SSH 测试使用 offscreen | `current.md`、`apps/user-client/README.md` 与 VM 输出 | Windows 主机无 qmake6，真实 Socket/SQLite 闭环仍待联调 |
