@@ -21,6 +21,18 @@
     </div>
   </header>
 
+  <!-- 页面级状态区：loading/empty/error/offline/stale 的统一呈现；
+       阻断态盖住主内容，非阻断态（offline/stale/有快照的 error）以横幅叠加 -->
+  <section id="pageState" class="page-state" role="status" aria-live="polite" hidden>
+    <span data-page-state-icon aria-hidden="true"></span>
+    <div class="page-state-body">
+      <strong data-page-state-title></strong>
+      <span data-page-state-description></span>
+      <span data-page-state-freshness class="page-state-freshness" hidden></span>
+    </div>
+    <button data-page-state-action type="button"></button>
+  </section>
+
   <main class="dashboard-shell">
     <section class="panorama" aria-label="充电网络实时态势主区">
       <!-- 左栏：网络健康与关键指标（1920 全景态竖排；1366 起自动转顶部横向指标条） -->

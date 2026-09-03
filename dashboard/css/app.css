@@ -164,12 +164,12 @@ body {
   border-radius: 8px;
 }
 
-/* 异常聚焦：非相关节点降低视觉权重 */
-.topo-map.has-focus .topo-node:not(.topo-focused) {
+/* 异常聚焦：非相关节点降低视觉权重（has-focus 加在 .map-panel 上，拓扑/在线双模式共用） */
+.map-panel.has-focus .topo-node:not(.topo-focused) {
   opacity: 0.3;
 }
 
-.topo-map.has-focus .topo-node.topo-focused {
+.map-panel.has-focus .topo-node.topo-focused {
   filter: drop-shadow(0 0 6px color-mix(in srgb, var(--night-focus) 60%, transparent));
 }
 
@@ -226,6 +226,152 @@ body {
 .command-freshness {
   font-size: 0.78rem;
   color: var(--night-muted-text);
+}
+
+/* ---------- 页面级状态区（loading/empty/error/offline/stale 统一呈现） ---------- */
+
+.page-state {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  width: 100%;
+  max-width: 1920px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 0.55rem clamp(1.25rem, 3vw, 2.5rem);
+  font-size: 0.88rem;
+  color: var(--night-text);
+}
+
+.page-state[hidden] {
+  display: none;
+}
+
+.page-state-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--night-focus);
+}
+
+.page-state-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.page-state-body strong {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.page-state [data-page-state-description] {
+  color: var(--night-muted-text);
+}
+
+/* 演示注入标识：呈现分支来自 ?state= 时永远可见，不伪装成真实接口结果 */
+.page-state [data-page-state-description][data-demo='true']::after {
+  content: '（演示状态注入）';
+  color: var(--night-focus);
+  margin-left: 0.5em;
+  white-space: nowrap;
+}
+
+.page-state-freshness {
+  color: var(--night-muted-text);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.page-state [data-page-state-action] {
+  margin-left: auto;
+  flex: none;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.38em 1.15em;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--night-focus) 55%, transparent);
+  background: color-mix(in srgb, var(--night-focus) 14%, transparent);
+  color: var(--night-text);
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.page-state [data-page-state-action]:hover {
+  background: color-mix(in srgb, var(--night-focus) 22%, transparent);
+}
+
+/* 非阻断横幅（offline/stale/有快照的 error）：细条贴头部下方 */
+.page-state[data-blocking='false'] {
+  border-bottom: 1px solid color-mix(in srgb, var(--night-decorative) 60%, transparent);
+  background: color-mix(in srgb, var(--night-surface) 55%, transparent);
+}
+
+/* 阻断态（empty / 无快照 error）：主区被隐藏，状态视图占据可视主区 */
+.page-state[data-blocking='true'] {
+  min-height: calc(100vh - 118px);
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+  gap: 0.9rem;
+}
+
+.page-state[data-blocking='true'] .page-state-icon {
+  width: 44px;
+  height: 44px;
+}
+
+.page-state[data-blocking='true'] [data-page-state-description] {
+  max-width: 640px;
+}
+
+.page-state[data-blocking='true'] [data-page-state-action] {
+  margin: 0.5rem auto 0;
+}
+
+/* ---------- 初次加载骨架（占位近似真实主区，避免内容出现时跳动） ---------- */
+
+.skel {
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--night-decorative) 13%, transparent);
+}
+
+.skel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--night-text) 7%, transparent) 50%, transparent 70%);
+  transform: translateX(-100%);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .skel::after {
+    animation: skel-sweep 1.3s ease-in-out infinite;
+  }
+}
+
+@keyframes skel-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.metric-strip .metric-card.skel {
+  min-height: 84px;
+  border-color: transparent;
+}
+
+.map-panel.skel {
+  border-radius: 10px;
+}
+
+.skel-line {
+  display: block;
+  height: 10px;
+  border-radius: 6px;
+  margin-block: 7px;
 }
 
 /* ---------- 主屏布局 ----------
@@ -617,26 +763,58 @@ body {
 
 /* ---------- 响应式 ---------- */
 
-@media (max-width: 1500px) {
-  .panorama {
-    grid-template-columns: minmax(0, 1fr) clamp(280px, 24%, 340px);
+@media (max-width: 1500px) and (min-width: 901px) {
+  .command-header {
+    padding-block: 0.7rem;
   }
 
-  /* 指标移到顶部横向指标条（spec §5.5） */
+  /* 固定视口高度：上态势（flex 填满）、下 214px 单图页签 */
+  .dashboard-shell {
+    height: calc(100vh - 62px);
+    padding-block: 0.75rem;
+    gap: 0.75rem;
+    grid-template-rows: minmax(0, 1fr) 214px;
+  }
+
+  .panorama {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) clamp(280px, 24%, 340px);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 0.75rem;
+  }
+
+  /* 指标移到顶部横向指标条（spec §5.5）：占满整行，地图在左、右栏在右 */
   .metric-strip {
+    grid-column: 1 / -1;
+    grid-row: 1;
     grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .metric-card {
+    padding: 0.65rem 0.8rem;
   }
 
   .map-wrap {
-    min-height: 440px;
+    grid-column: 1;
+    grid-row: 2;
+    min-height: 0;
   }
 
   .right-rail {
-    display: flex;
+    grid-column: 2;
+    grid-row: 2;
+    min-height: 0;
+    overflow-y: auto;
   }
 
   .operations-strip {
+    min-height: 0;
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chart-box {
+    height: 158px;
   }
 
   .chart-panel[data-tab-hidden="true"] {
@@ -674,6 +852,16 @@ body {
   .panel.chart-panel {
     transition: opacity 200ms ease;
   }
+
+  /* 页面非阻断横幅（offline/stale/错误）出现时压缩固定视口主区，避免溢出滚动 */
+  body.has-page-banner .dashboard-shell {
+    height: calc(100vh - 128px);
+  }
+}
+
+/* 阻断态（empty/无快照 error）：主体隐藏，状态视图独占可视区 */
+body.page-blocking .dashboard-shell {
+  display: none;
 }
 
 @media (max-width: 900px) {
@@ -684,10 +872,21 @@ body {
 
   .dashboard-shell {
     padding: 0.9rem;
+    /* 恢复自然纵向滚动，不再受紧凑态固定视口高度与行模板约束 */
+    height: auto;
+    grid-template-rows: none;
   }
 
   .panorama {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+  }
+
+  .metric-strip,
+  .map-wrap,
+  .right-rail {
+    grid-column: auto;
+    grid-row: auto;
   }
 
   .metric-strip {
@@ -730,6 +929,8 @@ body {
 
   .topo-node .topo-halo {
     animation: none;
+    /* 动画定义选择器特异性更高，需显式压掉 animation-name */
+    animation-name: none !important;
   }
 
   *,

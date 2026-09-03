@@ -15,15 +15,23 @@ const STATE_META = Object.freeze({
 
 const DEFAULT_STALE_AFTER_MS = 5 * 60 * 1000; // 实时模式默认 5 分钟
 
+/** 合法时间戳返回毫秒值，否则 NaN——stale 计算永不因脏数据崩溃。 */
+export function timestampOf(value) {
+  const time = value != null && value !== '' ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : NaN;
+}
+
 export function createDashboardState({ liveMode = false, staleAfterMs = DEFAULT_STALE_AFTER_MS } = {}) {
   return {
     resolve(payload) {
       const { stations = [], fetchedAt = null } = payload;
       if (stations.length === 0) return this.empty();
-      const isStale = liveMode && fetchedAt
-        ? Date.now() - new Date(fetchedAt).getTime() > staleAfterMs
+      const fetchedAtMs = timestampOf(fetchedAt);
+      const isStale = liveMode && Number.isFinite(fetchedAtMs)
+        ? Date.now() - fetchedAtMs > staleAfterMs
         : false;
-      return { kind: isStale ? 'stale' : 'content', isStale, ...payload };
+      const kind = isStale ? 'stale' : 'content';
+      return { kind, isStale, ...STATE_META[kind], ...payload };
     },
     loading() {
       return { kind: 'loading', isStale: false, ...STATE_META.loading };

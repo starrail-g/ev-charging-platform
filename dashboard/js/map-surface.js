@@ -68,25 +68,21 @@ export function projectStations(stations, { width, height, padding }) {
   });
 }
 
-function withTimeout(promise, timeoutMs, reason) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(reason)), timeoutMs);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      }
-    );
-  });
+function normalizeReason(error) {
+  return error && typeof error.message === 'string' && error.message.startsWith('sdk-')
+    ? error.message
+    : REASONS.RENDERER_FAILED;
 }
 
 /**
  * 表面：尝试在线渲染器（超时/异常自动降级为拓扑），
  * 失败原因只暴露枚举值，不含密钥或完整 URL。
+ *
+ * 容器生命周期由 MapSurface 单点管理：超时或失败后先让在线渲染器
+ * 释放自身引用（destroy），再清空共享容器，最后挂载拓扑；渲染器
+ * 一律不得自行执行 container.innerHTML = ''，以免晚到的在线完成
+ * 覆盖已就位的拓扑图（竞态）。取消通过 AbortSignal 传达，渲染器在
+ * SDK 返回后、初始化前检查 aborted。
  */
 export class MapSurface {
   constructor({ onlineRenderer, topologyRenderer, timeoutMs = 5000 }) {
@@ -97,36 +93,90 @@ export class MapSurface {
   }
 
   async mount(container, config) {
+    // 幂等：重复挂载（重试）先释放上一轮渲染器并清空共享容器，
+    // 容器生命周期归 MapSurface 单点管理。
+    if (this._active && typeof this._active.destroy === 'function') {
+      await this._active.destroy({ preserveContainer: true });
+    }
+    this._active = null;
+    container.replaceChildren?.();
+    if (!container.replaceChildren) container.innerHTML = '';
+
     const mode = chooseMapMode(config);
     if (mode === 'topology') {
       this._active = this._topologyRenderer;
       await this._topologyRenderer.mount(container, config);
       return { mode: 'topology', degraded: false, reason: REASONS.NONE };
     }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(REASONS.SDK_TIMEOUT), this._timeoutMs);
     try {
-      await withTimeout(
-        this._onlineRenderer.mount(container, config),
-        this._timeoutMs,
-        REASONS.SDK_TIMEOUT
-      );
+      const mountPromise = this._onlineRenderer.mount(container, {
+        ...config,
+        signal: controller.signal,
+      });
+      await this._untilSettledOrAborted(mountPromise, controller);
       this._active = this._onlineRenderer;
       return { mode: 'tencent', degraded: false, reason: REASONS.NONE };
     } catch (error) {
-      container.innerHTML = ''; // 清空半成品容器后立即挂载拓扑图
-      const reason =
-        error && typeof error.message === 'string' && error.message.startsWith('sdk-')
-          ? error.message
-          : REASONS.RENDERER_FAILED;
+      controller.abort();
+      await this._onlineRenderer.destroy?.({ preserveContainer: true });
+      container.replaceChildren?.();
+      if (!container.replaceChildren) container.innerHTML = '';
       this._active = this._topologyRenderer;
       await this._topologyRenderer.mount(container, config);
-      return { mode: 'topology', degraded: true, reason };
+      return { mode: 'topology', degraded: true, reason: normalizeReason(error) };
+    } finally {
+      clearTimeout(timer);
     }
+  }
+
+  /**
+   * 等待在线挂载完成或中止信号触发；中止立即以 sdk 原因拒绝，
+   * 不让 MapSurface 卡在永不返回的在线 Promise 上。
+   */
+  _untilSettledOrAborted(promise, controller) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        controller.signal.removeEventListener('abort', onAbort);
+        reject(new Error(controller.signal.reason ?? REASONS.SDK_TIMEOUT));
+      };
+      controller.signal.addEventListener('abort', onAbort);
+      promise.then(
+        (value) => {
+          if (settled) return;
+          settled = true;
+          controller.signal.removeEventListener('abort', onAbort);
+          if (controller.signal.aborted) {
+            reject(new Error(controller.signal.reason ?? REASONS.SDK_TIMEOUT));
+          } else {
+            resolve(value);
+          }
+        },
+        (error) => {
+          if (settled) return;
+          settled = true;
+          controller.signal.removeEventListener('abort', onAbort);
+          reject(error);
+        }
+      );
+    });
   }
 
   /** 高亮站点（告警联动）；委托给当前激活的渲染器。 */
   async focusStation(stationId) {
     if (this._active && typeof this._active.focusStation === 'function') {
       await this._active.focusStation(stationId);
+    }
+  }
+
+  /** 退出异常聚焦（清高亮/降权）；委托给当前激活的渲染器。 */
+  async clearFocus() {
+    if (this._active && typeof this._active.clearFocus === 'function') {
+      await this._active.clearFocus();
     }
   }
 

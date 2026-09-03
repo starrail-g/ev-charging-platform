@@ -1,11 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDashboardState, deriveOverviewCards } from '../js/dashboard-state.js';
+import { createDashboardState, deriveOverviewCards, timestampOf } from '../js/dashboard-state.js';
 
 test('starts in loading and reaches content with freshness metadata', () => {
   const state = createDashboardState().resolve({ stations: [{ id: 'S1' }], fetchedAt: '2026-09-01T10:15:00Z' });
   assert.equal(state.kind, 'content');
   assert.equal(state.isStale, false);
+});
+
+test('never marks stale from an invalid fetched timestamp', () => {
+  assert.equal(timestampOf('not-a-date'), Number.NaN);
+  assert.equal(timestampOf(null), Number.NaN);
+  const state = createDashboardState({ liveMode: true, staleAfterMs: 1 });
+  const result = state.resolve({ stations: [{ id: 'S1' }], fetchedAt: 'garbage' });
+  assert.equal(result.kind, 'content');
+  assert.equal(result.isStale, false);
 });
 
 test('keeps empty, error, offline and unavailable semantics distinct', () => {

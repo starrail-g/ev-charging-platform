@@ -15,16 +15,30 @@ export class TopologyMapRenderer {
   constructor() {
     this._container = null;
     this._nodeElements = new Map(); // stationId -> <g>
+    this._idByData = new Map(); // data-station-id(字符串) -> 原始 station.id
     this._focused = null;
+    this._onActivate = null;
+    this._boundClick = this._handleClick.bind(this);
+    this._boundKeydown = this._handleKeydown.bind(this);
   }
 
   /** 构建整幅 SVG：抽象网格底纹、站点弱关联线、五态站点节点（含 <title>）。 */
-  mount(container, { stations, piles }) {
+  mount(container, { stations, piles, onStationActivate }) {
+    // 幂等：重复 mount（数据重试）先移除旧监听，避免同容器多份委托
+    container.removeEventListener('click', this._boundClick);
+    container.removeEventListener('keydown', this._boundKeydown);
     this._container = container;
+    this._onActivate = onStationActivate ?? null;
     this._nodeElements.clear();
+    this._idByData.clear();
     this._focused = null;
 
     const list = stations ?? [];
+    for (const station of list) {
+      this._idByData.set(String(station.id), station.id);
+    }
+    container.addEventListener('click', this._boundClick);
+    container.addEventListener('keydown', this._boundKeydown);
     const width = 1000;
     const height = 620;
     const points = projectStations(list, { width, height, padding: 110 });
@@ -77,9 +91,30 @@ export class TopologyMapRenderer {
 </svg>`;
 
     for (const element of container.querySelectorAll('.topo-node')) {
-      this._nodeElements.set(Number(element.dataset.stationId), element);
+      const dataId = element.dataset.stationId;
+      this._nodeElements.set(this._idByData.get(dataId) ?? dataId, element);
     }
     return { mode: 'topology' };
+  }
+
+  /** 节点激活统一出口：以原始 station.id 回调业务方。 */
+  _activateNode(dataId) {
+    if (!this._onActivate) return;
+    const id = this._idByData.get(String(dataId));
+    this._onActivate(id !== undefined ? id : dataId);
+  }
+
+  _handleClick(event) {
+    const node = event.target.closest?.('.topo-node');
+    if (node) this._activateNode(node.dataset.stationId);
+  }
+
+  _handleKeydown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    const node = event.target.closest?.('.topo-node');
+    if (!node) return;
+    event.preventDefault();
+    this._activateNode(node.dataset.stationId);
   }
 
   /** 高亮站点节点并滚动到可视区域（告警点击联动）。 */
@@ -92,10 +127,24 @@ export class TopologyMapRenderer {
     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
+  /** 退出异常聚焦：清除节点高亮与焦点记录。 */
+  clearFocus() {
+    if (this._focused) {
+      this._focused.classList.remove('topo-focused');
+      this._focused = null;
+    }
+  }
+
   destroy() {
-    if (this._container) this._container.innerHTML = '';
+    if (this._container) {
+      this._container.removeEventListener('click', this._boundClick);
+      this._container.removeEventListener('keydown', this._boundKeydown);
+      this._container.innerHTML = '';
+    }
     this._container = null;
     this._nodeElements.clear();
+    this._idByData.clear();
     this._focused = null;
+    this._onActivate = null;
   }
 }
