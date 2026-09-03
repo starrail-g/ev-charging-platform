@@ -14,10 +14,14 @@ real Socket/SQLite client integration.
 - qmake6 is the authoritative Qt/C++ build path.
 - B currently provides SQLite schema v0.2, deterministic seed/migration,
   protocol v1 framing/envelope/error codes, and server handlers for login,
-  station/pile queries, active/history orders, reservation, charging and
-  settlement.
+  profile read/update, wallet recharge, station/pile queries, active/history
+  orders, reservation, charging and settlement.
 - Lifecycle writes use `BEGIN IMMEDIATE`, request-ID replay records, frozen-user
   checks, direct idle-pile charging, and settlement rollback paths.
+- Profile updates persist nickname/avatar/timestamps. Recharge atomically
+  updates the non-negative integer-cent balance, writes a recharge ledger row,
+  and stores the replay response. Injected UPDATE/INSERT failures prove full
+  rollback; frozen-user checks take precedence over successful replay.
 - A user client is a deterministic Qt Widgets + Mock implementation. It has no
   `SocketUserService`; real DTO/protocol integration remains pending.
 - C admin client has a qmake shell, repository boundary, Mock data source,
@@ -49,7 +53,8 @@ owns Socket dispatch and error mapping.
   update; request-ID global scope and failed-request retry semantics are
   documented.
 - [x] Reproducible concurrent reservation/settlement tests and isolated smoke
-  runs are available; injected mid-transaction SQL failure remains a follow-up.
+  runs cover profile, recharge, lifecycle, malformed-frame, and injected
+  mid-transaction SQL failure paths.
 - [ ] Move slow database work off the Socket event-loop thread or define a
   bounded worker/lock strategy.
 - [ ] Implement administrator/statistics/management APIs, Socket adapters,
@@ -73,6 +78,8 @@ owns Socket dispatch and error mapping.
 - Request IDs are retained in the database for successful state-changing
   responses; a future protocol revision must explicitly define global scope,
   retention and failed-request replay rules.
+- Request IDs are currently globally unique database keys across users and
+  operations; clients must not reuse an ID for another request.
 - Revenue reports use `settled_at` because revenue is final at settlement;
   `ended_at` remains the physical charging-end timestamp.
 - Build output and local process material stay outside the repository. Real
@@ -86,5 +93,8 @@ owns Socket dispatch and error mapping.
   state/time constraints, service-fee calculation, concurrency evidence and
   history contract details were corrected in this work; injected SQL failure
   coverage and asynchronous database dispatch remain open.
+- Added `user.profile.get`, `user.profile.update`, and `wallet.recharge` with
+  atomic persistence, replay, failure-injection rollback tests, and API docs;
+  validated qmake6 server/protocol/user-client builds, smoke, and concurrency.
 - Earlier work added direct start, frozen-user guards, request replay,
   `order.history.list`, seed-on-empty startup and migration failure-path tests.

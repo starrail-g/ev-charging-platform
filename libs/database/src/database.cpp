@@ -1,6 +1,7 @@
 #include "ev_database/database.h"
 
 #include <QDateTime>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -13,6 +14,7 @@
 #include <QUuid>
 
 #include <atomic>
+#include <limits>
 
 namespace ev::database {
 namespace {
@@ -46,6 +48,13 @@ bool isDigitsOnly(const QString &value)
         if (!character.isDigit() || character.unicode() > 0x7f) return false;
     }
     return true;
+}
+
+QString jsonFingerprint(const QJsonObject &payload)
+{
+    return QString::fromLatin1(QCryptographicHash::hash(
+        QJsonDocument(payload).toJson(QJsonDocument::Compact),
+        QCryptographicHash::Sha256).toHex());
 }
 
 // Split statements while retaining semicolons inside CREATE TRIGGER bodies.
@@ -329,6 +338,267 @@ bool Database::loginUser(const QString &phone, QJsonObject *user, QString *error
                    QStringLiteral("commit login transaction failed: %1").arg(queryError(commit)));
         return false;
     }
+    return true;
+}
+
+bool Database::getUserProfile(qint64 userId, QJsonObject *user, QString *error,
+                              ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!user || userId <= 0) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("user_id must be positive"));
+        return false;
+    }
+    if (!open(error)) {
+        if (kind) *kind = ErrorKind::Database;
+        return false;
+    }
+
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "SELECT id, phone, nickname, avatar_path, balance_cents, status "
+        "FROM users WHERE id = :id"));
+    query.bindValue(QStringLiteral(":id"), userId);
+    if (!query.exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("read user profile failed: %1").arg(queryError(query)));
+        return false;
+    }
+    if (!query.next()) {
+        setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found"));
+        return false;
+    }
+    if (query.value(5).toString() != QStringLiteral("active")) {
+        setFailure(error, kind, ErrorKind::Unauthorized,
+                   QStringLiteral("user is frozen"));
+        return false;
+    }
+
+    const QJsonValue avatar = query.value(3).isNull()
+        ? QJsonValue(QJsonValue::Null) : QJsonValue(query.value(3).toString());
+    *user = QJsonObject{{QStringLiteral("id"), query.value(0).toLongLong()},
+                        {QStringLiteral("phone"), query.value(1).toString()},
+                        {QStringLiteral("nickname"), query.value(2).toString()},
+                        {QStringLiteral("avatar_path"), avatar},
+                        {QStringLiteral("balance_cents"), query.value(4).toLongLong()},
+                        {QStringLiteral("status"), query.value(5).toString()}};
+    return true;
+}
+
+bool Database::updateUserProfile(const QString &requestId, qint64 userId,
+                                 const QJsonObject &changes, QJsonObject *user,
+                                 QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    const bool hasNickname = changes.contains(QStringLiteral("nickname"));
+    const bool hasAvatar = changes.contains(QStringLiteral("avatar_path"));
+    const QJsonValue nicknameValue = changes.value(QStringLiteral("nickname"));
+    const QJsonValue avatarValue = changes.value(QStringLiteral("avatar_path"));
+    if (!user || userId <= 0 || requestId.isEmpty() || (!hasNickname && !hasAvatar)
+        || (hasNickname && (!nicknameValue.isString()
+            || nicknameValue.toString().trimmed().isEmpty()))
+        || (hasAvatar && !avatarValue.isString() && !avatarValue.isNull())) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("profile update fields are invalid"));
+        return false;
+    }
+    if (!open(error)) {
+        if (kind) *kind = ErrorKind::Database;
+        return false;
+    }
+
+    QJsonObject fingerprintPayload{{QStringLiteral("user_id"), userId}};
+    if (hasNickname) {
+        fingerprintPayload.insert(QStringLiteral("nickname"),
+                                  nicknameValue.toString().trimmed());
+    }
+    if (hasAvatar) fingerprintPayload.insert(QStringLiteral("avatar_path"), avatarValue);
+    const QString fingerprint = jsonFingerprint(fingerprintPayload);
+    if (!begin(error, kind)) return false;
+
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral("SELECT status FROM users WHERE id = :id"));
+    query.bindValue(QStringLiteral(":id"), userId);
+    if (!query.exec()) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("inspect user profile failed: %1").arg(queryError(query)));
+        return false;
+    }
+    if (!query.next()) {
+        rollback();
+        setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found"));
+        return false;
+    }
+    if (query.value(0).toString() != QStringLiteral("active")) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Unauthorized,
+                   QStringLiteral("user is frozen"));
+        return false;
+    }
+
+    QJsonObject replay;
+    bool found = false;
+    if (!loadRequest(requestId, QStringLiteral("user.profile.update"), fingerprint,
+                     &replay, &found, error, kind)) {
+        rollback();
+        return false;
+    }
+    if (found) {
+        *user = replay.value(QStringLiteral("user")).toObject();
+        return commit(error, kind);
+    }
+
+    const QString timestamp = utcNow();
+    QStringList assignments{QStringLiteral("updated_at = :updated_at")};
+    if (hasNickname) assignments.append(QStringLiteral("nickname = :nickname"));
+    if (hasAvatar) assignments.append(QStringLiteral("avatar_path = :avatar_path"));
+    query.prepare(QStringLiteral("UPDATE users SET %1 WHERE id = :id AND status = 'active'")
+                      .arg(assignments.join(QStringLiteral(", "))));
+    query.bindValue(QStringLiteral(":updated_at"), timestamp);
+    query.bindValue(QStringLiteral(":id"), userId);
+    if (hasNickname) {
+        query.bindValue(QStringLiteral(":nickname"), nicknameValue.toString().trimmed());
+    }
+    if (hasAvatar) {
+        query.bindValue(QStringLiteral(":avatar_path"),
+                        avatarValue.isNull() ? QVariant() : avatarValue.toString());
+    }
+    if (!query.exec()) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("update user profile failed: %1").arg(queryError(query)));
+        return false;
+    }
+    if (query.numRowsAffected() != 1) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Unauthorized,
+                   QStringLiteral("user is unavailable"));
+        return false;
+    }
+
+    query.prepare(QStringLiteral(
+        "SELECT id, phone, nickname, avatar_path, balance_cents, status "
+        "FROM users WHERE id = :id"));
+    query.bindValue(QStringLiteral(":id"), userId);
+    if (!query.exec() || !readUser(query, user, error)) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("read updated profile failed"));
+        return false;
+    }
+    if (!saveRequest(requestId, QStringLiteral("user.profile.update"), fingerprint,
+                     QJsonObject{{QStringLiteral("user"), *user}}, error, kind)) {
+        rollback();
+        return false;
+    }
+    return commit(error, kind);
+}
+
+bool Database::rechargeWallet(const QString &requestId, qint64 userId,
+                              qint64 amountCents, qint64 *balanceCents,
+                              qint64 *transactionId, QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!balanceCents || !transactionId || userId <= 0 || amountCents <= 0
+        || requestId.isEmpty()) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("user_id, amount_cents and request id are required"));
+        return false;
+    }
+    if (!open(error)) {
+        if (kind) *kind = ErrorKind::Database;
+        return false;
+    }
+
+    const QString fingerprint = jsonFingerprint(QJsonObject{
+        {QStringLiteral("amount_cents"), amountCents},
+        {QStringLiteral("user_id"), userId}});
+    if (!begin(error, kind)) return false;
+
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral("SELECT balance_cents, status FROM users WHERE id = :id"));
+    query.bindValue(QStringLiteral(":id"), userId);
+    if (!query.exec()) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("inspect wallet user failed: %1").arg(queryError(query)));
+        return false;
+    }
+    if (!query.next()) {
+        rollback();
+        setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found"));
+        return false;
+    }
+    if (query.value(1).toString() != QStringLiteral("active")) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Unauthorized,
+                   QStringLiteral("user is frozen"));
+        return false;
+    }
+
+    QJsonObject replay;
+    bool found = false;
+    if (!loadRequest(requestId, QStringLiteral("wallet.recharge"), fingerprint,
+                     &replay, &found, error, kind)) {
+        rollback();
+        return false;
+    }
+    if (found) {
+        *balanceCents = replay.value(QStringLiteral("balance_cents")).toVariant().toLongLong();
+        *transactionId = replay.value(QStringLiteral("transaction_id")).toVariant().toLongLong();
+        return commit(error, kind);
+    }
+    const qint64 before = query.value(0).toLongLong();
+    if (amountCents > std::numeric_limits<qint64>::max() - before) {
+        rollback();
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("amount_cents is too large"));
+        return false;
+    }
+    const qint64 after = before + amountCents;
+    const QString timestamp = utcNow();
+    query.prepare(QStringLiteral(
+        "UPDATE users SET balance_cents = :after, updated_at = :updated_at "
+        "WHERE id = :id AND status = 'active' AND balance_cents = :before"));
+    query.bindValue(QStringLiteral(":after"), after);
+    query.bindValue(QStringLiteral(":updated_at"), timestamp);
+    query.bindValue(QStringLiteral(":id"), userId);
+    query.bindValue(QStringLiteral(":before"), before);
+    if (!query.exec() || query.numRowsAffected() != 1) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("update wallet balance failed"));
+        return false;
+    }
+
+    query.prepare(QStringLiteral(
+        "INSERT INTO wallet_transactions(user_id, transaction_type, amount_cents, "
+        "balance_after_cents, idempotency_key, created_at) "
+        "VALUES (:user_id, 'recharge', :amount, :after, :key, :created_at)"));
+    query.bindValue(QStringLiteral(":user_id"), userId);
+    query.bindValue(QStringLiteral(":amount"), amountCents);
+    query.bindValue(QStringLiteral(":after"), after);
+    query.bindValue(QStringLiteral(":key"), requestId);
+    query.bindValue(QStringLiteral(":created_at"), timestamp);
+    if (!query.exec()) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("write recharge transaction failed: %1").arg(queryError(query)));
+        return false;
+    }
+    const qint64 insertedTransactionId = query.lastInsertId().toLongLong();
+    const QJsonObject response{{QStringLiteral("balance_cents"), after},
+                               {QStringLiteral("transaction_id"), insertedTransactionId}};
+    if (!saveRequest(requestId, QStringLiteral("wallet.recharge"), fingerprint,
+                     response, error, kind)) {
+        rollback();
+        return false;
+    }
+    if (!commit(error, kind)) return false;
+    *balanceCents = after;
+    *transactionId = insertedTransactionId;
     return true;
 }
 

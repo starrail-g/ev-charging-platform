@@ -58,6 +58,12 @@ private:
             sendResponse(request, QStringLiteral("echo.result"), request.payload);
         } else if (request.type == QStringLiteral("user.login")) {
             handleUserLogin(request);
+        } else if (request.type == QStringLiteral("user.profile.get")) {
+            handleUserProfileGet(request);
+        } else if (request.type == QStringLiteral("user.profile.update")) {
+            handleUserProfileUpdate(request);
+        } else if (request.type == QStringLiteral("wallet.recharge")) {
+            handleWalletRecharge(request);
         } else if (request.type == QStringLiteral("station.list")) {
             handleStationList(request);
         } else if (request.type == QStringLiteral("pile.list")) {
@@ -111,8 +117,16 @@ private:
         if (!id || !value.isDouble()) return false;
         const double number = value.toDouble();
         if (!std::isfinite(number) || number < 1.0 || std::floor(number) != number
-            || number > static_cast<double>(std::numeric_limits<qint64>::max())) return false;
+            || number > 9007199254740991.0) return false;
         *id = static_cast<qint64>(number);
+        return true;
+    }
+
+    static bool hasOnlyFields(const QJsonObject &payload, const QStringList &allowed)
+    {
+        for (auto iterator = payload.constBegin(); iterator != payload.constEnd(); ++iterator) {
+            if (!allowed.contains(iterator.key())) return false;
+        }
         return true;
     }
 
@@ -128,10 +142,94 @@ private:
     {
         ErrorCode code = ErrorCode::DatabaseError;
         if (kind == ErrorKind::InvalidArgument) code = ErrorCode::InvalidRequest;
+        else if (kind == ErrorKind::Unauthorized) code = ErrorCode::Unauthorized;
         else if (kind == ErrorKind::NotFound) code = ErrorCode::NotFound;
         else if (kind == ErrorKind::Conflict) code = ErrorCode::Conflict;
         else if (kind == ErrorKind::InsufficientBalance) code = ErrorCode::InsufficientBalance;
-        sendError(requestId, code, message.isEmpty() ? fallback : message);
+        const QString publicMessage = kind == ErrorKind::Database
+            ? fallback : (message.isEmpty() ? fallback : message);
+        sendError(requestId, code, publicMessage);
+    }
+
+    void handleUserProfileGet(const Message &request)
+    {
+        qint64 userId = 0;
+        if (!hasOnlyFields(request.payload, {QStringLiteral("user_id")})
+            || !positiveId(request.payload.value(QStringLiteral("user_id")), &userId)) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("user_id must be a positive integer"));
+            return;
+        }
+        QJsonObject user;
+        QString error;
+        ErrorKind kind = ErrorKind::None;
+        if (!database_.getUserProfile(userId, &user, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error,
+                              QStringLiteral("get user profile failed"));
+            return;
+        }
+        sendResponse(request, QStringLiteral("user.profile.get.result"),
+                     QJsonObject{{QStringLiteral("user"), user}});
+    }
+
+    void handleUserProfileUpdate(const Message &request)
+    {
+        qint64 userId = 0;
+        const bool hasNickname = request.payload.contains(QStringLiteral("nickname"));
+        const bool hasAvatar = request.payload.contains(QStringLiteral("avatar_path"));
+        const QJsonValue nickname = request.payload.value(QStringLiteral("nickname"));
+        const QJsonValue avatar = request.payload.value(QStringLiteral("avatar_path"));
+        if (!hasOnlyFields(request.payload,
+                           {QStringLiteral("user_id"), QStringLiteral("nickname"),
+                            QStringLiteral("avatar_path")})
+            || !positiveId(request.payload.value(QStringLiteral("user_id")), &userId)
+            || (!hasNickname && !hasAvatar)
+            || (hasNickname && (!nickname.isString() || nickname.toString().trimmed().isEmpty()))
+            || (hasAvatar && !avatar.isString() && !avatar.isNull())) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("provide a valid nickname or avatar_path"));
+            return;
+        }
+        QJsonObject changes;
+        if (hasNickname) changes.insert(QStringLiteral("nickname"), nickname.toString().trimmed());
+        if (hasAvatar) changes.insert(QStringLiteral("avatar_path"), avatar);
+        QJsonObject user;
+        QString error;
+        ErrorKind kind = ErrorKind::None;
+        if (!database_.updateUserProfile(request.id, userId, changes, &user, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error,
+                              QStringLiteral("update user profile failed"));
+            return;
+        }
+        sendResponse(request, QStringLiteral("user.profile.update.result"),
+                     QJsonObject{{QStringLiteral("user"), user}});
+    }
+
+    void handleWalletRecharge(const Message &request)
+    {
+        qint64 userId = 0;
+        qint64 amountCents = 0;
+        if (!hasOnlyFields(request.payload,
+                           {QStringLiteral("user_id"), QStringLiteral("amount_cents")})
+            || !positiveId(request.payload.value(QStringLiteral("user_id")), &userId)
+            || !positiveId(request.payload.value(QStringLiteral("amount_cents")), &amountCents)) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("user_id and amount_cents must be positive integers"));
+            return;
+        }
+        qint64 balanceCents = 0;
+        qint64 transactionId = 0;
+        QString error;
+        ErrorKind kind = ErrorKind::None;
+        if (!database_.rechargeWallet(request.id, userId, amountCents,
+                                      &balanceCents, &transactionId, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error,
+                              QStringLiteral("wallet recharge failed"));
+            return;
+        }
+        sendResponse(request, QStringLiteral("wallet.recharge.result"),
+                     QJsonObject{{QStringLiteral("balance_cents"), balanceCents},
+                                 {QStringLiteral("transaction_id"), transactionId}});
     }
 
     void handleStationList(const Message &request)

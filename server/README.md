@@ -23,7 +23,8 @@ tree launches. The first connection initializes an empty database with
 `EV_DATABASE_SEED_PATH` is set, the seed is loaded only during that initial
 creation. Existing databases are never reseeded automatically.
 
-The service provides `health`, `echo`, `user.login`, station/pile queries,
+The service provides `health`, `echo`, `user.login`, profile read/update,
+wallet recharge, station/pile queries,
 active and historical order lookup, reservation transitions, and charging
 start/stop/settlement. Login accepts an 11-digit ASCII phone number, reads an
 existing user, or atomically registers a new active user with zero balance.
@@ -34,6 +35,7 @@ With the server running, validate the basic TCP path:
 
 ```bash
 python3 server/tests/smoke.py
+python3 server/tests/concurrency.py
 ```
 
 When using a non-default port, pass the same environment setting to both

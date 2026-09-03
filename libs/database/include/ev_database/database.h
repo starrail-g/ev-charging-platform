@@ -11,6 +11,7 @@ namespace ev::database {
 enum class ErrorKind {
     None,
     InvalidArgument,
+    Unauthorized,
     NotFound,
     Conflict,
     InsufficientBalance,
@@ -33,6 +34,14 @@ public:
     // Looks up a phone number or creates a new active user atomically.
     bool loginUser(const QString &phone, QJsonObject *user, QString *error = nullptr,
                    ErrorKind *kind = nullptr);
+    bool getUserProfile(qint64 userId, QJsonObject *user, QString *error = nullptr,
+                        ErrorKind *kind = nullptr);
+    bool updateUserProfile(const QString &requestId, qint64 userId,
+                           const QJsonObject &changes, QJsonObject *user,
+                           QString *error = nullptr, ErrorKind *kind = nullptr);
+    bool rechargeWallet(const QString &requestId, qint64 userId, qint64 amountCents,
+                        qint64 *balanceCents, qint64 *transactionId,
+                        QString *error = nullptr, ErrorKind *kind = nullptr);
     bool listStations(QJsonArray *stations, QString *error = nullptr,
                       ErrorKind *kind = nullptr);
     bool listPiles(qint64 stationId, QJsonArray *piles, QString *error = nullptr,

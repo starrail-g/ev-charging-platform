@@ -6,7 +6,8 @@
 
 ## 当前实现与管理端依赖
 
-服务端当前可运行：`health`、`echo`、`user.login`、`station.list`、
+服务端当前可运行：`health`、`echo`、`user.login`、`user.profile.get`、
+`user.profile.update`、`wallet.recharge`、`station.list`、
 `pile.list`、`order.active.get`、`order.history.list`、预约生命周期和充电
 开始/停止/结算。管理端后续依赖的 `admin.login`、统计、管理员桩/站/用户操作
 仍为契约，尚未由服务端实现。管理端第一阶段使用 `AdminRepository` 的 Mock
@@ -16,7 +17,8 @@
 标识性 payload 重放同一 ID 会返回第一次成功响应，即使客户端已重连；同一 ID
 用于不同操作或参数会返回 `CONFLICT`（1201）。当前支持幂等的操作为
 `reservation.create`、`reservation.confirm`、`reservation.cancel`、
-`charging.start`、`charging.stop`、`charging.settle`。
+`charging.start`、`charging.stop`、`charging.settle`、
+`user.profile.update`、`wallet.recharge`。
 
 ## 登录与查询
 
@@ -27,6 +29,45 @@
 ```json
 {"v":1,"id":"login-1","type":"user.login.result","payload":{"user":{"id":1,"phone":"13912345678","nickname":"用户5678","avatar_path":null,"balance_cents":0,"status":"active"}}}
 ```
+
+## 用户资料与钱包
+
+资料查询只接受整数 `user_id`：
+
+```json
+{"v":1,"id":"profile-1","type":"user.profile.get","payload":{"user_id":1}}
+{"v":1,"id":"profile-1","type":"user.profile.get.result","payload":{"user":{"id":1,"phone":"13800138000","nickname":"用户8000","avatar_path":null,"balance_cents":16950,"status":"active"}}}
+```
+
+资料更新必须提供 `nickname` 或 `avatar_path` 至少一个字段。`avatar_path` 可为字符串，
+也可显式传 `null` 清除头像；成功返回持久化后的完整 `user`：
+
+```json
+{"v":1,"id":"profile-update-1","type":"user.profile.update","payload":{"user_id":1,"nickname":"新能源车主","avatar_path":"avatars/user-1.png"}}
+{"v":1,"id":"profile-update-1","type":"user.profile.update.result","payload":{"user":{"id":1,"phone":"13800138000","nickname":"新能源车主","avatar_path":"avatars/user-1.png","balance_cents":16950,"status":"active"}}}
+```
+
+充值金额是正整数分。服务端在一个事务中校验用户、更新余额、追加 `recharge`
+流水并保存幂等响应：
+
+```json
+{"v":1,"id":"recharge-1","type":"wallet.recharge","payload":{"user_id":1,"amount_cents":5000}}
+{"v":1,"id":"recharge-1","type":"wallet.recharge.result","payload":{"balance_cents":21950,"transaction_id":5005}}
+```
+
+失败统一使用 error 信封：
+
+```json
+{"v":1,"id":"profile-missing","type":"error","payload":{"code":1200,"name":"NOT_FOUND","message":"user not found"}}
+{"v":1,"id":"profile-frozen","type":"error","payload":{"code":1100,"name":"UNAUTHORIZED","message":"user is frozen"}}
+{"v":1,"id":"recharge-invalid","type":"error","payload":{"code":1002,"name":"INVALID_REQUEST","message":"user_id and amount_cents must be positive integers"}}
+{"v":1,"id":"recharge-db-error","type":"error","payload":{"code":1300,"name":"DATABASE_ERROR","message":"wallet recharge failed"}}
+```
+
+相同请求 ID 和相同 payload 的资料更新或充值会返回第一次成功结果，不重复更新或
+入账；同一 ID 更换操作或参数返回 `CONFLICT`。冻结校验优先于成功回放：用户被冻结
+后重放返回 `1100`，解冻后再次重放才返回原结果。业务拒绝和数据库失败不写回放记录，
+故障解除后可使用原 ID 重试。
 
 ```json
 {"v":1,"id":"station-1","type":"station.list","payload":{}}

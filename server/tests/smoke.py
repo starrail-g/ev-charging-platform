@@ -8,11 +8,18 @@ The seeded user 4 has enough balance for one deterministic settlement.
 import json
 import os
 import socket
+import sqlite3
 import struct
+from contextlib import contextmanager
 
 
 HOST = os.getenv("EV_SERVER_HOST", "127.0.0.1")
 PORT = int(os.getenv("EV_SERVER_PORT", "45454"))
+# Fault-injection assertions open this same database after each socket request
+# to confirm a failed transaction did not leave a partial write behind.  The
+# clean smoke command supplies EV_DATABASE_PATH; the default keeps the basic
+# local invocation useful when server and test share the repository root.
+DATABASE_PATH = os.getenv("EV_DATABASE_PATH", "var/ev-charging.db")
 
 
 def recv_exact(sock, size):
@@ -64,6 +71,26 @@ def assert_error(response, code):
     return response["payload"]
 
 
+def database_row(query, parameters=()):
+    with sqlite3.connect(DATABASE_PATH, timeout=5) as connection:
+        return connection.execute(query, parameters).fetchone()
+
+
+def execute_database(statement):
+    with sqlite3.connect(DATABASE_PATH, timeout=5) as connection:
+        connection.execute(statement)
+
+
+@contextmanager
+def injected_trigger(name, statement):
+    execute_database("DROP TRIGGER IF EXISTS " + name)
+    execute_database(statement)
+    try:
+        yield
+    finally:
+        execute_database("DROP TRIGGER IF EXISTS " + name)
+
+
 assert exchange(request("smoke-1", "health", {}))["payload"]["status"] == "ok"
 assert exchange(request("smoke-2", "echo", {"value": 7}))["payload"]["value"] == 7
 assert_error(exchange(request("smoke-3", "unknown", {})), 1002)
@@ -76,6 +103,128 @@ assert {"id", "phone", "nickname", "avatar_path", "balance_cents", "status"}.iss
 repeat_login = exchange(request("smoke-login-2", "user.login", {"phone": "13912345678"}))
 assert repeat_login["payload"]["user"]["id"] == new_user["id"]
 assert_error(exchange(request("smoke-login-invalid", "user.login", {"phone": "139123"})), 1002)
+
+# User profile reads accept only a JSON integer ID.  Each exchange uses a new
+# connection, so the read after the update also proves the values persisted.
+profile = exchange(request("smoke-profile-get", "user.profile.get",
+                           {"user_id": new_user["id"]}))
+assert profile["type"] == "user.profile.get.result"
+assert profile["payload"]["user"] == new_user
+assert_error(exchange(request("smoke-profile-invalid", "user.profile.get",
+                              {"user_id": "1"})), 1002)
+assert_error(exchange(request("smoke-profile-not-found", "user.profile.get",
+                              {"user_id": 999999999})), 1200)
+
+profile_update = request("smoke-profile-update", "user.profile.update", {
+    "user_id": new_user["id"],
+    "nickname": "资料测试用户",
+    "avatar_path": "/avatars/smoke-user.png",
+})
+updated_profile = exchange(profile_update)
+assert updated_profile["type"] == "user.profile.update.result"
+assert updated_profile["payload"]["user"]["nickname"] == "资料测试用户"
+assert updated_profile["payload"]["user"]["avatar_path"] == "/avatars/smoke-user.png"
+assert exchange(profile_update) == updated_profile
+persisted_profile = exchange(request("smoke-profile-get-after-update", "user.profile.get",
+                                     {"user_id": new_user["id"]}))
+assert persisted_profile["payload"]["user"] == updated_profile["payload"]["user"]
+database_profile = database_row(
+    "SELECT nickname, avatar_path, updated_at FROM users WHERE id = ?", (new_user["id"],))
+assert database_profile[:2] == ("资料测试用户", "/avatars/smoke-user.png")
+assert database_profile[2]
+assert_error(exchange(request("smoke-profile-update-invalid", "user.profile.update", {
+    "user_id": new_user["id"], "nickname": ""
+})), 1002)
+
+# Injecting an UPDATE abort must leave neither profile fields nor a successful
+# request record behind.  The same request ID can then safely be retried.
+profile_failure = request("smoke-profile-update-write-failure", "user.profile.update", {
+    "user_id": new_user["id"], "nickname": "故障后资料"
+})
+with injected_trigger("smoke_profile_update_fail", """
+    CREATE TRIGGER smoke_profile_update_fail
+    BEFORE UPDATE OF nickname ON users
+    WHEN NEW.id = %d
+    BEGIN
+        SELECT RAISE(ABORT, 'smoke injected profile update failure');
+    END
+""" % new_user["id"]):
+    profile_failure_response = exchange(profile_failure)
+    profile_failure_error = assert_error(profile_failure_response, 1300)
+    assert "injected" not in profile_failure_error["message"].lower()
+    assert exchange(request("smoke-profile-get-after-failure", "user.profile.get", {
+        "user_id": new_user["id"]
+    }))["payload"]["user"] == updated_profile["payload"]["user"]
+    assert database_row("SELECT COUNT(*) FROM request_records WHERE request_id = ?",
+                        ("smoke-profile-update-write-failure",))[0] == 0
+profile_retried = exchange(profile_failure)
+assert profile_retried["type"] == "user.profile.update.result"
+assert profile_retried["payload"]["user"]["nickname"] == "故障后资料"
+
+# Wallet changes are integer fen, idempotent by request ID, and immediately
+# observable through the independently handled profile read.
+balance_before_recharge = profile_retried["payload"]["user"]["balance_cents"]
+recharge = request("smoke-recharge-success", "wallet.recharge", {
+    "user_id": new_user["id"], "amount_cents": 375
+})
+recharged = exchange(recharge)
+assert recharged["type"] == "wallet.recharge.result"
+assert recharged["payload"]["balance_cents"] == balance_before_recharge + 375
+assert isinstance(recharged["payload"]["transaction_id"], int)
+assert recharged["payload"]["transaction_id"] > 0
+assert exchange(recharge) == recharged
+execute_database("UPDATE users SET status = 'frozen' WHERE id = %d" % new_user["id"])
+assert_error(exchange(profile_update), 1100)
+assert_error(exchange(recharge), 1100)
+execute_database("UPDATE users SET status = 'active' WHERE id = %d" % new_user["id"])
+assert exchange(profile_update) == updated_profile
+assert exchange(recharge) == recharged
+assert_error(exchange(request("smoke-recharge-id-conflict", "wallet.recharge", {
+    "user_id": new_user["id"], "amount_cents": 0
+})), 1002)
+assert_error(exchange(request("smoke-recharge-invalid-user", "wallet.recharge", {
+    "user_id": "1", "amount_cents": 10
+})), 1002)
+assert_error(exchange(request("smoke-recharge-success", "wallet.recharge", {
+    "user_id": new_user["id"], "amount_cents": 376
+})), 1201)
+assert exchange(request("smoke-profile-get-after-recharge", "user.profile.get", {
+    "user_id": new_user["id"]
+}))["payload"]["user"]["balance_cents"] == recharged["payload"]["balance_cents"]
+assert database_row("SELECT COUNT(*) FROM wallet_transactions WHERE idempotency_key = ?",
+                    ("smoke-recharge-success",))[0] == 1
+
+# The balance update precedes the recharge ledger insert.  A trigger aborting
+# that insert proves the enclosing transaction rolls the balance update back;
+# retrying the identical request after cleanup creates exactly one transaction.
+balance_before_failed_recharge = recharged["payload"]["balance_cents"]
+recharge_failure = request("smoke-recharge-ledger-failure", "wallet.recharge", {
+    "user_id": new_user["id"], "amount_cents": 91
+})
+with injected_trigger("smoke_recharge_insert_fail", """
+    CREATE TRIGGER smoke_recharge_insert_fail
+    BEFORE INSERT ON wallet_transactions
+    WHEN NEW.user_id = %d AND NEW.transaction_type = 'recharge'
+    BEGIN
+        SELECT RAISE(ABORT, 'smoke injected recharge ledger failure');
+    END
+""" % new_user["id"]):
+    recharge_failure_response = exchange(recharge_failure)
+    recharge_failure_error = assert_error(recharge_failure_response, 1300)
+    assert "injected" not in recharge_failure_error["message"].lower()
+    assert exchange(request("smoke-profile-get-after-recharge-failure", "user.profile.get", {
+        "user_id": new_user["id"]
+    }))["payload"]["user"]["balance_cents"] == balance_before_failed_recharge
+    assert database_row("SELECT COUNT(*) FROM wallet_transactions WHERE idempotency_key = ?",
+                        ("smoke-recharge-ledger-failure",))[0] == 0
+    assert database_row("SELECT COUNT(*) FROM request_records WHERE request_id = ?",
+                        ("smoke-recharge-ledger-failure",))[0] == 0
+recharge_retried = exchange(recharge_failure)
+assert recharge_retried["type"] == "wallet.recharge.result"
+assert recharge_retried["payload"]["balance_cents"] == balance_before_failed_recharge + 91
+assert exchange(recharge_failure) == recharge_retried
+assert database_row("SELECT COUNT(*) FROM wallet_transactions WHERE idempotency_key = ?",
+                    ("smoke-recharge-ledger-failure",))[0] == 1
 
 stations = exchange(request("smoke-stations", "station.list", {}))
 assert stations["type"] == "station.list.result"
@@ -140,6 +289,17 @@ assert exchange(cancel) == cancelled
 # Frozen users are rejected before pile allocation and direct start is valid.
 frozen = exchange(request("smoke-login-frozen", "user.login", {"phone": "13700137000"}))["payload"]["user"]
 assert frozen["status"] == "frozen"
+assert_error(exchange(request("smoke-frozen-profile-get", "user.profile.get", {
+    "user_id": frozen["id"]
+})), 1100)
+assert_error(exchange(request("smoke-frozen-profile-update", "user.profile.update", {
+    "user_id": frozen["id"], "nickname": "不应写入"
+})), 1100)
+assert_error(exchange(request("smoke-frozen-recharge", "wallet.recharge", {
+    "user_id": frozen["id"], "amount_cents": 100
+})), 1100)
+assert database_row("SELECT nickname, balance_cents FROM users WHERE id = ?", (frozen["id"],)) \
+    == ("演示冻结用户", 0)
 frozen_error = assert_error(exchange(request("smoke-frozen-reservation", "reservation.create", {"user_id": frozen["id"], "pile_id": 101})), 1201)
 assert "frozen" in frozen_error["message"]
 

@@ -8,11 +8,11 @@ contract for `libs/protocol`.
 
 Version 1 freezes framing, common fields, error responses, and operation
 names needed for the first project stage. The current server implements the
-read/query and user charging lifecycle operations (`health`, `echo`,
-`user.login`, `station.list`, `pile.list`, `order.active.get`,
-`order.history.list`, `reservation.*`, and `charging.*`). Administrator,
-profile, and wallet recharge operations remain contracted and will be
-implemented against the database service.
+read/query, user profile/wallet, and user charging lifecycle operations
+(`health`, `echo`, `user.login`, `user.profile.*`, `wallet.recharge`,
+`station.list`, `pile.list`, `order.active.get`, `order.history.list`,
+`reservation.*`, and `charging.*`). Administrator operations remain
+contracted and will be implemented against the database service.
 
 ## Transport and Framing
 
@@ -150,8 +150,18 @@ Order status values are `pending_reservation`, `reserved`, `charging`,
   not retry the same action with a new ID.
 - Idempotency currently covers `reservation.create`,
   `reservation.confirm`, `reservation.cancel`, `charging.start`,
-  `charging.stop`, and `charging.settle`. Read operations do not require
-  persistence records.
+  `charging.stop`, `charging.settle`, `user.profile.update`, and
+  `wallet.recharge`. Read operations do not require persistence records.
+- Request IDs are currently globally unique in the server database across
+  users and operations; clients must not reuse an ID for another request.
+- A frozen user receives `UNAUTHORIZED` for profile reads/updates and wallet
+  recharge. A missing user receives `NOT_FOUND`; invalid field types or values
+  receive `INVALID_REQUEST`. Persistence details are logged server-side and
+  are never included in the public `DATABASE_ERROR` response.
+- Frozen-user validation takes precedence over a successful replay record for
+  profile updates and wallet recharge. A replay while frozen returns
+  `UNAUTHORIZED`; after unfreezing, the original successful response is
+  replayed without a second write.
 - Settlement must atomically update the order, pile, wallet balance, and
   wallet transaction. Insufficient balance returns `INSUFFICIENT_BALANCE`
   without partial updates.
