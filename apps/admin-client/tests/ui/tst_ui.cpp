@@ -114,7 +114,7 @@ void TestUi::shellExposesProductAndSessionContext()
     auto *nav = window.findChild<QListWidget *>("navList");
     QVERIFY(nav);
     QCOMPARE(nav->count(), 4);
-    QCOMPARE(nav->spacing(), 12);
+    QCOMPARE(nav->spacing(), 22); // 与 mainwindow 侧边栏导航间距保持同口径
 }
 
 void TestUi::loginFieldsHaveAccessibleNames()
