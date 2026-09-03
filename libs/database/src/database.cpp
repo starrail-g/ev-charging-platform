@@ -447,7 +447,7 @@ bool Database::readPile(QSqlQuery &query, QJsonObject *pile, QString *error) con
     return true;
 }
 
-bool Database::readOrder(QSqlQuery &query, QJsonObject *order, QString *error) const
+bool Database::readOrder(QSqlQuery &query, QJsonObject *order, QString *error)
 {
     if (!order) {
         setError(error, QStringLiteral("order output is null"));
@@ -472,6 +472,18 @@ bool Database::readOrder(QSqlQuery &query, QJsonObject *order, QString *error) c
                          {QStringLiteral("settled_at"), nullable(12)},
                          {QStringLiteral("created_at"), query.value(13).toString()},
                          {QStringLiteral("updated_at"), query.value(14).toString()}};
+    QSqlQuery displayQuery(connection_);
+    displayQuery.prepare(QStringLiteral(
+        "SELECT s.name, s.address, p.pile_code FROM charging_piles AS p "
+        "JOIN stations AS s ON s.id = p.station_id WHERE p.id = :pile_id"));
+    displayQuery.bindValue(QStringLiteral(":pile_id"), query.value(3).toLongLong());
+    if (!displayQuery.exec() || !displayQuery.next()) {
+        setError(error, QStringLiteral("order display fields not found"));
+        return false;
+    }
+    order->insert(QStringLiteral("station_name"), displayQuery.value(0).toString());
+    order->insert(QStringLiteral("station_address"), displayQuery.value(1).toString());
+    order->insert(QStringLiteral("pile_code"), displayQuery.value(2).toString());
     return true;
 }
 
@@ -631,7 +643,8 @@ bool Database::listOrderHistory(qint64 userId, QJsonArray *orders, QString *erro
         "SELECT id, order_no, user_id, pile_id, status, reserved_at, started_at, ended_at, "
         "energy_wh, unit_price_cents_per_kwh, service_fee_cents, total_amount_cents, "
         "settled_at, created_at, updated_at FROM charging_orders "
-        "WHERE user_id = :user_id ORDER BY created_at DESC, id DESC"));
+        "WHERE user_id = :user_id AND status = 'completed' "
+        "ORDER BY settled_at DESC, id DESC"));
     query.bindValue(QStringLiteral(":user_id"), userId);
     if (!query.exec()) {
         setFailure(error, kind, ErrorKind::Database,
@@ -801,8 +814,15 @@ bool Database::cancelReservation(const QString &requestId, qint64 userId, qint64
     query.prepare(QStringLiteral("UPDATE charging_orders SET status = 'cancelled', updated_at = :updated_at WHERE id = :id AND status IN ('pending_reservation','reserved')"));
     query.bindValue(QStringLiteral(":updated_at"), timestamp); query.bindValue(QStringLiteral(":id"), orderId);
     if (!query.exec() || query.numRowsAffected() != 1) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("reservation changed concurrently")); return false; }
-    query.prepare(QStringLiteral("UPDATE charging_piles SET status = 'idle', updated_at = :updated_at WHERE id = :id AND status = 'reserved'"));
-    query.bindValue(QStringLiteral(":updated_at"), timestamp); query.bindValue(QStringLiteral(":id"), pileId);
+    query.prepare(QStringLiteral(
+        "UPDATE charging_piles SET status = 'idle', updated_at = :updated_at "
+        "WHERE id = :pile_id AND status = 'reserved' AND EXISTS ("
+        "SELECT 1 FROM charging_orders WHERE id = :order_id AND pile_id = :pile_id "
+        "AND user_id = :user_id AND status = 'cancelled')"));
+    query.bindValue(QStringLiteral(":updated_at"), timestamp);
+    query.bindValue(QStringLiteral(":pile_id"), pileId);
+    query.bindValue(QStringLiteral(":order_id"), orderId);
+    query.bindValue(QStringLiteral(":user_id"), userId);
     if (!query.exec() || query.numRowsAffected() != 1) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("reserved pile is not available")); return false; }
     query.prepare(QStringLiteral("SELECT id, order_no, user_id, pile_id, status, reserved_at, started_at, ended_at, energy_wh, unit_price_cents_per_kwh, service_fee_cents, total_amount_cents, settled_at, created_at, updated_at FROM charging_orders WHERE id = :id"));
     query.bindValue(QStringLiteral(":id"), orderId);
@@ -919,6 +939,17 @@ bool Database::stopCharging(const QString &requestId, qint64 userId, qint64 orde
     const qint64 pileId = query.value(0).toLongLong();
     const QString started = query.value(1).toString();
     const qint64 price = query.value(2).toLongLong();
+    QSqlQuery feeQuery(connection_);
+    feeQuery.prepare(QStringLiteral("SELECT service_fee_cents FROM charging_orders WHERE id = :id AND user_id = :user_id AND status = 'charging'"));
+    feeQuery.bindValue(QStringLiteral(":id"), orderId);
+    feeQuery.bindValue(QStringLiteral(":user_id"), userId);
+    if (!feeQuery.exec() || !feeQuery.next()) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("read service fee failed: %1").arg(queryError(feeQuery)));
+        return false;
+    }
+    const qint64 serviceFee = feeQuery.value(0).toLongLong();
     const double powerKw = query.value(3).toDouble();
     const QString finish = endedAt.isEmpty() ? utcNow() : endedAt;
     const QDateTime startedTime = QDateTime::fromString(started, Qt::ISODate);
@@ -931,7 +962,13 @@ bool Database::stopCharging(const QString &requestId, qint64 userId, qint64 orde
     }
     const qint64 seconds = qMax<qint64>(1, startedTime.secsTo(finishTime));
     const qint64 energyWh = qMax<qint64>(1, static_cast<qint64>(powerKw * 1000.0 * seconds / 3600.0));
-    const qint64 total = qMax<qint64>(1, (energyWh * price + 999) / 1000);
+    const qint64 total = (energyWh * price + 999) / 1000 + serviceFee;
+    if (total <= 0) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Conflict,
+                   QStringLiteral("charging amount must be positive"));
+        return false;
+    }
     QSqlQuery updateQuery(connection_);
     updateQuery.prepare(QStringLiteral("UPDATE charging_orders SET status='pending_settlement', ended_at=:ended_at, energy_wh=:energy_wh, total_amount_cents=:total, updated_at=:updated_at WHERE id=:id AND status='charging'"));
     updateQuery.bindValue(QStringLiteral(":ended_at"), finish); updateQuery.bindValue(QStringLiteral(":energy_wh"), energyWh); updateQuery.bindValue(QStringLiteral(":total"), total); updateQuery.bindValue(QStringLiteral(":updated_at"), finish); updateQuery.bindValue(QStringLiteral(":id"), orderId);

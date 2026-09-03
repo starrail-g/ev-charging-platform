@@ -64,7 +64,7 @@ private:
     bool executeSchemaScript(const QString &script, QString *error);
     bool ensureRequestTable(QString *error);
     bool readUser(QSqlQuery &query, QJsonObject *user, QString *error) const;
-    bool readOrder(QSqlQuery &query, QJsonObject *order, QString *error) const;
+    bool readOrder(QSqlQuery &query, QJsonObject *order, QString *error);
     bool readPile(QSqlQuery &query, QJsonObject *pile, QString *error) const;
     bool begin(QString *error, ErrorKind *kind);
     bool rollback();

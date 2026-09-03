@@ -80,8 +80,11 @@ unavailable to other users.
 These cross-row rules belong in the service transaction because SQLite CHECK
 constraints cannot inspect another table.
 
-`charging_orders` CHECK constraints require a `pending_settlement` order to
-have `ended_at`, and a `completed` order to have `started_at`, `ended_at`, and
+`charging_orders` CHECK constraints require pending/reserved orders to have a
+reservation timestamp and no charging timestamps, charging orders to have a
+start timestamp but no end/settlement timestamps, and `pending_settlement`
+orders to have start/end timestamps, a positive amount and no settlement
+timestamp. Completed orders must have `started_at`, `ended_at`, and
 `settled_at`. Its amount columns are non-null integer values, preserving the
 settled total and pricing inputs even after tariffs change. The schema also
 requires every `charge` wallet entry to reference an order and allows at most

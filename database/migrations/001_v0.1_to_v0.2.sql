@@ -47,7 +47,14 @@ CREATE TABLE charging_orders_v02 (
     updated_at TEXT NOT NULL,
     CHECK (ended_at IS NULL OR started_at IS NOT NULL),
     CHECK (settled_at IS NULL OR status = 'completed'),
-    CHECK (status <> 'pending_settlement' OR ended_at IS NOT NULL),
+    CHECK (status NOT IN ('pending_reservation', 'reserved')
+        OR (reserved_at IS NOT NULL AND started_at IS NULL
+            AND ended_at IS NULL AND settled_at IS NULL)),
+    CHECK (status <> 'charging'
+        OR (started_at IS NOT NULL AND ended_at IS NULL AND settled_at IS NULL)),
+    CHECK (status <> 'pending_settlement'
+        OR (started_at IS NOT NULL AND ended_at IS NOT NULL
+            AND settled_at IS NULL AND total_amount_cents > 0)),
     CHECK (status <> 'completed'
         OR (started_at IS NOT NULL
             AND ended_at IS NOT NULL

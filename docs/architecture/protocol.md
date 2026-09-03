@@ -177,5 +177,8 @@ start/stop/settlement; unknown operations return `INVALID_REQUEST`.
 When a read contains valid messages before a malformed frame, the server
 dispatches the valid messages before returning the frame error and closing
 that connection.
-The server dispatches directly to the shared SQLite-backed database service;
-clients still depend only on this wire contract and never access SQLite.
+The server dispatches to the shared SQLite-backed database service in the
+current stage. Clients still depend only on this wire contract and never
+access SQLite directly. Database work is currently synchronous in the
+connection event loop; moving long-running operations to bounded workers is a
+known follow-up before production deployment.

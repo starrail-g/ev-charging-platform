@@ -102,6 +102,7 @@ stop["payload"]["ended_at"] = started["payload"]["order"]["started_at"]
 stopped = exchange(stop)
 assert stopped["type"] == "charging.stop.result"
 assert stopped["payload"]["order"]["status"] == "pending_settlement"
+assert stopped["payload"]["order"]["total_amount_cents"] == 53
 assert exchange(stop) == stopped
 settle = request("smoke-settle-seeded", "charging.settle", {"user_id": 4, "order_id": 1003})
 settled = exchange(settle)
@@ -111,7 +112,9 @@ assert settled["payload"]["order"]["ended_at"]
 assert settled["payload"]["order"]["settled_at"]
 assert exchange(settle) == settled
 history = exchange(request("smoke-history", "order.history.list", {"user_id": 4}))
-assert any(order["id"] == 1003 and order["status"] == "completed" for order in history["payload"]["orders"])
+history_order = next(order for order in history["payload"]["orders"] if order["id"] == 1003)
+assert history_order["status"] == "completed"
+assert {"station_name", "station_address", "pile_code"}.issubset(history_order)
 
 # Reservation create/duplicate/cancel verifies pile ownership and replay.
 reservation_user = exchange(request("smoke-login-reservation", "user.login", {"phone": "13612345678"}))["payload"]["user"]

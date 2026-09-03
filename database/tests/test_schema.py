@@ -121,6 +121,27 @@ class SchemaV02Test(unittest.TestCase):
             INSERT INTO charging_orders
                 (id, order_no, user_id, pile_id, status,
                  unit_price_cents_per_kwh, created_at, updated_at)
+            VALUES (9100, 'BAD-RESERVATION', 3, 202, 'pending_reservation',
+                    95, 't', 't')
+        """)
+        self.assert_rejected("""
+            INSERT INTO charging_orders
+                (id, order_no, user_id, pile_id, status, reserved_at,
+                 started_at, unit_price_cents_per_kwh, created_at, updated_at)
+            VALUES (9099, 'BAD-RESERVED-TIME', 3, 202, 'reserved', 't0',
+                    't1', 95, 't', 't')
+        """)
+        self.assert_rejected("""
+            INSERT INTO charging_orders
+                (id, order_no, user_id, pile_id, status,
+                 unit_price_cents_per_kwh, created_at, updated_at)
+            VALUES (9098, 'BAD-CHARGING-TIME', 3, 202, 'charging',
+                    95, 't', 't')
+        """)
+        self.assert_rejected("""
+            INSERT INTO charging_orders
+                (id, order_no, user_id, pile_id, status,
+                 unit_price_cents_per_kwh, created_at, updated_at)
             VALUES (9101, 'BAD-COMPLETED', 3, 202, 'completed', 95, 't', 't')
         """)
         self.assert_rejected("""

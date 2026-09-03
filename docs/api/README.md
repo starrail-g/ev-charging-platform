@@ -37,7 +37,8 @@
 
 `station.list.result` 返回 `stations`；`pile.list.result` 返回 `piles`。桩状态
 为 `idle`、`reserved`、`charging`、`fault`、`offline`。活动订单查询返回订单或
-JSON `null`，历史订单按创建时间倒序返回 `orders`。
+JSON `null`；历史接口只返回 `completed` 订单，按 `settled_at` 倒序返回 `orders`，
+并包含 `station_name`、`station_address`、`pile_code` 和金额字段。
 
 ## 预约
 
@@ -75,6 +76,11 @@ JSON `null`，历史订单按创建时间倒序返回 `orders`。
 置为 `completed` 并释放电桩。已完成订单必须同时具有 `started_at`、`ended_at`、
 `settled_at` 和匹配的钱包流水。
 
+结算金额完全使用整数分：`energy_wh` 为瓦时，费率为分/千瓦时，服务费为分，
+`total_amount_cents = ceil(energy_wh * unit_price_cents_per_kwh / 1000) + service_fee_cents`。
+服务端使用订单保存的费率和服务费重新计算，不信任客户端金额；充电停止时能量至少为
+1 Wh，结算总额必须为正。
+
 ## 错误和业务规则
 
 所有失败响应的 `type` 为 `error`，并保留请求 ID：
@@ -90,6 +96,10 @@ JSON `null`，历史订单按创建时间倒序返回 `orders`。
 
 冻结用户不能创建或确认预约、开始充电或结算。当前冻结不会自动关闭已经运行的
 订单，该策略将在管理员冻结接口实现时单独确定。
+
+请求 ID 在服务端数据库保留期内全局唯一。只有成功提交的状态修改会写入回放记录；
+业务拒绝或数据库失败会回滚且不会固化记录，因此相同 ID 可在条件修复后重试，参数
+变化或操作变化则返回 `CONFLICT`。
 
 管理员接口草案：
 
