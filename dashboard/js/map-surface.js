@@ -9,6 +9,14 @@ const REASONS = Object.freeze({
   RENDERER_FAILED: 'renderer-failed',
 });
 
+// 挂载被更新的挂载/销毁取代时的返回结果：调用方应放弃本轮后续副作用
+// （不更新 _active、不清容器、不降级——容器与 _active 归新挂载所有）。
+const SUPERSEDED = Object.freeze({
+  mode: 'superseded',
+  degraded: false,
+  reason: REASONS.NONE,
+});
+
 // 与 Qt StationTopologyWidget priority 一致：Fault > Offline > Charging > Reserved > Idle
 const STATE_PRIORITY = ['fault', 'offline', 'charging', 'reserved', 'idle'];
 
@@ -90,13 +98,34 @@ export class MapSurface {
     this._topologyRenderer = topologyRenderer;
     this._timeoutMs = timeoutMs;
     this._active = null;
+    // 挂载代次：每次 mount()/destroy() 递增；异步 Promise 完成后只有
+    // 代次仍匹配才允许更新 _active / 触碰容器（评审 P1-01 竞态修复）。
+    this._generation = 0;
+    // 在途在线挂载的 AbortController；新一轮挂载开始时中止它，
+    // 让尚未完成 SDK 初始化的旧在线渲染器放弃写入共享容器。
+    this._onlineController = null;
+  }
+
+  _isCurrent(generation) {
+    return generation === this._generation;
   }
 
   async mount(container, config) {
+    // 本轮挂载代次：递增即令所有在途旧挂载失效（P1-01）。
+    const generation = ++this._generation;
+
+    // 中止上一轮在途在线挂载：SDK 尚未完成初始化时会因 abort 放弃写容器；
+    // 其 catch/完成路径经代次检查后会静默退出，不会降级接管本轮。
+    if (this._onlineController) {
+      this._onlineController.abort();
+      this._onlineController = null;
+    }
+
     // 幂等：重复挂载（重试）先释放上一轮渲染器并清空共享容器，
     // 容器生命周期归 MapSurface 单点管理。
     if (this._active && typeof this._active.destroy === 'function') {
       await this._active.destroy({ preserveContainer: true });
+      if (!this._isCurrent(generation)) return SUPERSEDED;
     }
     this._active = null;
     container.replaceChildren?.();
@@ -106,9 +135,11 @@ export class MapSurface {
     if (mode === 'topology') {
       this._active = this._topologyRenderer;
       await this._topologyRenderer.mount(container, config);
+      if (!this._isCurrent(generation)) return SUPERSEDED;
       return { mode: 'topology', degraded: false, reason: REASONS.NONE };
     }
     const controller = new AbortController();
+    this._onlineController = controller;
     const timer = setTimeout(() => controller.abort(REASONS.SDK_TIMEOUT), this._timeoutMs);
     try {
       const mountPromise = this._onlineRenderer.mount(container, {
@@ -116,11 +147,18 @@ export class MapSurface {
         signal: controller.signal,
       });
       await this._untilSettledOrAborted(mountPromise, controller);
+      // 旧在线请求晚到时不得覆盖新挂载结果：代次不匹配则放弃本轮声明
+      if (!this._isCurrent(generation)) return SUPERSEDED;
       this._active = this._onlineRenderer;
       return { mode: 'tencent', degraded: false, reason: REASONS.NONE };
     } catch (error) {
+      // 被更新的挂载取代：不降级、不触碰容器（容器/_active 归新挂载）
+      if (!this._isCurrent(generation)) return SUPERSEDED;
       controller.abort();
+      // 先放弃引用再销毁，避免与并发新挂载对同一渲染器双重 destroy
+      this._active = null;
       await this._onlineRenderer.destroy?.({ preserveContainer: true });
+      if (!this._isCurrent(generation)) return SUPERSEDED;
       container.replaceChildren?.();
       if (!container.replaceChildren) container.innerHTML = '';
       this._active = this._topologyRenderer;
@@ -128,6 +166,7 @@ export class MapSurface {
       return { mode: 'topology', degraded: true, reason: normalizeReason(error) };
     } finally {
       clearTimeout(timer);
+      if (this._onlineController === controller) this._onlineController = null;
     }
   }
 
@@ -181,6 +220,12 @@ export class MapSurface {
   }
 
   async destroy() {
+    // 销毁令所有在途挂载失效：其完成/失败路径不得再触碰容器或 _active
+    this._generation += 1;
+    if (this._onlineController) {
+      this._onlineController.abort();
+      this._onlineController = null;
+    }
     if (this._active && typeof this._active.destroy === 'function') {
       await this._active.destroy();
     }

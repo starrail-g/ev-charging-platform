@@ -63,7 +63,10 @@ export class TopologyMapRenderer {
         const meta = mapPileStatus(state);
         const pileCount = station.pileCount ?? 0;
         const labelX = x + 20;
-        return `<g class="topo-node" data-station-id="${station.id}" data-motion="${meta.motion}"
+        // station.id 来自外部数据，进入 HTML 属性前必须转义（评审 P1-02）：
+        // 恶意 id（引号/事件属性）不得突破 data-station-id 属性边界。
+        // DOM 解析会把 &quot; 等实体还原，dataset/点击路径读回的仍是原始 id。
+        return `<g class="topo-node" data-station-id="${svgEscape(String(station.id))}" data-motion="${meta.motion}"
      style="color: ${meta.color}" role="button" tabindex="0"
    aria-label="站点 ${svgEscape(station.name)}（${meta.label}）">
   <circle class="topo-halo" cx="${x}" cy="${y}" r="24" data-halo="${meta.motion}"/>

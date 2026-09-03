@@ -264,6 +264,7 @@ async function boot() {
   let lastValidAt = null;
   let chartInstances = [];
   let currentDeactivateFocus = null; // Esc 只注册一次，读取每轮渲染的最新退出出口
+  let revenueRangeDays = 7; // 营收趋势档位（A-02）：7 或 30；静态按钮只绑一次
 
   /* ---- 页面级状态区 ---- */
 
@@ -377,6 +378,9 @@ async function boot() {
         piles: model.piles,
         onStationActivate: activateStationNode,
       });
+      // 本轮挂载被更新的重试/销毁取代：容器与状态归新挂载所有，
+      // 旧流程放弃后续副作用（不覆盖 modeBadge、不渲染图表）——P1-01。
+      if (mountResult.mode === 'superseded') return;
       modeBadge.textContent = mountResult.mode === 'tencent' ? '腾讯地图' : '离线拓扑图';
       if (mountResult.degraded) {
         modeBadge.textContent += '（降级）';
@@ -392,10 +396,14 @@ async function boot() {
     // 图表（各自独立；失败只影响本面板）
     chartsById = {};
     chartInstances = [];
+    const revenueCentsSeries = revenueRangeDays === 30
+      ? (model.revenue30dCents ?? [])
+      : model.revenue7dCents;
     for (const [id, factory] of [
       ['chart-load', () => renderLoadChart(document.getElementById('chart-load'), model)],
       ['chart-states', () => renderStateDonut(document.getElementById('chart-states'), model.metrics.counts)],
-      ['chart-revenue', () => renderRevenueTrend(document.getElementById('chart-revenue'), model.revenue7dCents)],
+      ['chart-revenue', () => renderRevenueTrend(
+        document.getElementById('chart-revenue'), revenueCentsSeries, model.updatedAt)],
     ]) {
       try {
         const chart = factory();
@@ -509,6 +517,36 @@ async function boot() {
   });
 
   setupChartTabsOnce();
+
+  // 营收趋势 7 日/30 日档位：静态按钮只绑一次；切换后按最近有效快照重渲该图
+  const revenueRangeGroup = document.querySelector('.chart-range');
+  if (revenueRangeGroup) {
+    for (const btn of revenueRangeGroup.querySelectorAll('.range-btn')) {
+      btn.addEventListener('click', () => {
+        const days = Number(btn.dataset.rangeDays);
+        if (!Number.isInteger(days) || days === revenueRangeDays) return;
+        revenueRangeDays = days;
+        for (const other of revenueRangeGroup.querySelectorAll('.range-btn')) {
+          const isActive = other === btn;
+          other.classList.toggle('is-active', isActive);
+          other.setAttribute('aria-pressed', String(isActive));
+        }
+        if (!lastValidModel) return; // 尚无有效快照（加载失败态），按钮保持但不重渲
+        const centsSeries = days === 30
+          ? (lastValidModel.revenue30dCents ?? [])
+          : lastValidModel.revenue7dCents;
+        try {
+          const chart = renderRevenueTrend(
+            document.getElementById('chart-revenue'), centsSeries, lastValidModel.updatedAt);
+          chartsById['chart-revenue'] = chart;
+          if (!chartInstances.includes(chart)) chartInstances.push(chart);
+        } catch (error) {
+          renderLocalError(document.getElementById('chart-revenue'),
+                           error?.message ?? '图表切换失败');
+        }
+      });
+    }
+  }
 
   // 自适应：容器与窗口变化时重排所有活跃图表
   if (typeof ResizeObserver !== 'undefined') {

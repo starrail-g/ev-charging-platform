@@ -70,6 +70,93 @@ test('late online completion cannot overwrite topology fallback', async () => {
   assert.equal(container.innerHTML, 'topology');
 });
 
+// P1-01 回归：评审复现场景——在线挂载尚未完成时用户重试挂载拓扑，
+// 旧在线请求晚到完成后不得更新 _active 或覆盖容器内容。
+test('retry during an in-flight online mount: late completion reports superseded and never claims _active', async () => {
+  const container = { innerHTML: '' };
+  let finishOnline;
+  const onlineRenderer = {
+    mount: () => new Promise((resolve) => {
+      finishOnline = resolve; // 顽固 Promise：不监听 abort，晚到仍会 resolve
+    }),
+    destroy() {},
+  };
+  const topologyRenderer = {
+    async mount(target) {
+      target.innerHTML = 'topo';
+    },
+  };
+  const surface = new MapSurface({ onlineRenderer, topologyRenderer, timeoutMs: 1000 });
+
+  const first = surface.mount(container, { key: 'dev-key', online: true });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  // 第二次挂载（重试）先完成：拓扑已上屏
+  const second = await surface.mount(container, { key: '', online: false });
+  assert.equal(second.mode, 'topology');
+  assert.equal(container.innerHTML, 'topo');
+
+  // 第一次在线请求此刻才完成
+  finishOnline();
+  const firstResult = await first;
+  assert.equal(firstResult.mode, 'superseded');
+  assert.equal(surface._active, topologyRenderer, '_active must match the visible topology');
+  assert.equal(container.innerHTML, 'topo', 'late online completion must not overwrite the map');
+});
+
+// P1-01 回归：重试使在途在线挂载收到 abort；其 catch 路径同样不得降级接管。
+test('retry aborts the in-flight online mount; its catch path leaves the new topology alone', async () => {
+  const container = { innerHTML: '' };
+  const onlineRenderer = {
+    mount: (_c, { signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('aborted')));
+    }),
+    destroy() {},
+  };
+  const topologyRenderer = {
+    async mount(target) {
+      target.innerHTML = 'topo';
+    },
+  };
+  const surface = new MapSurface({ onlineRenderer, topologyRenderer, timeoutMs: 1000 });
+
+  const first = surface.mount(container, { key: 'dev-key', online: true });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const second = await surface.mount(container, { key: '', online: false });
+  assert.equal(second.mode, 'topology');
+
+  const firstResult = await first;
+  assert.equal(firstResult.mode, 'superseded', 'aborted first mount must not degrade the new one');
+  assert.equal(surface._active, topologyRenderer);
+  assert.equal(container.innerHTML, 'topo');
+});
+
+// P1-01 回归：在线挂载中途 destroy 后，晚到完成不得复活 _active。
+test('destroy during an in-flight online mount invalidates the late completion', async () => {
+  const container = { innerHTML: '' };
+  let finishOnline;
+  const onlineRenderer = {
+    mount: () => new Promise((resolve) => {
+      finishOnline = resolve;
+    }),
+    destroy() {},
+  };
+  const surface = new MapSurface({
+    onlineRenderer,
+    topologyRenderer: { async mount() {} },
+    timeoutMs: 1000,
+  });
+
+  const first = surface.mount(container, { key: 'dev-key', online: true });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await surface.destroy();
+  finishOnline();
+  const firstResult = await first;
+  assert.equal(firstResult.mode, 'superseded');
+  assert.equal(surface._active, null);
+});
+
 test('clearFocus delegates to the active renderer', async () => {
   let cleared = false;
   const topologyRenderer = {
