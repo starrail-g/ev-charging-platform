@@ -101,10 +101,14 @@ void MainWindow::buildBusinessArea(ev::AdminRepository *repository)
     navigationLayout->addWidget(separator);
 
     navigationLayout->addSpacing(34);
-    m_navList->setSpacing(10); // 导航项之间大幅留空，成独立可点行
-    // 导航组自然高度（4 项紧凑成组），下方弹性空间把退出按钮锚在 rail 底部
-    navigationLayout->addWidget(m_navList);
-    navigationLayout->addStretch(1);
+    m_navList->setSpacing(22); // 用列表 spacing 统一控制导航项的垂直间距
+    // 导航区吃满分隔线到退出按钮之间的全部弹性空间：列表控件高度 ≥ 内容高，
+    // 关闭滚动条后 4 项恒完整可见（不会出现内部滚动），多余空间落在列表视口内。
+    // 注：QListWidget 的 sizeHint 不随内容变化，若仍用独立 addStretch 会让列表
+    // 只有 ~192px 高、274px 内容被压缩成内部滚动。
+    m_navList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_navList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    navigationLayout->addWidget(m_navList, 1);
     navigationLayout->addWidget(logoutButton);
 
     m_overviewPage = new OverviewPage(repository, m_businessArea);

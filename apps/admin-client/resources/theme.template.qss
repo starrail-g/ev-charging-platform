@@ -20,7 +20,9 @@ QLabel#sessionBadge { color: @themes.day.states.idle; font-size: 12px; }
 QLabel#pageTitle, QLabel#loginTitle { color: @themes.day.text; font-size: 22px; font-weight: 700; }
 QLabel#pageContext, QLabel#loginDescription { color: @themes.day.mutedText; font-size: 12px; }
 QListWidget#navList { background: transparent; border: none; outline: none; padding: 0; }
-QListWidget#navList::item { color: @themes.day.mutedText; min-height: 54px; padding-left: 16px; margin: 0 2px; border-radius: @shape.controlRadiuspx; }
+/* 导航项：垂直节奏由 QListWidget spacing 统一控制，
+   左右边距让悬浮/选中块不贴 rail 边缘 */
+QListWidget#navList::item { color: @themes.day.mutedText; min-height: 52px; padding-left: 16px; margin: 0 10px; border-radius: @shape.controlRadiuspx; }
 QListWidget#navList::item:hover { background-color: @themes.day.decorativeStructure; color: @themes.day.text; }
 QListWidget#navList::item:selected { background-color: @themes.day.states.idle; color: @themes.day.surface; }
 QFrame#loginPanel { background-color: @themes.day.surface; border: 1px solid @themes.day.decorativeStructure; border-radius: @shape.panelRadiuspx; }
