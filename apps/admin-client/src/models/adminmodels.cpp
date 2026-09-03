@@ -2,14 +2,14 @@
 
 namespace ev {
 
-PileStatusParse parsePileStatus(const QString &status)
+PileStatus parsePileStatus(const QString &status)
 {
-    if (status == QStringLiteral("idle")) return PileStatusParse::Idle;
-    if (status == QStringLiteral("reserved")) return PileStatusParse::Reserved;
-    if (status == QStringLiteral("charging")) return PileStatusParse::Charging;
-    if (status == QStringLiteral("fault")) return PileStatusParse::Fault;
-    if (status == QStringLiteral("offline")) return PileStatusParse::Offline;
-    return PileStatusParse::Unknown;
+    if (status == QStringLiteral("idle")) return PileStatus::Idle;
+    if (status == QStringLiteral("reserved")) return PileStatus::Reserved;
+    if (status == QStringLiteral("charging")) return PileStatus::Charging;
+    if (status == QStringLiteral("fault")) return PileStatus::Fault;
+    if (status == QStringLiteral("offline")) return PileStatus::Offline;
+    return PileStatus::Unknown;
 }
 
 QString pileStatusToDisplay(PileStatus status)
@@ -20,6 +20,7 @@ QString pileStatusToDisplay(PileStatus status)
     case PileStatus::Charging: return QStringLiteral("充电中");
     case PileStatus::Fault: return QStringLiteral("故障");
     case PileStatus::Offline: return QStringLiteral("离线");
+    case PileStatus::Unknown: return QStringLiteral("未知");
     }
     return QStringLiteral("未知");
 }
@@ -32,8 +33,9 @@ QString pileStatusToProtocol(PileStatus status)
     case PileStatus::Charging: return QStringLiteral("charging");
     case PileStatus::Fault: return QStringLiteral("fault");
     case PileStatus::Offline: return QStringLiteral("offline");
+    case PileStatus::Unknown: return QStringLiteral("unknown");
     }
-    return QString();
+    return QStringLiteral("unknown");
 }
 
 } // namespace ev

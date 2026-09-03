@@ -19,6 +19,7 @@
 #include "theme/theme.h"
 #include "widgets/aurorabackdrop.h"
 #include "widgets/stationtopologywidget.h"
+#include "widgets/statusglyphwidget.h"
 #include "widgets/statuspulsewidget.h"
 #include "widgets/statustag.h"
 
@@ -28,6 +29,7 @@ class TestUi : public QObject
 
 private slots:
     void statusTagsExposeProtocolState();
+    void unknownProtocolStateIsRepresentable();
     void chargingAndFaultAnimateWhenMotionEnabled();
     void reducedMotionStopsAnimation();
     void themeLoadsGeneratedQss();
@@ -36,6 +38,8 @@ private slots:
     void overviewShowsTraceableMockMetrics();
     void availabilityRateFormulaIsIndependent();
     void topologyUsesInformativeLineAndEmitsStationSelection();
+    void topologyPulseFollowsStationAttentionState();
+    void topologyKeyboardActivatesStation();
     void attentionItemSwitchesToPilePage();
     void auroraBackdropAnimatesWhenMotionEnabled();
     void reducedMotionFreezesAuroraBackdrop();
@@ -45,18 +49,35 @@ private slots:
 
 void TestUi::statusTagsExposeProtocolState()
 {
-    const QList<ev::PileStatus> states = {
-        ev::PileStatus::Idle,
-        ev::PileStatus::Reserved,
-        ev::PileStatus::Charging,
-        ev::PileStatus::Fault,
-        ev::PileStatus::Offline,
+    struct Case {
+        ev::PileStatus state;
+        StatusGlyphWidget::GlyphKind glyph;
     };
-    for (const auto state : states) {
-        StatusTag tag(state);
-        QCOMPARE(tag.property("state").toString(), ev::pileStatusToProtocol(state));
-        QCOMPARE(tag.text(), ev::pileStatusToDisplay(state));
+    const QList<Case> cases = {
+        {ev::PileStatus::Idle, StatusGlyphWidget::GlyphKind::CheckCircle},
+        {ev::PileStatus::Reserved, StatusGlyphWidget::GlyphKind::ClockDashed},
+        {ev::PileStatus::Charging, StatusGlyphWidget::GlyphKind::BoltDot},
+        {ev::PileStatus::Fault, StatusGlyphWidget::GlyphKind::WarningTriangle},
+        {ev::PileStatus::Offline, StatusGlyphWidget::GlyphKind::LinkOff},
+        {ev::PileStatus::Unknown, StatusGlyphWidget::GlyphKind::QuestionDiamond},
+    };
+    for (const auto &entry : cases) {
+        StatusTag tag(entry.state);
+        QCOMPARE(tag.property("state").toString(), ev::pileStatusToProtocol(entry.state));
+        QCOMPARE(tag.state(), entry.state);
+        QCOMPARE(tag.text(), ev::pileStatusToDisplay(entry.state));
+        QCOMPARE(tag.glyphKind(), entry.glyph);
+        // 组合内确实存在图形与文字两个子组件（不是颜色文字伪装图形）
+        QVERIFY(tag.findChild<StatusGlyphWidget *>());
+        QVERIFY(tag.findChild<QLabel *>());
     }
+}
+
+void TestUi::unknownProtocolStateIsRepresentable()
+{
+    QCOMPARE(ev::parsePileStatus(QStringLiteral("future-state")), ev::PileStatus::Unknown);
+    QCOMPARE(ev::pileStatusToProtocol(ev::PileStatus::Unknown), QStringLiteral("unknown"));
+    QCOMPARE(ev::pileStatusToDisplay(ev::PileStatus::Unknown), QStringLiteral("未知"));
 }
 
 void TestUi::chargingAndFaultAnimateWhenMotionEnabled()
@@ -93,6 +114,7 @@ void TestUi::shellExposesProductAndSessionContext()
     auto *nav = window.findChild<QListWidget *>("navList");
     QVERIFY(nav);
     QCOMPARE(nav->count(), 4);
+    QCOMPARE(nav->spacing(), 12);
 }
 
 void TestUi::loginFieldsHaveAccessibleNames()
@@ -141,6 +163,46 @@ void TestUi::topologyUsesInformativeLineAndEmitsStationSelection()
     topology.activateStationForTest(1);
     QCOMPARE(spy.count(), 1);
     QCOMPARE(spy.takeFirst().at(0).toInt(), 1);
+}
+
+void TestUi::topologyPulseFollowsStationAttentionState()
+{
+    // 真实集成：拓扑内部按站点最高关注状态挂载/隐藏脉冲子组件，
+    // 不得单独 new 一个 StatusPulseWidget 冒充集成。
+    ev::Theme::setMotionEnabled(true);
+    StationTopologyWidget topology;
+    topology.resize(600, 360);
+    topology.setStations(ev::mockdata::stations(ev::mockdata::DataMode::Normal).items);
+    topology.setPiles(ev::mockdata::piles(ev::mockdata::DataMode::Normal).items);
+
+    const auto pulses = topology.findChildren<StatusPulseWidget *>();
+    QCOMPARE(pulses.size(), 1); // S1 故障(有呼吸)；S2 离线(静态)
+    StatusPulseWidget *pulse = pulses.first();
+    QVERIFY(!pulse->isHidden());
+    QVERIFY2(pulse->isAnimationRunning(), "故障站脉冲应在动效开启时运行");
+
+    // 数据刷新为全空闲后脉冲消失
+    topology.setPiles(QList<ev::PileInfo>());
+    QCOMPARE(topology.findChildren<StatusPulseWidget *>().size(), 0);
+}
+
+void TestUi::topologyKeyboardActivatesStation()
+{
+    StationTopologyWidget topology;
+    topology.resize(600, 360);
+    topology.setStations(ev::mockdata::stations(ev::mockdata::DataMode::Normal).items);
+    topology.setPiles(ev::mockdata::piles(ev::mockdata::DataMode::Normal).items);
+    // offscreen 平台无窗口管理器焦点；QTest::keyClick 直接向控件派发键盘事件，
+    // 与真实按键走同一 keyPressEvent 路径。
+    QSignalSpy spy(&topology, &StationTopologyWidget::stationActivated);
+    QTest::keyClick(&topology, Qt::Key_Right); // 焦点从无到 0 号站（S1）
+    QTest::keyClick(&topology, Qt::Key_Return);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.takeFirst().at(0).toInt(), 1);
+    QTest::keyClick(&topology, Qt::Key_Right); // 1 号站（S2）
+    QTest::keyClick(&topology, Qt::Key_Space);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.takeFirst().at(0).toInt(), 2);
 }
 
 void TestUi::attentionItemSwitchesToPilePage()

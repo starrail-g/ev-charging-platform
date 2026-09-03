@@ -20,6 +20,8 @@ QColor colorForState(ev::PileStatus state)
         return ev::theme::kDayFault;
     case ev::PileStatus::Offline:
         return ev::theme::kDayOffline;
+    case ev::PileStatus::Unknown:
+        return ev::theme::kDayUnknown;
     }
     return ev::theme::kDayUnknown;
 }
@@ -106,7 +108,9 @@ void StatusPulseWidget::updateAnimation()
         return;
     }
     m_animation.setDuration(
-        m_state == ev::PileStatus::Charging ? 2600 : 2800);
+        m_state == ev::PileStatus::Charging
+            ? ev::theme::kMotionChargingPulseMs
+            : ev::theme::kMotionFaultPulseMs);
     m_animation.setDirection(QAbstractAnimation::Forward);
     m_animation.start();
 }

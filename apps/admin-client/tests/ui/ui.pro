@@ -21,6 +21,7 @@ SOURCES += \
     ../../src/widgets/metriccard.cpp \
     ../../src/widgets/statestack.cpp \
     ../../src/widgets/stationtopologywidget.cpp \
+    ../../src/widgets/statusglyphwidget.cpp \
     ../../src/widgets/statuspulsewidget.cpp \
     ../../src/widgets/statustag.cpp \
     ../../src/models/adminmodels.cpp
@@ -40,6 +41,7 @@ HEADERS += \
     ../../src/widgets/metriccard.h \
     ../../src/widgets/statestack.h \
     ../../src/widgets/stationtopologywidget.h \
+    ../../src/widgets/statusglyphwidget.h \
     ../../src/widgets/statuspulsewidget.h \
     ../../src/widgets/statustag.h \
     ../../src/models/adminmodels.h

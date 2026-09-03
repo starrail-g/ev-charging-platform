@@ -11,18 +11,18 @@
 // 时间 UTC ISO-8601、桩状态协议五态。待 9/4 与 B 评审后最终冻结。
 namespace ev {
 
-// 桩状态（协议五态，protocol.md）
+// 桩状态（协议五态 + 未知兜底，protocol.md；解析不出协议值 → Unknown）
 enum class PileStatus {
     Idle,      // idle
     Reserved,  // reserved
     Charging,  // charging
     Fault,     // fault
     Offline,   // offline
+    Unknown,   // unknown（协议未知值 / 解析失败；可展示、不可参与关注排序）
 };
 
 // 解析协议状态字符串；未知值返回 Unknown 语义（不崩溃，见 C-S1-019）
-enum class PileStatusParse { Idle, Reserved, Charging, Fault, Offline, Unknown };
-PileStatusParse parsePileStatus(const QString &status);
+PileStatus parsePileStatus(const QString &status);
 QString pileStatusToDisplay(PileStatus status);        // 中文展示
 QString pileStatusToProtocol(PileStatus status);       // 协议原串
 

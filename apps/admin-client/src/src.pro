@@ -26,6 +26,7 @@ SOURCES += \
     widgets/metriccard.cpp \
     widgets/statestack.cpp \
     widgets/stationtopologywidget.cpp \
+    widgets/statusglyphwidget.cpp \
     widgets/statuspulsewidget.cpp \
     widgets/statustag.cpp
 
@@ -46,6 +47,7 @@ HEADERS += \
     widgets/metriccard.h \
     widgets/statestack.h \
     widgets/stationtopologywidget.h \
+    widgets/statusglyphwidget.h \
     widgets/statuspulsewidget.h \
     widgets/statustag.h
 
