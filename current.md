@@ -91,8 +91,8 @@ owns Socket dispatch and error mapping.
   and resolved configuration/state-document merge conflicts.
 - Verified the latest review: direct start and frozen-user protections exist;
   state/time constraints, service-fee calculation, concurrency evidence and
-  history contract details were corrected in this work; injected SQL failure
-  coverage and asynchronous database dispatch remain open.
+  history contract details were corrected in this work; asynchronous database
+  dispatch remains open.
 - Added `user.profile.get`, `user.profile.update`, and `wallet.recharge` with
   atomic persistence, replay, failure-injection rollback tests, and API docs;
   validated qmake6 server/protocol/user-client builds, smoke, and concurrency.
