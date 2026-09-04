@@ -40,11 +40,12 @@ UserPage::UserPage(ev::AdminRepository *repository, QWidget *parent)
     }
     m_repository = repository;
 
-    m_table = new QTableWidget(0, 4, this);
+    // 用户列表（A-07：手机号/昵称/余额/状态/注册时间(UTC)）
+    m_table = new QTableWidget(0, 5, this);
     m_table->setObjectName(QStringLiteral("userTable"));
     m_table->setHorizontalHeaderLabels({
         QStringLiteral("手机号"), QStringLiteral("昵称"), QStringLiteral("余额"),
-        QStringLiteral("状态"),
+        QStringLiteral("状态"), QStringLiteral("注册时间 (UTC)"),
     });
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -105,9 +106,11 @@ void UserPage::rebuildRows()
         m_table->setItem(row, 0, new QTableWidgetItem(user.phone));
         m_table->setItem(row, 1, new QTableWidgetItem(user.nickname));
         m_table->setItem(row, 2,
-                         new QTableWidgetItem(formatYuan(user.balanceCents)));
+                         new QTableWidgetItem(ev::formatYuanCents(user.balanceCents)));
         m_table->setItem(row, 3,
                          new QTableWidgetItem(userStatusDisplay(user.status)));
+        // 注册时间与概览页更新时间同风格：UTC ISO-8601 原串，可追溯不歧义
+        m_table->setItem(row, 4, new QTableWidgetItem(user.createdAt));
     }
 
     if (m_users.isEmpty())

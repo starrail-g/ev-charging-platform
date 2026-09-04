@@ -61,12 +61,15 @@ struct UserInfo {
     QString nickname;
     int balanceCents = 0;          // 整数分
     QString status;                // active | frozen
+    QString createdAt;             // 注册时间 UTC ISO-8601（schema users.created_at，A-07 用户列表）
 };
 
 // 概览页指标（C-S1-003）。字段待 B 的 statistics 口径确认（9/4），
 // 当前按大屏 demo JSON 同口径自拟。
 struct OverviewStats {
     qint64 revenueCents = 0;              // 近 7 日营收（分）
+    qint64 revenue30dCents = 0;           // 近 30 日营收（分，A-02；口径 = 30 日序列和，
+                                          //   demo.json revenue30dCents 同值）
     int pileIdle = 0;
     int pileReserved = 0;
     int pileCharging = 0;

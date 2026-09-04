@@ -64,12 +64,13 @@ MockResult<UserInfo> users(DataMode mode)
     if (mode != DataMode::Normal)
         return result;
 
+    // 注册时间（UTC ISO-8601，schema users.created_at 同口径；均早于演示快照 2026-09-01）
     result.items.append(UserInfo{1, QStringLiteral("13800138000"), QStringLiteral("用户8000"), 16950,
-                                 QStringLiteral("active")});
+                                 QStringLiteral("active"), QStringLiteral("2026-08-15T03:24:00Z")});
     result.items.append(UserInfo{2, QStringLiteral("13900139000"), QStringLiteral("用户9000"), 3200,
-                                 QStringLiteral("frozen")});
+                                 QStringLiteral("frozen"), QStringLiteral("2026-08-02T11:40:00Z")});
     result.items.append(UserInfo{3, QStringLiteral("13700137000"), QStringLiteral("用户7000"), 0,
-                                 QStringLiteral("active")});
+                                 QStringLiteral("active"), QStringLiteral("2026-08-28T06:05:00Z")});
     return result;
 }
 
