@@ -5,9 +5,11 @@
 Project: 东软电动汽车充电桩应用管理平台。
 
 Current stage: stage-I integration of the B backend lifecycle, A user-client
-Mock baseline, and C admin-client skeleton. The product source of truth is the
-requirements matrix and project specification; no Mock path is evidence of a
-real Socket/SQLite client integration.
+Mock baseline, and C admin-client skeleton. Stage-I target date is 2026-09-10;
+stage-II target date is 2026-09-17, with the individual report due 2026-09-18.
+The product source of truth is the requirements matrix and project
+specification; no Mock path is evidence of a real Socket/SQLite client
+integration.
 
 ## Status
 
@@ -26,8 +28,14 @@ real Socket/SQLite client integration.
   `SocketUserService`; real DTO/protocol integration remains pending.
 - C admin client has a qmake shell, repository boundary, Mock data source,
   login flow and overview states. Real management APIs remain pending.
+- Cross-team gate: A retains Mock/offline fallback until a real Socket adapter
+  is verified; C's administrator login, statistics, pile, station and user
+  management APIs remain dependent on B-side endpoint implementation.
 - The clean-database server path can load `EV_DATABASE_SEED_PATH` once during
   initial creation; existing databases are not reseeded.
+- Main-branch A/C documentation is retained as collaboration context: A's
+  Mock user flow remains separate from real Socket integration, while C's
+  admin/dashboard work remains dependent on frozen B contracts.
 
 ## Architecture
 
@@ -58,6 +66,11 @@ owns Socket dispatch and error mapping.
   bounded worker/lock strategy.
 - [ ] Implement administrator/statistics/management APIs, Socket adapters,
   dashboard and intelligent-analysis pipeline.
+- [ ] Complete A-S1-03 real Socket adapter and C's management/data integration
+  after endpoint fields and error behavior are frozen.
+- [ ] Meet the main-branch integration milestones: real A/C endpoint alignment
+  by 2026-09-07 18:00, clean-environment integration evidence by 2026-09-10,
+  and stage-II analysis/dashboard expansion by 2026-09-17.
 
 ## Known Issues
 
@@ -70,6 +83,10 @@ owns Socket dispatch and error mapping.
 - Database calls are synchronous in the Qt Socket thread.
 - Real A Socket/SQLite integration and administrator server handlers are not
   implemented.
+- Dashboard and ML remain extension/integration work and must not redefine the
+  v1 protocol or SQLite state rules.
+- Tencent Maps credentials remain local-only; user-client navigation must keep
+  the documented Mock/offline fallback when a key or network is unavailable.
 
 ## Decisions
 
@@ -92,6 +109,9 @@ owns Socket dispatch and error mapping.
 - Schema version `0.3` is the current server contract. Migration `001` remains
   the immutable v0.1 -> v0.2 upgrade; migration `002` upgrades deployed v0.2
   databases to the released pile lifecycle and replay constraints.
+- Main's collaboration gate remains applicable: before real A/C integration,
+  preserve the Mock/offline fallback and record qmake6, smoke, and end-to-end
+  evidence from a clean environment.
 - Build output and local process material stay outside the repository. Real
   credentials and runtime databases are never committed.
 
