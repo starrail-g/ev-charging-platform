@@ -158,4 +158,35 @@ JSON `null`；历史接口只返回 `completed` 订单，按 `settled_at` 倒序
 | `admin.station.*` | 站点查询/创建 | 服务端待实现 |
 | `admin.user.list/status.set` | 用户查询、冻结/解冻 | 服务端待实现 |
 
+## 管理端 AdminRepository 契约与 wire 映射
+
+管理端 UI（`apps/admin-client`）通过 `AdminRepository` 抽象访问数据；当前唯一实现
+是 `MockAdminRepository`（本 PR 交付）。接口语义是**管理端业务视图**，与 wire 协议
+**非一对一**，映射关系如下（Socket 实现方案 2026-09-03 设计评审定稿，实现随 9/6
+Socket 任务落地）：
+
+| AdminRepository 方法 | 业务视图语义 | wire 映射策略 |
+|---|---|---|
+| `fetchOverview` | 概览指标（7 日/30 日营收、桩五态、利用率、快照时间） | `admin.statistics.get`（字段待冻结，9/4 评审 Q3–Q5） |
+| `fetchStations` | 管理端全量站点（含桩数/在线率聚合视图） | `admin.station.list` |
+| `fetchUsers` | 管理端全量用户 | `admin.user.list` |
+| `fetchPiles` | 管理端**全量**桩列表（跨站，桩页过滤/搜索在本端完成） | 逐站 fan-out：`admin.station.list` → 每站 `pile.list(station_id)` → 合并（默认，D5） |
+
+`fetchPiles` 的已知权衡（对应 9/3 评审 Q2 协议缺口——wire 暂无 `admin.pile.list`）：
+
+- **请求数**：1 次 `station.list` + N 次 `pile.list`（N = 站数）；两站演示数据为 3 个请求。
+- **跨站快照一致性**：各站 `pile.list` 为顺序请求、同一刷新周期发起；管理端查询是
+  非事务性只读视图，允许站间秒级差异，刷新后重新取全量。
+- **部分失败**：任一站点请求失败（协议错误或网络错误）→ 本次 `fetchPiles` 按整页
+  错误结束（管理端需要一致的全量视图，不允许静默缺站），UI 进入 error 态可重试；
+  查询类请求无幂等限制，可原样重试。
+- **协议演进**：若后续冻结 `admin.pile.list`（可带可选 `station_id`/查询参数），
+  adapter 内部切换为单请求实现，`AdminRepository` 接口不变。
+
+接口变更说明：三个 `fetch*` 纯虚方法自 PR #6（2026-09-02 合并）起即为
+`AdminRepository` 契约的一部分，本 PR 为回退后的恢复而非新设计。当前仓库中接口
+实现仅有 `MockAdminRepository` 且与本 PR 同步交付，不破坏 `main` 编译；接口
+breaking-change 风险窗口在后续 Socket 实现（新实现类）接入时，届时需同步新增
+实现类并保持本契约不变。
+
 接口闸门通过前，管理端 Mock 数据不得冒充真实 Socket 联调结果。

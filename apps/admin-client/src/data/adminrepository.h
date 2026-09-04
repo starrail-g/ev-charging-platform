@@ -52,6 +52,20 @@ public:
     virtual void fetchOverview(QObject *context,
                                std::function<void(const OverviewResult &)> callback) = 0;
 
+    // 异步获取桩明细列表:语义同 fetchOverview。
+    // 概览页"需关注"列表与站点态势图需要桩级状态/站点坐标明细,
+    // OverviewResult 只承载统计,不含明细(统一 UI Task 5 扩展)。
+    virtual void fetchPiles(QObject *context,
+                            std::function<void(const ListResult<PileInfo> &)> callback) = 0;
+
+    // 异步获取站点列表:语义同 fetchOverview。
+    virtual void fetchStations(QObject *context,
+                               std::function<void(const ListResult<StationInfo> &)> callback) = 0;
+
+    // 异步获取用户列表:语义同 fetchOverview(统一 UI Task 6,用户工作页)。
+    virtual void fetchUsers(QObject *context,
+                            std::function<void(const ListResult<UserInfo> &)> callback) = 0;
+
     // 数据来源标识（状态栏展示用）：Mock 返回 "Mock 演示"，
     // 未来 Socket 适配层返回自身标识；空串表示不展示来源。
     virtual QString dataSourceName() const { return QString(); }
