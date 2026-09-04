@@ -20,13 +20,6 @@ QString userStatusDisplay(const QString &status)
     return status;
 }
 
-// 余额：整数分 → 元（与营收口径一致，千分位）
-QString formatYuan(qint64 cents)
-{
-    return QStringLiteral("¥%1")
-        .arg(QString::number(cents / 100.0, 'f', 2));
-}
-
 } // namespace
 
 UserPage::UserPage(ev::AdminRepository *repository, QWidget *parent)

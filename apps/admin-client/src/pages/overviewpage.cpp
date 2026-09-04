@@ -21,24 +21,6 @@ const QString kSimulatedErrorDisplay = QStringLiteral("接口错误：模拟数�
 const QString kFaultDisplay = QStringLiteral("故障");
 const QString kOfflineDisplay = QStringLiteral("离线");
 
-// 金额格式：整数分 → "¥2,865.40"（千分位，无浮点漂移；口径同 Web dashboard）
-QString formatYuanCents(qint64 cents)
-{
-    const qint64 yuan = cents / 100;
-    const QString frac = QString::number(qAbs(cents % 100)).rightJustified(2, QLatin1Char('0'));
-    const QString digits = QString::number(qAbs(yuan));
-    QString grouped;
-    const int length = digits.size();
-    for (int i = 0; i < length; ++i) {
-        if (i > 0 && (length - i) % 3 == 0)
-            grouped += QLatin1Char(',');
-        grouped += digits.at(i);
-    }
-    if (yuan < 0)
-        grouped.prepend(QLatin1Char('-'));
-    return QStringLiteral("¥%1.%2").arg(grouped, frac);
-}
-
 QString attentionText(const ev::PileInfo &pile)
 {
     return pile.status == ev::PileStatus::Fault ? kFaultDisplay : kOfflineDisplay;
