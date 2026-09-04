@@ -4,7 +4,7 @@
 
 - Project: 东软电动汽车充电桩应用管理平台。
 - Current stage: 第一阶段最小闭环开发；真实截止时间为 2026-09-10 24:00。第二阶段截止 2026-09-17 24:00，个人报告截止 2026-09-18 24:00。
-- This file was updated for `A-S1-02` on 2026-09-02. The requirements source of truth is `docs/requirements/requirements-matrix.md`.
+- This file was updated for the `A-S1-03` PR #9 P1 follow-up on 2026-09-04. The requirements source of truth is `docs/requirements/requirements-matrix.md`.
 
 ## Architecture and boundaries
 
@@ -40,7 +40,7 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 
 ## Validation and evidence
 
-- Ubuntu VM qmake6 (Qt 6.2.4) application and QtTest builds pass. The user-client QtTest suite reports 11 passed including Socket lifecycle, profile/wallet and frozen-policy tests against the B PR #4 latest-head server/database copy. B's independent server smoke and concurrency tests also pass. GUI startup remains a desktop/VM manual check.
+- Ubuntu VM qmake6 (Qt 6.2.4) application, server and QtTest builds pass. The user-client suite reports 12 passed, 0 failed and 0 skipped against a fresh `origin/main` source baseline, including lost-response request-ID reuse, Socket lifecycle, profile/wallet and frozen-policy tests. GUI startup remains a desktop/VM manual check.
 - This Windows host has no local qmake6 or SQLite CLI; qmake6 verification is performed in the Ubuntu VM. Runtime SQLite is never accessed directly by the user client.
 - Before each commit/PR, scan tracked content for credentials and inspect `git diff --check`; only placeholders may appear in `config/example.env`.
 
@@ -51,7 +51,6 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 - PR#4 精简修改清单保留为评审记录，不再作为未完成阻塞项。
 - `A-S1-02` navigation: add Tencent Maps geocoding and basic driving/walking route display from local configuration; retain explicit Mock/offline fallback and record failure/Key-missing evidence.
 - Detailed user-client requirements and Tencent Maps investigation are recorded in `docs/ui/user-client-detailed-requirements.md`, including the Linux + Qt baseline, acceptance flow, API probe command, Key-safety rules and GitHub reference projects. Real POI fields are not yet treated as business prices/pile counts/statuses; those remain B/Mock data until verified.
-- `B-S1-01`/`B-S1-02`: finish runtime database access, transaction-backed login/station/pile/order handlers and stable request/response samples before client replacement.
 - `C-S1-01`/`C-S1-02`/`C-S1-03`: finish admin pages, dashboard data path, clean-build and cross-module evidence. End-to-end closure requires A, B and C paths plus abnormal-case tests.
 - S2 intelligent-analysis chain: data preparation → model-service contract → predictions/recommendation/warning → B service adaptation → C display → integrated validation. It must not block the S1 basic charging loop.
 
