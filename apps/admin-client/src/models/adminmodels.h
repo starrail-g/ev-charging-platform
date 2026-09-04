@@ -53,6 +53,8 @@ struct StationInfo {
     double longitude = 0.0;
     QString status;                // active | inactive
     int pileCount = 0;             // 展示用（由桩聚合）
+    int onlinePileCount = 0;       // 在线桩数 = 非 故障/离线（A-06 在线率，
+                                   // 口径同 schema station_pile_status view 与全局可用率）
 };
 
 struct UserInfo {

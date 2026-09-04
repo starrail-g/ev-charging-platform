@@ -34,11 +34,12 @@ StationPage::StationPage(ev::AdminRepository *repository, QWidget *parent)
     }
     m_repository = repository;
 
-    m_table = new QTableWidget(0, 4, this);
+    // 站点列表（A-06：名称/地址/桩数/运行状态/在线率）
+    m_table = new QTableWidget(0, 5, this);
     m_table->setObjectName(QStringLiteral("stationTable"));
     m_table->setHorizontalHeaderLabels({
         QStringLiteral("名称"), QStringLiteral("地址"), QStringLiteral("桩数"),
-        QStringLiteral("运行状态"),
+        QStringLiteral("运行状态"), QStringLiteral("在线率"),
     });
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -101,6 +102,13 @@ void StationPage::rebuildRows()
                          new QTableWidgetItem(QString::number(station.pileCount)));
         m_table->setItem(row, 3,
                          new QTableWidgetItem(stationStatusDisplay(station.status)));
+        // 在线率 = 在线桩数/总桩数（在线 = 非 故障/离线，与全局可用率同口径）；
+        // 无桩站点显示占位而非除零
+        const QString rateText = station.pileCount > 0
+            ? QString::number(station.onlinePileCount * 100.0 / station.pileCount,
+                              'f', 1) + QStringLiteral("%")
+            : QStringLiteral("—");
+        m_table->setItem(row, 4, new QTableWidgetItem(rateText));
     }
 
     if (m_stations.isEmpty())

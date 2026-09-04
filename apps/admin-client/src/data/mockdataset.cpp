@@ -1,5 +1,7 @@
 #include "mockdataset.h"
 
+#include <QHash>
+
 namespace ev {
 namespace mockdata {
 
@@ -46,10 +48,23 @@ MockResult<StationInfo> stations(DataMode mode)
     if (mode != DataMode::Normal)
         return result;
 
+    // 桩数/在线数从同一演示快照聚合（schema station_pile_status view 语义：
+    // pile_total / 在线 = 非 故障+离线），与全局可用率口径同源，不另造数值。
+    const auto pileRows = piles(mode);
+    QHash<int, int> totalByStation;
+    QHash<int, int> onlineByStation;
+    for (const PileInfo &pile : pileRows.items) {
+        totalByStation[pile.stationId] += 1;
+        if (pile.status != PileStatus::Fault && pile.status != PileStatus::Offline)
+            onlineByStation[pile.stationId] += 1;
+    }
+
     result.items.append(StationInfo{1, QStringLiteral("东软园区充电站"), QStringLiteral("沈阳市浑南区东软软件园"),
-                                    41.7331, 123.4395, QStringLiteral("active"), 3});
+                                    41.7331, 123.4395, QStringLiteral("active"),
+                                    totalByStation.value(1), onlineByStation.value(1)});
     result.items.append(StationInfo{2, QStringLiteral("沈阳站前充电站"), QStringLiteral("沈阳市和平区胜利南街"),
-                                    41.7923, 123.3942, QStringLiteral("active"), 3});
+                                    41.7923, 123.3942, QStringLiteral("active"),
+                                    totalByStation.value(2), onlineByStation.value(2)});
     return result;
 }
 
