@@ -46,7 +46,7 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 
 ## Dependencies and TODO
 
-- `A-S1-03` is complete against merged PR #4 main `20a3815` (Schema v0.3); A-S1-04 remains for coordinated final regression, GUI evidence and clean-environment delivery. Keep future field/status changes inside `SocketUserService` and preserve the Mock/offline switch. The PR #9 P1 follow-up removes GUI-thread Socket waits, makes pending reservations recoverable, and preserves mutation request IDs across retryable failures.
+- `A-S1-03` is complete against the B PR #4 Schema v0.3 contract on current `origin/main` `994e5ff` (PR #8 UI baseline included); A-S1-04 remains for coordinated final regression, GUI evidence and clean-environment delivery. `IUserService` now exposes both reservation and direct charging start paths. Keep future field/status changes inside `SocketUserService` and preserve the Mock/offline switch. The PR #9 P1 follow-up removes GUI-thread Socket waits, makes pending reservations recoverable, and preserves mutation request IDs across retryable failures.
 - PR#4 解锁清单已完成；冻结策略、事务扣款、并发/幂等、协议样例、种子数据和后端证据均由 B smoke/concurrency 覆盖。
 - PR#4 精简修改清单保留为评审记录，不再作为未完成阻塞项。
 - `A-S1-02` navigation: add Tencent Maps geocoding and basic driving/walking route display from local configuration; retain explicit Mock/offline fallback and record failure/Key-missing evidence.

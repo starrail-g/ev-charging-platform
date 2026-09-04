@@ -73,7 +73,7 @@ private:
   QLabel *loginStatus_{}, *registerStatus_{}, *homeStatus_{}, *locationStatus_{}, *orderSummary_{}, *detailTitle_{}, *pileStatus_{}, *mapStatus_{}, *orderStatus_{}, *historySummary_{}, *profileLabel_{}, *avatarLabel_{};
   QWidget *confirmationControls_{};
   QListWidget *stationList_{}, *pileList_{}, *mapStationList_{}, *historyList_{};
-  QPushButton *loginButton_{}, *registerButton_{}, *registerNextButton_{}, *registerFinishButton_{}, *confirmOrderButton_{}, *reserveButton_{}, *returnPileButton_{}, *cancelReservationButton_{}, *startButton_{}, *stopButton_{}, *settleButton_{}, *rechargeButton_{};
+  QPushButton *loginButton_{}, *registerButton_{}, *registerNextButton_{}, *registerFinishButton_{}, *confirmOrderButton_{}, *reserveButton_{}, *returnPileButton_{}, *cancelReservationButton_{}, *directStartButton_{}, *startButton_{}, *stopButton_{}, *settleButton_{}, *rechargeButton_{};
   Station selectedStation_{};
   Pile selectedPile_{};
   Order order_{};
@@ -353,11 +353,13 @@ private:
     confirmRow->addWidget(reserveButton_);
     layout->addWidget(confirmationControls_);
     startButton_ = new QPushButton(QStringLiteral("开始充电"), orderPage_);
+    directStartButton_ = new QPushButton(QStringLiteral("直接开始充电"), orderPage_);
     stopButton_ = new QPushButton(QStringLiteral("停止充电"), orderPage_);
     settleButton_ = new QPushButton(QStringLiteral("结算"), orderPage_);
     returnPileButton_ = new QPushButton(QStringLiteral("返回充电桩"), orderPage_);
     cancelReservationButton_ = new QPushButton(QStringLiteral("取消预约"), orderPage_);
     layout->addWidget(startButton_);
+    layout->addWidget(directStartButton_);
     layout->addWidget(stopButton_);
     layout->addWidget(settleButton_);
     layout->addWidget(returnPileButton_);
@@ -374,12 +376,14 @@ private:
     confirmationControls_->setVisible(false);
     returnPileButton_->setVisible(false);
     cancelReservationButton_->setVisible(false);
+    directStartButton_->setVisible(false);
     addBottomNav(layout, orderPage_);
     connect(confirmOrderButton_, &QPushButton::clicked, this, &UserWindow::confirmOrder);
     connect(reserveButton_, &QPushButton::clicked, this, &UserWindow::reservePile);
     connect(returnPileButton_, &QPushButton::clicked, this, [this] { showStationDetail(); });
     connect(cancelReservationButton_, &QPushButton::clicked, this, &UserWindow::cancelReservation);
     connect(startButton_, &QPushButton::clicked, this, &UserWindow::startCharging);
+    connect(directStartButton_, &QPushButton::clicked, this, &UserWindow::startChargingDirect);
     connect(stopButton_, &QPushButton::clicked, this, &UserWindow::stopCharging);
     connect(settleButton_, &QPushButton::clicked, this, &UserWindow::settle);
     stack_->addWidget(orderPage_);
@@ -454,6 +458,7 @@ private:
     if (confirmationControls_) confirmationControls_->setVisible(false);
     if (returnPileButton_) returnPileButton_->setVisible(false);
     if (cancelReservationButton_) cancelReservationButton_->setVisible(false);
+    if (directStartButton_) directStartButton_->setVisible(false);
     stack_->setCurrentWidget(home_);
     searchStations();
     refreshCurrentOrder();
@@ -472,6 +477,7 @@ private:
     if (confirmationControls_) confirmationControls_->setVisible(false);
     if (returnPileButton_) returnPileButton_->setVisible(false);
     if (cancelReservationButton_) cancelReservationButton_->setVisible(false);
+    if (directStartButton_) directStartButton_->setVisible(false);
     openStationForSelected();
   }
 
@@ -504,6 +510,7 @@ private:
     orderConfirmationMode_ = false;
     if (confirmationControls_) confirmationControls_->setVisible(false);
     if (returnPileButton_) returnPileButton_->setVisible(false);
+    if (directStartButton_) directStartButton_->setVisible(false);
     refreshCurrentOrder();
     refreshOrderHistory();
     stack_->setCurrentWidget(orderPage_);
@@ -765,6 +772,8 @@ private:
     cancelReservationButton_->setVisible(!orderConfirmationMode_ && hasOrder && (order_.status == OrderStatus::Reserved || pending));
     cancelReservationButton_->setEnabled(!orderConfirmationMode_ && hasOrder && (order_.status == OrderStatus::Reserved || pending));
     startButton_->setEnabled(order_.status == OrderStatus::Reserved);
+    directStartButton_->setVisible(orderConfirmationMode_ && !hasOrder);
+    directStartButton_->setEnabled(orderConfirmationMode_ && !hasOrder && !selectedPile_.id.isEmpty() && selectedPile_.status == PileStatus::Idle);
     stopButton_->setEnabled(order_.status == OrderStatus::Charging);
     settleButton_->setEnabled(order_.status == OrderStatus::PendingSettlement);
     if (hasOrder) orderStatus_->setText(QStringLiteral("订单 %1 · %2\n站点：%3\n充电桩：%4\n金额：¥ %5").arg(order_.id, orderStatusText(order_.status), order_.stationName, order_.pileNumber).arg(order_.amountCents / 100.0));
@@ -775,6 +784,20 @@ private:
     runService<Order>([this, userId, orderId] { return service_->startCharging(userId, orderId); }, [this](const Result<Order> &result) {
       if (!result.ok) { orderStatus_->setText(result.error); updateOrderButtons(); return; }
       order_ = result.value; updateOrderButtons(); refreshCurrentOrder();
+    });
+  }
+
+  void startChargingDirect() {
+    directStartButton_->setEnabled(false);
+    const QString userId = session_.user().id;
+    const QString pileId = selectedPile_.id;
+    runService<Order>([this, userId, pileId] { return service_->startChargingDirect(userId, pileId); }, [this](const Result<Order> &result) {
+      if (!result.ok) { orderStatus_->setText(result.error); updateOrderButtons(); return; }
+      order_ = result.value;
+      orderConfirmationMode_ = false;
+      confirmationControls_->setVisible(false);
+      updateOrderButtons();
+      refreshCurrentOrder();
     });
   }
 

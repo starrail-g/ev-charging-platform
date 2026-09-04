@@ -52,6 +52,7 @@ public:
   virtual Result<Order> confirmReservation(const QString &userId, const QString &orderId) = 0;
   virtual Result<Order> cancelReservation(const QString &userId, const QString &orderId) = 0;
   virtual Result<Order> startCharging(const QString &userId, const QString &orderId) = 0;
+  virtual Result<Order> startChargingDirect(const QString &userId, const QString &pileId) = 0;
   virtual Result<Order> stopCharging(const QString &userId, const QString &orderId) = 0;
   virtual Result<Order> settle(const QString &userId, const QString &orderId) = 0;
 };
@@ -74,6 +75,7 @@ public:
   Result<Order> confirmReservation(const QString &, const QString &) override;
   Result<Order> cancelReservation(const QString &, const QString &) override;
   Result<Order> startCharging(const QString &, const QString &) override;
+  Result<Order> startChargingDirect(const QString &, const QString &) override;
   Result<Order> stopCharging(const QString &, const QString &) override;
   Result<Order> settle(const QString &, const QString &) override;
 private:

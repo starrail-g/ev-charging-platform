@@ -208,4 +208,4 @@ flowchart TD
 |---|---|---|
 | 2026-09-02 | 新增同学 A 独立任务计划，明确阶段任务、依赖、验收和交付规则 | 项目开发计划、C 角色计划、Protocol v1、qmake6 构建协议 |
 | 2026-09-02 | A-S1-03 首轮 Socket 适配与真实订单生命周期联调完成，任务保持进行中 | B PR #4 提交 3600c3de81c252e3a8a37a8f8eff3e58a1a8ac13、VM qmake6、QtTest 9 passed、B smoke |
-| 2026-09-04 | 按 PR#4 head 完成用户端真实 Socket 适配与回归；应用构建、QtTest 9/9、B smoke/concurrency 均通过，A-S1-03 完成 | PR#4 head 20a3815 (PR #4 merged main; Schema v0.3)、隔离数据库服务端、Ubuntu qmake6 |
+| 2026-09-04 | 按当前 main 上的 PR#4 Schema v0.3 合同完成用户端真实 Socket 适配与回归；应用构建、QtTest、B smoke/concurrency 均通过，预约和直充启动路径均已覆盖，A-S1-03 完成 | current main 994e5ff（PR #4 merged，PR #8 UI baseline included）、隔离数据库服务端、Ubuntu qmake6 |

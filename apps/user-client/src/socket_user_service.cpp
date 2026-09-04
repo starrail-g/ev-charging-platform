@@ -119,7 +119,7 @@ Result<Order> SocketUserService::orderFrom(const QJsonObject &payload) {
   const qint64 price = object.value(QStringLiteral("unit_price_cents_per_kwh")).toInteger();
   const QString completedAt = object.value(QStringLiteral("settled_at")).toString(object.value(QStringLiteral("ended_at")).toString());
   const QString pileNumber = object.value(QStringLiteral("pile_code")).toString();
-  return Result<Order>::success({QString::number(object.value(QStringLiteral("id")).toInteger()), QString::number(object.value(QStringLiteral("station_id")).toInteger()), QString::number(object.value(QStringLiteral("pile_id")).toInteger()), object.value(QStringLiteral("station_name")).toString(), pileNumber, state, price, object.value(QStringLiteral("total_amount_cents")).toInteger(), completedAt, object.value(QStringLiteral("station_address")).toString()});
+  return Result<Order>::success({QString::number(object.value(QStringLiteral("id")).toInteger()), {}, QString::number(object.value(QStringLiteral("pile_id")).toInteger()), object.value(QStringLiteral("station_name")).toString(), pileNumber, state, price, object.value(QStringLiteral("total_amount_cents")).toInteger(), completedAt, object.value(QStringLiteral("station_address")).toString()});
 }
 
 Result<QVector<Order>> SocketUserService::ordersFrom(const QJsonObject &payload) {

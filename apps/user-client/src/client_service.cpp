@@ -42,7 +42,7 @@ MockUserService::MockUserService() {
       {QStringLiteral("P004"), QStringLiteral("C01"), QStringLiteral("直流快充"), PileStatus::Idle, 90, 135, QStringLiteral("S002")}};
 }
 
-bool isValidPhone(const QString &phone) { return QRegularExpression(QStringLiteral("^1[3-9]\\d{9}$")).match(phone).hasMatch(); }
+bool isValidPhone(const QString &phone) { return QRegularExpression(QStringLiteral("^[0-9]{11}$")).match(phone).hasMatch(); }
 
 Result<User> MockUserService::login(const QString &phone) {
   if (phone == QStringLiteral("timeout")) return Result<User>::failure(1500, QStringLiteral("请求超时，请稍后重试"));
@@ -115,6 +115,19 @@ Result<Order> MockUserService::cancelReservation(const QString &userId, const QS
   return Result<Order>::success(activeOrder_);
 }
 Result<Order> MockUserService::startCharging(const QString &userId, const QString &orderId) { if (userId.isEmpty() || userId != activeUserId_ || activeOrder_.id != orderId) return Result<Order>::failure(QStringLiteral("订单不存在")); if (activeOrder_.status != OrderStatus::Reserved) return Result<Order>::failure(QStringLiteral("订单状态不允许开始充电")); for (auto &pile : pileData_) if (pile.id == activeOrder_.pileId) pile.status = PileStatus::Charging; activeOrder_.status = OrderStatus::Charging; return Result<Order>::success(activeOrder_); }
+Result<Order> MockUserService::startChargingDirect(const QString &userId, const QString &pileId) {
+  if (userId.isEmpty() || userId != activeUserId_) return Result<Order>::failure(QStringLiteral("请先登录"));
+  if (!activeOrder_.id.isEmpty() && activeOrder_.status != OrderStatus::Completed && activeOrder_.status != OrderStatus::Cancelled) return Result<Order>::failure(QStringLiteral("已有活动订单，请先完成结算"));
+  for (auto &pile : pileData_) {
+    if (pile.id != pileId) continue;
+    if (pile.status != PileStatus::Idle) return Result<Order>::failure(QStringLiteral("该充电桩当前不可用"));
+    pile.status = PileStatus::Charging;
+    activeOrder_ = {QStringLiteral("O%1").arg(nextOrder_++), pile.stationId, pile.id, {}, pile.number, OrderStatus::Charging, pile.priceCentsPerKwh, 0, {}, {}};
+    for (const auto &station : stationData_) if (station.id == pile.stationId) { activeOrder_.stationName = station.name; activeOrder_.stationAddress = station.address; break; }
+    return Result<Order>::success(activeOrder_);
+  }
+  return Result<Order>::failure(QStringLiteral("充电桩不存在"));
+}
 Result<Order> MockUserService::stopCharging(const QString &userId, const QString &orderId) { if (userId.isEmpty() || userId != activeUserId_ || activeOrder_.id != orderId) return Result<Order>::failure(QStringLiteral("订单不存在")); if (activeOrder_.status != OrderStatus::Charging) return Result<Order>::failure(QStringLiteral("当前未在充电")); for (auto &pile : pileData_) if (pile.id == activeOrder_.pileId) pile.status = PileStatus::Idle; activeOrder_.status = OrderStatus::PendingSettlement; activeOrder_.amountCents = 1860; return Result<Order>::success(activeOrder_); }
 Result<Order> MockUserService::settle(const QString &userId, const QString &orderId) { if (userId.isEmpty() || userId != activeUserId_ || activeOrder_.id != orderId) return Result<Order>::failure(QStringLiteral("订单不存在")); if (activeOrder_.status != OrderStatus::PendingSettlement) return Result<Order>::failure(QStringLiteral("订单尚未达到结算条件")); if (walletBalanceCents_ < activeOrder_.amountCents) return Result<Order>::failure(QStringLiteral("余额不足，无法结算 ¥ %1").arg(activeOrder_.amountCents / 100.0, 0, 'f', 2)); walletBalanceCents_ -= activeOrder_.amountCents; activeOrder_.status = OrderStatus::Completed; activeOrder_.completedAt = QStringLiteral("2026-09-02T12:%1:00Z").arg(orderHistory_.size(), 2, 10, QChar('0')); if (orderHistory_.isEmpty() || orderHistory_.last().id != activeOrder_.id) orderHistory_.push_back(activeOrder_); return Result<Order>::success(activeOrder_); }
 

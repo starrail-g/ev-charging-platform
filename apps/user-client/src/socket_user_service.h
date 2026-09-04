@@ -26,7 +26,7 @@ public:
   Result<Order> confirmReservation(const QString &, const QString &) override;
   Result<Order> cancelReservation(const QString &, const QString &) override;
   Result<Order> startCharging(const QString &, const QString &) override;
-  Result<Order> startChargingDirect(const QString &userId, const QString &pileId);
+  Result<Order> startChargingDirect(const QString &userId, const QString &pileId) override;
   Result<Order> stopCharging(const QString &, const QString &) override;
   Result<Order> settle(const QString &, const QString &) override;
 private:
