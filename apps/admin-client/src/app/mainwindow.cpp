@@ -1,6 +1,8 @@
 #include "mainwindow.h"
 
 #include <QHBoxLayout>
+#include <QFrame>
+#include <QLabel>
 #include <QListWidget>
 #include <QPushButton>
 #include <QStackedWidget>
@@ -14,6 +16,7 @@
 #include "pages/pilepage.h"
 #include "pages/stationpage.h"
 #include "pages/userpage.h"
+#include "widgets/aurorabackdrop.h"
 
 MainWindow::MainWindow(ev::AdminRepository *repository, QWidget *parent)
     : QMainWindow(parent)
@@ -31,13 +34,21 @@ MainWindow::MainWindow(ev::AdminRepository *repository, QWidget *parent)
     m_stack->setObjectName(QStringLiteral("mainStack"));
     m_loginPage = new LoginPage(repository, m_stack);
     m_businessArea = new QWidget(m_stack);
+    m_businessArea->setObjectName(QStringLiteral("businessArea"));
     buildBusinessArea(repository);
 
     m_stack->addWidget(m_loginPage);
     m_stack->addWidget(m_businessArea);
     m_stack->setCurrentWidget(m_loginPage);
 
-    setCentralWidget(m_stack);
+    // 中央底层 = AuroraBackdrop（日班底色 + 青蓝呼吸光晕）；
+    // 页面根与裸容器已透明（theme.qss），氛围光从面板间隙与页面边缘透出
+    auto *backdrop = new AuroraBackdrop(this);
+    auto *backdropLayout = new QVBoxLayout(backdrop);
+    backdropLayout->setContentsMargins(0, 0, 0, 0);
+    backdropLayout->setSpacing(0);
+    backdropLayout->addWidget(m_stack);
+    setCentralWidget(backdrop);
     statusBar()->showMessage(QStringLiteral("未登录"));
 
     connect(m_loginPage, &LoginPage::loggedIn,
@@ -49,43 +60,118 @@ MainWindow::~MainWindow() = default;
 
 void MainWindow::buildBusinessArea(ev::AdminRepository *repository)
 {
-    m_navList = new QListWidget(m_businessArea);
+    auto *navigationRail = new QFrame(m_businessArea);
+    navigationRail->setObjectName(QStringLiteral("navigationRail"));
+
+    auto *productMark = new QLabel(QStringLiteral("GRID SHIFT\n充电运营中心"), navigationRail);
+    productMark->setObjectName(QStringLiteral("productMark"));
+
+    m_sessionBadge = new QLabel(
+        m_dataSourceLabel.isEmpty()
+            ? QStringLiteral("● 已登录")
+            : QStringLiteral("● %1").arg(m_dataSourceLabel),
+        navigationRail);
+    m_sessionBadge->setObjectName(QStringLiteral("sessionBadge"));
+
+    m_navList = new QListWidget(navigationRail);
     m_navList->setObjectName(QStringLiteral("navList"));
     m_navList->addItem(QStringLiteral("概览"));
     m_navList->addItem(QStringLiteral("充电桩"));
     m_navList->addItem(QStringLiteral("充电站"));
     m_navList->addItem(QStringLiteral("用户管理"));
-    m_navList->setFixedWidth(160);
+    m_navList->setFixedWidth(184);
     m_navList->setEnabled(false); // 业务页默认不可进入（未登录）
 
+    auto *logoutButton = new QPushButton(QStringLiteral("退出登录"), navigationRail);
+    logoutButton->setObjectName(QStringLiteral("logoutButton"));
+
+    // 垂直节奏：品牌区（产品标 + 会话徽章）成组，与导航区用分隔线断开，
+    // 导航项之间留空隙、退出按钮贴底——间距幅度要够大才能形成清晰分区
+    auto *navigationLayout = new QVBoxLayout(navigationRail);
+    navigationLayout->setContentsMargins(24, 44, 24, 28);
+    navigationLayout->setSpacing(0);
+    navigationLayout->addWidget(productMark);
+    navigationLayout->addSpacing(26);
+    navigationLayout->addWidget(m_sessionBadge);
+    navigationLayout->addSpacing(36);
+
+    auto *separator = new QFrame(navigationRail);
+    separator->setObjectName(QStringLiteral("navSeparator"));
+    separator->setFixedHeight(1);
+    navigationLayout->addWidget(separator);
+
+    navigationLayout->addSpacing(34);
+    m_navList->setSpacing(22); // 用列表 spacing 统一控制导航项的垂直间距
+    // 导航区吃满分隔线到退出按钮之间的全部弹性空间：列表控件高度 ≥ 内容高，
+    // 关闭滚动条后 4 项恒完整可见（不会出现内部滚动），多余空间落在列表视口内。
+    // 注：QListWidget 的 sizeHint 不随内容变化，若仍用独立 addStretch 会让列表
+    // 只有 ~192px 高、274px 内容被压缩成内部滚动。
+    m_navList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_navList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    navigationLayout->addWidget(m_navList, 1);
+    navigationLayout->addWidget(logoutButton);
+
     m_overviewPage = new OverviewPage(repository, m_businessArea);
-    m_pilePage = new PilePage(m_businessArea);
-    m_stationPage = new StationPage(m_businessArea);
-    m_userPage = new UserPage(m_businessArea);
+    m_pilePage = new PilePage(repository, m_businessArea);
+    m_stationPage = new StationPage(repository, m_businessArea);
+    m_userPage = new UserPage(repository, m_businessArea);
 
     auto *pageStack = new QStackedWidget(m_businessArea);
+    pageStack->setObjectName(QStringLiteral("pageStack"));
     pageStack->addWidget(m_overviewPage);
     pageStack->addWidget(m_pilePage);
     pageStack->addWidget(m_stationPage);
     pageStack->addWidget(m_userPage);
 
-    auto *logoutButton = new QPushButton(QStringLiteral("退出登录"), m_businessArea);
+    m_pageTitle = new QLabel(QStringLiteral("概览"), m_businessArea);
+    m_pageTitle->setObjectName(QStringLiteral("pageTitle"));
+    auto *pageContext = new QLabel(QStringLiteral("运营工作台 · %1").arg(m_dataSourceLabel),
+                                   m_businessArea);
+    pageContext->setObjectName(QStringLiteral("pageContext"));
+
+    auto *headerLayout = new QHBoxLayout;
+    headerLayout->addWidget(m_pageTitle);
+    headerLayout->addStretch();
+    headerLayout->addWidget(pageContext);
 
     auto *pageLayout = new QVBoxLayout;
-    pageLayout->addWidget(pageStack);
-    pageLayout->addWidget(logoutButton);
+    pageLayout->setContentsMargins(24, 20, 24, 18);
+    pageLayout->setSpacing(14);
+    pageLayout->addLayout(headerLayout);
+    pageLayout->addWidget(pageStack, 1);
 
     auto *layout = new QHBoxLayout(m_businessArea);
-    layout->addWidget(m_navList);
-    layout->addLayout(pageLayout);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(navigationRail);
+    layout->addLayout(pageLayout, 1);
 
     connect(m_navList, &QListWidget::currentRowChanged,
             pageStack, &QStackedWidget::setCurrentIndex);
+    // 概览"需关注"异常项 → 切到充电桩页并定位该桩（focusPile 内部处理数据未到齐）
+    connect(m_overviewPage, &OverviewPage::pileAttentionRequested,
+            this, [this](const QString &pileCode) {
+                m_navList->setCurrentRow(1); // 1 = 充电桩
+                m_pilePage->focusPile(pileCode);
+                statusBar()->showMessage(
+                    QStringLiteral("需关注充电桩 %1，已定位至充电桩页").arg(pileCode));
+            });
+    // 工作页进入时经 Repository 刷新（跟随数据层当前演示模式；
+    // 概览页由模式下拉/登录自行驱动，不在此重复刷新）
+    connect(pageStack, &QStackedWidget::currentChanged, this, [this](int index) {
+        if (index == 1)
+            m_pilePage->refresh();
+        else if (index == 2)
+            m_stationPage->refresh();
+        else if (index == 3)
+            m_userPage->refresh();
+    });
     // 标题联动：状态栏显示当前页面（来源标识来自 Repository，见 loggedInStatusText）
     connect(m_navList, &QListWidget::currentRowChanged, this, [this](int row) {
         const QString page = (row >= 0 && row < m_navList->count())
             ? m_navList->item(row)->text()
             : QString();
+        m_pageTitle->setText(page);
         statusBar()->showMessage(page.isEmpty()
             ? QStringLiteral("未登录")
             : loggedInStatusText(page));
@@ -97,6 +183,10 @@ void MainWindow::buildBusinessArea(ev::AdminRepository *repository)
 void MainWindow::onLoginSuccess()
 {
     m_loggedIn = true;
+    m_sessionBadge->setText(
+        m_dataSourceLabel.isEmpty()
+            ? QStringLiteral("● 已登录")
+            : QStringLiteral("● %1").arg(m_dataSourceLabel));
     m_navList->setEnabled(true);
     m_navList->setCurrentRow(0);
     m_stack->setCurrentWidget(m_businessArea);
@@ -109,6 +199,7 @@ void MainWindow::onLogout()
     m_loggedIn = false;
     m_navList->setCurrentRow(-1);
     m_navList->setEnabled(false);
+    m_sessionBadge->setText(QStringLiteral("● 会话已结束"));
     m_stack->setCurrentWidget(m_loginPage);
     // 清空登录页凭据：下一位使用者不得沿用上一位账号/密码（P1 review 修复）
     m_loginPage->clearCredentials();

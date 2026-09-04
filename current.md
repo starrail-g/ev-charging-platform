@@ -43,6 +43,10 @@ integration.
 Qt user/admin clients -> protocol v1 / Socket -> server -> database layer -> SQLite
 dashboard and ML consume separately defined data interfaces
 ```
+- The unified day/night UI milestone `T-C1.1` (Qt admin + Web dashboard, PR #6) was
+  rolled back by PR #7 and is being restored on top of the current `main` via this
+  PR (`feature/ui-restore`), together with the 9/3 review fixes and the 9/3-late
+  admin gaps (A-04/A-07/A-06/A-02) and the P2-01 amount-format cleanup.
 
 Presentation code does not access SQLite directly. `libs/protocol` owns wire
 contracts, `libs/database` owns persistence and transactions, and `server`
@@ -129,3 +133,7 @@ owns Socket dispatch and error mapping.
   validated qmake6 server/protocol/user-client builds, smoke, and concurrency.
 - Earlier work added direct start, frozen-user guards, request replay,
   `order.history.list`, seed-on-empty startup and migration failure-path tests.
+- Restored the unified day/night UI (PR #6 content) after PR #7 rolled it back:
+  this PR (`feature/ui-restore`) reverts `ec1e2b7` on top of the current `main`
+  and also carries the 9/3 review fixes and the 9/3-late admin gaps
+  (A-04/A-07/A-06/A-02) with the P2-01 amount-format cleanup.

@@ -1,0 +1,44 @@
+QWidget { color: @themes.day.text; }
+/* 背景链透明化：底色与呼吸光晕由 AuroraBackdrop（主窗口底层）统一绘制，
+   页面根/裸容器透明以透出氛围光；面板(surface)仍不透明，文字对比度不受影响 */
+QFrame[panel="true"] { background-color: @themes.day.surface; border: 1px solid @themes.day.decorativeStructure; border-radius: @shape.panelRadiuspx; }
+QWidget#businessArea, QWidget#loginPage { background: transparent; }
+QStackedWidget#mainStack, QStackedWidget#pageStack { background: transparent; }
+QFrame#navigationRail { background-color: @themes.day.surface; border: none; border-right: 1px solid @themes.day.decorativeStructure; }
+QFrame#navSeparator { background-color: @themes.day.decorativeStructure; border: none; }
+/* 工作页表格与筛选控件（统一 UI Task 6） */
+QTableWidget { background-color: @themes.day.surface; border: 1px solid @themes.day.decorativeStructure; border-radius: @shape.panelRadiuspx; selection-background-color: @themes.day.focusBlue; selection-color: @themes.day.surface; }
+QTableWidget:focus { border-color: @themes.day.focusBlue; }
+QHeaderView::section { background-color: @themes.day.surface; color: @themes.day.mutedText; border: none; border-bottom: 1px solid @themes.day.decorativeStructure; padding: 9px 12px; font-weight: 600; }
+QTableWidget::item { padding: 4px 12px; }
+QComboBox { background-color: @themes.day.surface; color: @themes.day.text; border: 1px solid @themes.day.topologyLine; border-radius: @shape.controlRadiuspx; padding: 6px 10px; min-height: 20px; }
+QComboBox:hover { border-color: @themes.day.mutedText; }
+QComboBox:focus { border: 2px solid @themes.day.focusBlue; padding: 5px 9px; }
+QComboBox:disabled { background-color: @themes.day.decorativeStructure; color: @themes.day.mutedText; }
+QLabel#productMark, QLabel#loginProductMark { color: @themes.day.text; font-size: 18px; font-weight: 700; }
+QLabel#sessionBadge { color: @themes.day.states.idle; font-size: 12px; }
+QLabel#pageTitle, QLabel#loginTitle { color: @themes.day.text; font-size: 22px; font-weight: 700; }
+QLabel#pageContext, QLabel#loginDescription { color: @themes.day.mutedText; font-size: 12px; }
+QListWidget#navList { background: transparent; border: none; outline: none; padding: 0; }
+/* 导航项：垂直节奏由 QListWidget spacing 统一控制，
+   左右边距让悬浮/选中块不贴 rail 边缘 */
+QListWidget#navList::item { color: @themes.day.mutedText; min-height: 52px; padding-left: 16px; margin: 0 10px; border-radius: @shape.controlRadiuspx; }
+QListWidget#navList::item:hover { background-color: @themes.day.decorativeStructure; color: @themes.day.text; }
+QListWidget#navList::item:selected { background-color: @themes.day.states.idle; color: @themes.day.surface; }
+QFrame#loginPanel { background-color: @themes.day.surface; border: 1px solid @themes.day.decorativeStructure; border-radius: @shape.panelRadiuspx; }
+QLineEdit { background-color: @themes.day.surface; color: @themes.day.text; border: 1px solid @themes.day.topologyLine; border-radius: @shape.controlRadiuspx; padding: 9px 11px; min-height: 22px; selection-background-color: @themes.day.focusBlue; }
+QLineEdit:hover { border-color: @themes.day.mutedText; }
+QLineEdit:focus { border: 2px solid @themes.day.focusBlue; padding: 8px 10px; }
+QPushButton { background-color: @themes.day.focusBlue; color: @themes.day.surface; border: 1px solid @themes.day.focusBlue; border-radius: @shape.controlRadiuspx; padding: 9px 14px; min-height: 20px; }
+QPushButton:hover { background-color: @themes.day.text; border-color: @themes.day.text; }
+QPushButton:focus { border: 2px solid @themes.day.text; padding: 8px 13px; }
+QPushButton:disabled { background-color: @themes.day.decorativeStructure; color: @themes.day.mutedText; border-color: @themes.day.decorativeStructure; }
+QPushButton#logoutButton { background: transparent; color: @themes.day.mutedText; border-color: @themes.day.topologyLine; }
+QPushButton#logoutButton:hover { color: @themes.day.text; background-color: @themes.day.decorativeStructure; }
+QLabel[role="alert"] { color: @themes.day.states.fault; }
+QLabel[state="idle"] { color: @themes.day.states.idle; }
+QLabel[state="reserved"] { color: @themes.day.states.reserved; }
+QLabel[state="charging"] { color: @themes.day.states.charging; }
+QLabel[state="fault"] { color: @themes.day.states.fault; }
+QLabel[state="offline"] { color: @themes.day.states.offline; }
+QLabel[state="unknown"] { color: @themes.day.states.unknown; }

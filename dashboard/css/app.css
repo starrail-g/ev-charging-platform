@@ -1,0 +1,944 @@
+/* 充电网络实时态势大屏 —— 应用样式（夜班态 · 青蓝主调）。
+   视觉基线：design spec §2 / web-breathing-gradient-v4/v6 原始稿
+   （顶部蓝色天光 + 青蓝地图纵深；能源绿只表达在线/能量流，不扩大绿色环境光）。
+   颜色只来自 css/generated/theme.css（design-tokens.json 生成，勿手改令牌）；
+   层次过渡用 color-mix 由令牌色派生。 */
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--night-bg); /* 青蓝黑 #080D10 */
+}
+
+body {
+  margin: 0;
+  background: transparent;
+  color: var(--night-text);
+  font-family: system-ui, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* ---------- 呼吸极光背景（v6 形态） ----------
+   层 1 ::before：顶部中央蓝色天光（deepBlue）+ 青色微光网格纹理 + dark-breath 亮度呼吸
+   层 2 ::after ：中央青蓝极光光晕（聚焦蓝派生，低透明）+ aurora-breathe 扩散/回落
+   四段式 0→45→90→100（端点同值、无 alternate、90-100% 自然停顿），周期 11s。 */
+
+.app-backdrop::before,
+.app-backdrop::after {
+  content: "";
+  position: fixed;
+  inset: -12%;
+  pointer-events: none;
+  z-index: -1;
+  will-change: opacity, transform;
+}
+
+/* 层 1：顶部天光 + 底部纵深 + 青色微光网格（装饰结构色 8% 透明） */
+.app-backdrop::before {
+  background:
+    radial-gradient(58% 52% at 50% -12%, var(--night-deep) 0%, color-mix(in srgb, var(--night-deep) 55%, var(--night-bg)) 46%, transparent 76%),
+    radial-gradient(70% 60% at 50% 118%, var(--night-deep) 0%, transparent 62%),
+    linear-gradient(color-mix(in srgb, var(--night-decorative) 16%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--night-decorative) 16%, transparent) 1px, transparent 1px);
+  background-size: auto, auto, 34px 34px, 34px 34px;
+  animation-name: dark-breathe;
+  animation-duration: 11s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+/* 层 2：中央青蓝极光（青=聚焦蓝与深蓝的派生，绝不使用能源绿作环境光） */
+.app-backdrop::after {
+  background:
+    radial-gradient(46% 34% at 50% 12%, color-mix(in srgb, var(--night-deep) 55%, var(--state-charging)) 0%, transparent 70%);
+  opacity: 0.14;
+  animation-name: aurora-breathe;
+  animation-duration: 11s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+@keyframes aurora-breathe {
+  0%   { opacity: 0.1; transform: scale(0.96) translateY(0); }
+  45%  { opacity: 0.3; transform: scale(1.06) translateY(-1.5%); }
+  90%  { opacity: 0.1; transform: scale(0.96) translateY(0); }
+  100% { opacity: 0.1; transform: scale(0.96) translateY(0); }
+}
+
+@keyframes dark-breathe {
+  0%   { filter: saturate(0.85) brightness(0.9); }
+  45%  { filter: saturate(1.12) brightness(1.12); }
+  90%  { filter: saturate(0.85) brightness(0.9); }
+  100% { filter: saturate(0.85) brightness(0.9); }
+}
+
+/* ---------- 状态语义（颜色 + 中文 + 图标三编码） ---------- */
+
+.state-idle { color: var(--state-idle); }
+.state-reserved { color: var(--state-reserved); }
+.state-charging { color: var(--state-charging); }
+.state-fault { color: var(--state-fault); }
+.state-offline { color: var(--state-offline); }
+.state-unknown { color: var(--state-unknown); }
+
+.status-icon {
+  width: 1.05em;
+  height: 1.05em;
+  display: inline-block;
+  flex: none;
+  vertical-align: -0.15em;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.16em 0.6em;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, currentColor 42%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  white-space: nowrap;
+  font-size: 0.86em;
+}
+
+/* ---------- 拓扑图（离线兜底） ---------- */
+
+.topo-map {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.topo-grid-line {
+  stroke: color-mix(in srgb, var(--night-decorative) 55%, transparent);
+  stroke-width: 1;
+}
+
+.topo-link {
+  stroke: var(--night-topology-line);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 6;
+  opacity: 0.8;
+}
+
+.topo-node {
+  cursor: pointer;
+  outline: none;
+  transition: opacity 200ms ease;
+}
+
+.topo-halo {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  opacity: 0;
+}
+
+.topo-node[data-motion="pulse"] .topo-halo,
+.topo-node[data-motion="attention"] .topo-halo {
+  animation: status-pulse var(--motion-charging-pulse) ease-in-out infinite;
+  opacity: 0.7;
+}
+
+.topo-node[data-motion="attention"] .topo-halo {
+  animation-duration: var(--motion-fault-pulse);
+}
+
+.topo-node:focus-visible .topo-halo,
+.topo-node.topo-focused .topo-halo {
+  opacity: 1;
+}
+
+.topo-node:focus-visible {
+  outline: 2px solid var(--night-focus);
+  outline-offset: 4px;
+  border-radius: 8px;
+}
+
+/* 异常聚焦：非相关节点降低视觉权重（has-focus 加在 .map-panel 上，拓扑/在线双模式共用） */
+.map-panel.has-focus .topo-node:not(.topo-focused) {
+  opacity: 0.3;
+}
+
+.map-panel.has-focus .topo-node.topo-focused {
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--night-focus) 60%, transparent));
+}
+
+.topo-label {
+  fill: var(--night-text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.topo-meta {
+  fill: var(--night-muted-text);
+  font-size: 12px;
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+/* ---------- 头部命令条 ---------- */
+
+.command-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem clamp(1.25rem, 3vw, 2.5rem);
+  border-bottom: 1px solid color-mix(in srgb, var(--night-decorative) 60%, transparent);
+}
+
+.command-title {
+  margin: 0;
+  font-size: clamp(1.15rem, 2vw, 1.5rem);
+  font-weight: 650;
+  letter-spacing: 0.06em;
+}
+
+.command-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.command-chip {
+  font-size: 0.8rem;
+  padding: 0.2em 0.8em;
+  border: 1px solid color-mix(in srgb, var(--night-decorative) 70%, transparent);
+  border-radius: 999px;
+  color: var(--night-muted-text);
+  background: color-mix(in srgb, var(--night-surface) 80%, transparent);
+}
+
+.command-freshness {
+  font-size: 0.78rem;
+  color: var(--night-muted-text);
+}
+
+/* ---------- 页面级状态区（loading/empty/error/offline/stale 统一呈现） ---------- */
+
+.page-state {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  width: 100%;
+  max-width: 1920px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 0.55rem clamp(1.25rem, 3vw, 2.5rem);
+  font-size: 0.88rem;
+  color: var(--night-text);
+}
+
+.page-state[hidden] {
+  display: none;
+}
+
+.page-state-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--night-focus);
+}
+
+.page-state-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.page-state-body strong {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.page-state [data-page-state-description] {
+  color: var(--night-muted-text);
+}
+
+/* 演示注入标识：呈现分支来自 ?state= 时永远可见，不伪装成真实接口结果 */
+.page-state [data-page-state-description][data-demo='true']::after {
+  content: '（演示状态注入）';
+  color: var(--night-focus);
+  margin-left: 0.5em;
+  white-space: nowrap;
+}
+
+.page-state-freshness {
+  color: var(--night-muted-text);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.page-state [data-page-state-action] {
+  margin-left: auto;
+  flex: none;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.38em 1.15em;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--night-focus) 55%, transparent);
+  background: color-mix(in srgb, var(--night-focus) 14%, transparent);
+  color: var(--night-text);
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.page-state [data-page-state-action]:hover {
+  background: color-mix(in srgb, var(--night-focus) 22%, transparent);
+}
+
+/* 非阻断横幅（offline/stale/有快照的 error）：细条贴头部下方 */
+.page-state[data-blocking='false'] {
+  border-bottom: 1px solid color-mix(in srgb, var(--night-decorative) 60%, transparent);
+  background: color-mix(in srgb, var(--night-surface) 55%, transparent);
+}
+
+/* 阻断态（empty / 无快照 error）：主区被隐藏，状态视图占据可视主区 */
+.page-state[data-blocking='true'] {
+  min-height: calc(100vh - 118px);
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+  gap: 0.9rem;
+}
+
+.page-state[data-blocking='true'] .page-state-icon {
+  width: 44px;
+  height: 44px;
+}
+
+.page-state[data-blocking='true'] [data-page-state-description] {
+  max-width: 640px;
+}
+
+.page-state[data-blocking='true'] [data-page-state-action] {
+  margin: 0.5rem auto 0;
+}
+
+/* ---------- 初次加载骨架（占位近似真实主区，避免内容出现时跳动） ---------- */
+
+.skel {
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--night-decorative) 13%, transparent);
+}
+
+.skel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--night-text) 7%, transparent) 50%, transparent 70%);
+  transform: translateX(-100%);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .skel::after {
+    animation: skel-sweep 1.3s ease-in-out infinite;
+  }
+}
+
+@keyframes skel-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.metric-strip .metric-card.skel {
+  min-height: 84px;
+  border-color: transparent;
+}
+
+.map-panel.skel {
+  border-radius: 10px;
+}
+
+.skel-line {
+  display: block;
+  height: 10px;
+  border-radius: 6px;
+  margin-block: 7px;
+}
+
+/* ---------- 主屏布局 ----------
+   >=1501px 全景态（spec §5.4）：左指标栏 18% + 中央地图 + 右栏 23%（关注/利用率/预测）+ 底部三图
+   <=1500px 紧凑态（spec §5.5）：顶部横向指标条 + 地图最大 + 右栏 + 底部单图页签（默认 24h）
+   <=900px 单列信息流 */
+
+.dashboard-shell {
+  display: grid;
+  gap: 1rem;
+  padding: clamp(0.9rem, 1.6vw, 1.4rem) clamp(1.25rem, 3vw, 2.5rem);
+  max-width: 1920px;
+  margin: 0 auto;
+}
+
+/* 三栏：左指标（竖排）、中央态势、右关注 */
+.panorama {
+  display: grid;
+  grid-template-columns: clamp(190px, 18%, 230px) minmax(0, 1fr) clamp(300px, 23%, 360px);
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.metric-strip {
+  display: grid;
+  grid-template-columns: 1fr; /* 左栏竖排（全景态） */
+  gap: 0.8rem;
+  align-content: start;
+}
+
+.metric-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.95rem 1.05rem;
+  background: color-mix(in srgb, var(--night-surface) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--night-decorative) 72%, transparent);
+  border-radius: 8px;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.metric-label {
+  color: var(--night-muted-text);
+  font-size: 0.8rem;
+}
+
+.metric-value {
+  font-size: clamp(1.4rem, 2.2vw, 1.9rem);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-value.metric-sub {
+  font-size: 0.95rem;
+  color: var(--night-muted-text);
+}
+
+.map-wrap {
+  position: relative;
+  min-width: 0;
+  min-height: 520px;
+}
+
+.map-panel {
+  position: absolute;
+  inset: 0;
+  background: var(--night-surface);
+  border: 1px solid color-mix(in srgb, var(--night-decorative) 78%, transparent);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/* 聚焦详情卡（地图左下角） */
+.focus-detail {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  max-width: min(400px, 60%);
+  padding: 0.85rem 1rem;
+  background: color-mix(in srgb, var(--night-surface) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--night-focus) 34%, var(--night-decorative));
+  border-radius: 8px;
+  backdrop-filter: blur(3px);
+  z-index: 3;
+}
+
+.focus-detail[hidden] {
+  display: none;
+}
+
+.focus-detail .fd-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 650;
+  margin-bottom: 0.3rem;
+}
+
+.focus-detail .fd-close {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--night-muted-text);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.1rem 0.35rem;
+  border-radius: 5px;
+  transition: color 150ms ease, background-color 150ms ease;
+}
+
+.focus-detail .fd-close:hover {
+  color: var(--night-text);
+  background: color-mix(in srgb, var(--night-decorative) 35%, transparent);
+}
+
+.focus-detail dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.18rem 0.9rem;
+  font-size: 0.84rem;
+}
+
+.focus-detail dt {
+  color: var(--night-muted-text);
+}
+
+.focus-detail dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.right-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.rail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.9rem 1rem;
+  background: color-mix(in srgb, var(--night-surface) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--night-decorative) 72%, transparent);
+  border-radius: 8px;
+  min-height: 0;
+}
+
+.rail-block.rail-alerts {
+  flex: 1 1 auto;
+}
+
+.rail-title {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.rail-title .count {
+  color: var(--night-muted-text);
+  font-weight: 500;
+  font-size: 0.78rem;
+}
+
+.alert-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.alert-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  text-align: left;
+  padding: 0.62rem 0.75rem;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.alert-item .status-icon {
+  margin-top: 0.22em;
+  color: currentColor;
+}
+
+.alert-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+  min-width: 0;
+}
+
+.alert-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.alert-head strong {
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.alert-tag {
+  font-size: 0.7rem;
+  padding: 0.04em 0.55em;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+
+.alert-meta {
+  font-size: 0.76rem;
+  color: var(--night-muted-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alert-item.alert-active {
+  border-color: var(--night-focus);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--night-focus) 60%, transparent);
+}
+
+.rail-empty {
+  color: var(--night-muted-text);
+  font-size: 0.88rem;
+  margin: 0.2rem 0;
+}
+
+/* 站点利用率排行 */
+.util-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.util-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.15rem 0.6rem;
+  align-items: center;
+}
+
+.util-name {
+  font-size: 0.84rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.util-value {
+  font-size: 0.84rem;
+  color: var(--night-muted-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.util-track {
+  grid-column: 1 / -1;
+  height: 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--night-decorative) 45%, transparent);
+  overflow: hidden;
+}
+
+.util-bar {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--state-charging), color-mix(in srgb, var(--state-charging) 45%, var(--state-idle)));
+  transition: width 200ms ease;
+}
+
+/* 模型能力预留 */
+.model-note {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--night-muted-text);
+}
+
+.model-chip {
+  font-size: 0.68rem;
+  color: var(--night-muted-text);
+  border: 1px dashed color-mix(in srgb, var(--night-decorative) 90%, transparent);
+  border-radius: 999px;
+  padding: 0.05em 0.7em;
+  white-space: nowrap;
+}
+
+/* ---------- 经营板块（全景态：底部三图并列） ---------- */
+
+.operations-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.panel {
+  background: color-mix(in srgb, var(--night-surface) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--night-decorative) 72%, transparent);
+  border-radius: 8px;
+  padding: 0.9rem 1rem 0.7rem;
+  min-width: 0;
+}
+
+.panel-title {
+  margin: 0 0 0.45rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+.demo-badge {
+  font-size: 0.66rem;
+  font-weight: 500;
+  color: var(--night-muted-text);
+  border: 1px solid color-mix(in srgb, var(--night-decorative) 80%, transparent);
+  border-radius: 999px;
+  padding: 0.04em 0.6em;
+}
+
+.chart-box {
+  width: 100%;
+  height: 200px;
+}
+
+/* 1366 页签（紧凑态显示，全景态隐藏） */
+.ops-tabs {
+  display: none;
+}
+
+/* ---------- 通用 ---------- */
+
+.local-error {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 1.2rem;
+  margin: 0.8rem;
+  border: 1px dashed var(--state-fault);
+  border-radius: 8px;
+  color: var(--state-fault);
+  background: color-mix(in srgb, var(--state-fault) 6%, transparent);
+  font-size: 0.86rem;
+}
+
+:focus-visible {
+  outline: 2px solid var(--night-focus);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.noscript-notice {
+  padding: 1rem;
+  color: var(--night-text);
+}
+
+/* ---------- 响应式 ---------- */
+
+@media (max-width: 1500px) and (min-width: 901px) {
+  .command-header {
+    padding-block: 0.7rem;
+  }
+
+  /* 固定视口高度：上态势（flex 填满）、下 214px 单图页签 */
+  .dashboard-shell {
+    height: calc(100vh - 62px);
+    padding-block: 0.75rem;
+    gap: 0.75rem;
+    grid-template-rows: minmax(0, 1fr) 214px;
+  }
+
+  .panorama {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) clamp(280px, 24%, 340px);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 0.75rem;
+  }
+
+  /* 指标移到顶部横向指标条（spec §5.5）：占满整行，地图在左、右栏在右 */
+  .metric-strip {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .metric-card {
+    padding: 0.65rem 0.8rem;
+  }
+
+  .map-wrap {
+    grid-column: 1;
+    grid-row: 2;
+    min-height: 0;
+  }
+
+  .right-rail {
+    grid-column: 2;
+    grid-row: 2;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .operations-strip {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chart-box {
+    height: 158px;
+  }
+
+  .chart-panel[data-tab-hidden="true"] {
+    display: none;
+  }
+
+  .ops-tabs {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+
+  .ops-tab {
+    font: inherit;
+    font-size: 0.85rem;
+    padding: 0.3em 1em;
+    border-radius: 6px;
+    border: 1px solid color-mix(in srgb, var(--night-decorative) 75%, transparent);
+    background: color-mix(in srgb, var(--night-surface) 80%, transparent);
+    color: var(--night-muted-text);
+    cursor: pointer;
+    transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease;
+  }
+
+  .ops-tab:hover {
+    color: var(--night-text);
+  }
+
+  .ops-tab.is-active {
+    color: var(--night-text);
+    border-color: color-mix(in srgb, var(--night-focus) 55%, transparent);
+    background: color-mix(in srgb, var(--night-focus) 12%, transparent);
+  }
+
+  .panel.chart-panel {
+    transition: opacity 200ms ease;
+  }
+
+  /* 页面非阻断横幅（offline/stale/错误）出现时压缩固定视口主区，避免溢出滚动 */
+  body.has-page-banner .dashboard-shell {
+    height: calc(100vh - 128px);
+  }
+}
+
+/* 阻断态（empty/无快照 error）：主体隐藏，状态视图独占可视区 */
+body.page-blocking .dashboard-shell {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .command-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .dashboard-shell {
+    padding: 0.9rem;
+    /* 恢复自然纵向滚动，不再受紧凑态固定视口高度与行模板约束 */
+    height: auto;
+    grid-template-rows: none;
+  }
+
+  .panorama {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+  }
+
+  .metric-strip,
+  .map-wrap,
+  .right-rail {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .metric-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric-card:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .map-wrap {
+    min-height: 420px;
+  }
+
+  .right-rail {
+    order: 0;
+  }
+
+  .rail-alerts {
+    order: -1;
+  }
+
+  .focus-detail {
+    max-width: calc(100% - 28px);
+  }
+}
+
+/* ---------- 无障碍降级 ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .app-backdrop::before {
+    animation: none;
+    filter: saturate(1) brightness(1); /* 静态中间态 */
+  }
+
+  .app-backdrop::after {
+    animation: none;
+    opacity: 0.22;
+  }
+
+  .topo-node .topo-halo {
+    animation: none;
+    /* 动画定义选择器特异性更高，需显式压掉 animation-name */
+    animation-name: none !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

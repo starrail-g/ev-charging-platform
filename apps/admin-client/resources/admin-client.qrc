@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/">
         <file>README.txt</file>
+        <file alias="theme.qss">generated/theme.qss</file>
     </qresource>
 </RCC>
