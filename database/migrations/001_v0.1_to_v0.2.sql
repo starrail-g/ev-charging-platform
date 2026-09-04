@@ -47,14 +47,7 @@ CREATE TABLE charging_orders_v02 (
     updated_at TEXT NOT NULL,
     CHECK (ended_at IS NULL OR started_at IS NOT NULL),
     CHECK (settled_at IS NULL OR status = 'completed'),
-    CHECK (status NOT IN ('pending_reservation', 'reserved')
-        OR (reserved_at IS NOT NULL AND started_at IS NULL
-            AND ended_at IS NULL AND settled_at IS NULL)),
-    CHECK (status <> 'charging'
-        OR (started_at IS NOT NULL AND ended_at IS NULL AND settled_at IS NULL)),
-    CHECK (status <> 'pending_settlement'
-        OR (started_at IS NOT NULL AND ended_at IS NOT NULL
-            AND settled_at IS NULL AND total_amount_cents > 0)),
+    CHECK (status <> 'pending_settlement' OR ended_at IS NOT NULL),
     CHECK (status <> 'completed'
         OR (started_at IS NOT NULL
             AND ended_at IS NOT NULL
@@ -77,17 +70,6 @@ CREATE TABLE wallet_transactions_v02 (
         OR (transaction_type = 'refund' AND amount_cents > 0)
         OR transaction_type = 'adjustment'),
     CHECK (transaction_type <> 'charge' OR order_id IS NOT NULL)
-);
-
--- Request replay records were introduced in v0.2. They have no legacy rows,
--- but must be created in the same transaction so upgraded databases expose
--- the same contract as freshly initialized databases.
-CREATE TABLE request_records (
-    request_id TEXT PRIMARY KEY CHECK (length(request_id) BETWEEN 1 AND 64),
-    operation TEXT NOT NULL CHECK (length(operation) BETWEEN 1 AND 64),
-    fingerprint TEXT NOT NULL CHECK (length(fingerprint) > 0),
-    response_json TEXT NOT NULL CHECK (length(response_json) > 0),
-    created_at TEXT NOT NULL
 );
 
 INSERT INTO charging_piles_v02 SELECT * FROM charging_piles;
@@ -134,7 +116,8 @@ CREATE UNIQUE INDEX ux_orders_one_active_user
                      'pending_settlement');
 CREATE UNIQUE INDEX ux_orders_one_active_pile
     ON charging_orders(pile_id)
-    WHERE status IN ('pending_reservation', 'reserved', 'charging');
+    WHERE status IN ('pending_reservation', 'reserved', 'charging',
+                     'pending_settlement');
 CREATE UNIQUE INDEX ux_wallet_one_charge_per_order
     ON wallet_transactions(order_id)
     WHERE transaction_type = 'charge' AND order_id IS NOT NULL;
@@ -201,8 +184,6 @@ CREATE INDEX ix_orders_ended_at ON charging_orders(ended_at);
 CREATE INDEX ix_orders_settled_at ON charging_orders(settled_at);
 CREATE INDEX ix_wallet_user_created
     ON wallet_transactions(user_id, created_at DESC);
-CREATE INDEX ix_request_records_created
-    ON request_records(created_at);
 
 CREATE VIEW station_pile_status AS
 SELECT s.id AS station_id,

@@ -19,7 +19,7 @@ local development. `EV_DATABASE_PATH` selects the SQLite file (default:
 and `EV_DATABASE_SEED_PATH` optionally points to repeatable development seed
 data. The repository schema is located automatically for normal source/build
 tree launches. The first connection initializes an empty database with
-`database/schema/schema.sql` and requires schema version `0.2`; when
+`database/schema/schema.sql` and requires schema version `0.3`; when
 `EV_DATABASE_SEED_PATH` is set, the seed is loaded only during that initial
 creation. Existing databases are never reseeded automatically.
 

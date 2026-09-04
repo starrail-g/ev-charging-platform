@@ -7,6 +7,10 @@ Apply a versioned SQLite migration with fail-fast, atomic execution:
 ```sh
 python3 scripts/migrate_db.py var/ev-charging.db \
   database/migrations/001_v0.1_to_v0.2.sql
+
+# Use this instead when the database is already at v0.2.
+python3 scripts/migrate_db.py var/ev-charging.db \
+  database/migrations/002_v0.2_to_v0.3.sql
 ```
 
 The runner commits only after the migration exits without an error, confirms

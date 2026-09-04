@@ -12,7 +12,7 @@ real Socket/SQLite client integration.
 ## Status
 
 - qmake6 is the authoritative Qt/C++ build path.
-- B currently provides SQLite schema v0.2, deterministic seed/migration,
+- B currently provides SQLite schema v0.3, deterministic seed/migration,
   protocol v1 framing/envelope/error codes, and server handlers for login,
   profile read/update, wallet recharge, station/pile queries, active/history
   orders, reservation, charging and settlement.
@@ -42,9 +42,8 @@ owns Socket dispatch and error mapping.
 
 ## TODO
 
-- [ ] Add a follow-up migration for already-deployed v0.2 databases if the
-  project needs in-place rollout; fresh schema and v0.1->v0.2 migration now
-  enforce the state/time constraints.
+- [x] Add `002_v0.2_to_v0.3.sql` for already-deployed v0.2 databases; it
+  replaces the pile uniqueness rule and adds v0.3 replay/state safeguards.
 - [x] Settlement includes `service_fee_cents` using the documented integer rule
   (`ceil(energy_wh * unit_price / 1000) + service_fee`).
 - [x] History is formally completed-only, newest-first by `settled_at`, with
@@ -66,9 +65,8 @@ owns Socket dispatch and error mapping.
   administrator freezes a user. Frozen accounts can still use read and
   cleanup/settlement operations; only new reservation/start/recharge requests
   are blocked.
-- Existing databases already initialized at v0.2 do not receive the new
-  timestamp checks automatically; an in-place follow-up migration is needed
-  before production rollout.
+- Existing databases initialized at v0.2 must run the v0.2 -> v0.3 migration
+  before starting the v0.3 server; the server rejects older versions.
 - Database calls are synchronous in the Qt Socket thread.
 - Real A Socket/SQLite integration and administrator server handlers are not
   implemented.
@@ -91,6 +89,9 @@ owns Socket dispatch and error mapping.
 - Frozen policy is explicit: login succeeds with `status=frozen`; new
   reservation/confirm/start/recharge return `ACCOUNT_FROZEN` (1101), while reads,
   profile updates, cancel, stop and settle remain allowed; replay wins first.
+- Schema version `0.3` is the current server contract. Migration `001` remains
+  the immutable v0.1 -> v0.2 upgrade; migration `002` upgrades deployed v0.2
+  databases to the released pile lifecycle and replay constraints.
 - Build output and local process material stay outside the repository. Real
   credentials and runtime databases are never committed.
 

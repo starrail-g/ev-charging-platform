@@ -2,7 +2,7 @@
 
 ## Scope and conventions
 
-`database/schema/schema.sql` defines SQLite schema version `0.2` for the
+`database/schema/schema.sql` defines SQLite schema version `0.3` for the
 server-side source of truth. The schema is deliberately small enough for the
 stage-I demo while retaining the entities required by the requirements and
 the backend traceability matrix.
@@ -12,7 +12,8 @@ the backend traceability matrix.
   them for local display.
 - Monetary values are integer Chinese fen (`*_cents`), never floating point.
 - `schema_meta.schema_version` identifies the schema. Existing v0.1 databases
-  must apply `database/migrations/001_v0.1_to_v0.2.sql` before use.
+  must apply `database/migrations/001_v0.1_to_v0.2.sql`, and deployed v0.2
+  databases must apply `database/migrations/002_v0.2_to_v0.3.sql`, before use.
 - `database/seeds/dev.sql` is deterministic and may be run repeatedly.
 
 ## Entities
@@ -154,7 +155,9 @@ audit event.
 these CHECK constraints in place, an existing v0.1 database must be backed up
 and upgraded with `scripts/migrate_db.py` while the server is stopped. The
 migration runner owns the transaction, stops on the first SQLite error, and
-rolls back before returning non-zero. The migration rebuilds the affected tables, creates the v0.2 `request_records` table, and preserves valid rows,
+rolls back before returning non-zero. The v0.1 -> v0.2 migration preserves the
+deployed v0.2 shape. The v0.2 -> v0.3 migration adds the request replay table,
+replaces the pile uniqueness rule, and preserves valid rows,
 recreates indexes/views, changes revenue grouping to `settled_at`, and updates
 `schema_meta`. Invalid legacy completed/charge rows cause the transaction to
 roll back instead of being silently accepted. Run `PRAGMA foreign_key_check`

@@ -1,4 +1,4 @@
--- Deterministic development/demo data for schema v0.2.
+-- Deterministic development/demo data for schema v0.3.
 PRAGMA foreign_keys = ON;
 BEGIN;
 

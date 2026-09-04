@@ -1,4 +1,4 @@
--- EV Charging Platform SQLite schema v0.2
+-- EV Charging Platform SQLite schema v0.3
 -- The application must execute PRAGMA foreign_keys = ON for every connection.
 -- Times are UTC ISO-8601 strings (for example 2026-09-01T08:00:00Z).
 -- Money is an integer number of Chinese fen (CNY cents).
@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     value TEXT NOT NULL
 );
 
-INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('schema_version', '0.2');
+INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('schema_version', '0.3');
 
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,

@@ -173,8 +173,8 @@ bool Database::initializeSchema(QString *error)
         setError(error, QStringLiteral("read schema version failed: %1").arg(queryError(query)));
         return false;
     }
-    if (!query.next() || query.value(0).toString() != QStringLiteral("0.2")) {
-        setError(error, QStringLiteral("unsupported or missing schema version (expected 0.2)"));
+    if (!query.next() || query.value(0).toString() != QStringLiteral("0.3")) {
+        setError(error, QStringLiteral("unsupported or missing schema version (expected 0.3; migrate v0.2 databases first)"));
         return false;
     }
     if (!ensureRequestTable(error)) return false;
