@@ -11,8 +11,9 @@ names needed for the first project stage. The current server implements the
 read/query, user profile/wallet, and user charging lifecycle operations
 (`health`, `echo`, `user.login`, `user.profile.*`, `wallet.recharge`,
 `station.list`, `pile.list`, `order.active.get`, `order.history.list`,
-`reservation.*`, and `charging.*`). Administrator operations remain
-contracted and will be implemented against the database service.
+`reservation.*`, `charging.*`, and the administrator operations listed below).
+The administrator wire operations are implemented by the server on this branch;
+the Qt adapter remains pending.
 
 ## Transport and Framing
 
@@ -115,10 +116,10 @@ The following names and payloads are reserved for v1. Result types append
 | `admin.login` | `username`, `password` | `admin.login.result`: `admin` |
 | `admin.statistics.get` | `range` (`7d` or `30d`) | `admin.statistics.get.result`: `statistics` |
 | `admin.station.list` | optional `query` | `admin.station.list.result`: `stations` |
-| `admin.station.create` | `name`, `address`, `latitude`, `longitude`, `pile_count` | `admin.station.create.result`: `station` |
-| `admin.pile.restart` | `pile_id` | `admin.pile.restart.result`: `pile` |
+| `admin.station.create` | `administrator_id`, `name`, `address`, `latitude`, `longitude`, `pile_count` | `admin.station.create.result`: `station` |
+| `admin.pile.restart` | `administrator_id`, `pile_id` | `admin.pile.restart.result`: `pile` |
 | `admin.user.list` | optional `phone_query` | `admin.user.list.result`: `users` (each user includes `active_order_status`) |
-| `admin.user.status.set` | `user_id`, `status` (`active` or `frozen`) | `admin.user.status.set.result`: `user` |
+| `admin.user.status.set` | `administrator_id`, `user_id`, `status` (`active` or `frozen`) | `admin.user.status.set.result`: `user` |
 
 Unless an operation says otherwise, object IDs are integers. Money is always
 an integer number of Chinese fen (`*_cents`), never a floating-point yuan
@@ -127,10 +128,11 @@ value. Timestamps are UTC ISO-8601 strings such as
 
 The `user` object must at least contain `id`, `phone`, `nickname`,
 `balance_cents`, and `status`. In `admin.user.list`, it also contains
-`active_order_status`, one of `pending_reservation`, `reserved`, `charging`,
-`pending_settlement`, or JSON `null`. The `station`, `pile`, `order`, `admin`, and
-`statistics` fields are finalized with the database schema and documented in
-the API reference before their handlers are enabled.
+`avatar_path`, `created_at`, and `active_order_status`; `active_order_status` is
+one of `pending_reservation`, `reserved`, `charging`, `pending_settlement`,
+or JSON `null`. The `station`, `pile`, `order`, `admin`, and `statistics`
+fields follow the database schema and the response examples in the API
+reference.
 
 Pile status values are `idle`, `reserved`, `charging`, `fault`, and `offline`.
 Order status values are `pending_reservation`, `reserved`, `charging`,
@@ -180,17 +182,17 @@ Order status values are `pending_reservation`, `reserved`, `charging`,
   and changes the pile from `idle` to `charging` in one transaction.
 - A client connection is not an authentication session in v1. Until a
   token/session design is explicitly added, handlers verify the IDs and
-  credentials supplied by their payloads. Administrative request access is
-  restricted by the corresponding verified administrator context when that
-  handler is implemented.
+  credentials supplied by their payloads. Administrative requests supply an
+  `administrator_id`; the server verifies its active account and required role.
 
 ## Current Implementation
 
 `libs/protocol` implements envelope validation and incremental frame
 encoding/decoding. `server` accepts multiple TCP clients and currently
 implements `health`, `echo`, `user.login`, station/pile, active-order and
-order-history queries, reservation transitions, and charging
-start/stop/settlement; unknown operations return `INVALID_REQUEST`.
+order-history queries, reservation transitions, charging start/stop/settlement,
+and the administrator operations in the contract table; unknown operations
+return `INVALID_REQUEST`.
 When a read contains valid messages before a malformed frame, the server
 dispatches the valid messages before returning the frame error and closing
 that connection.

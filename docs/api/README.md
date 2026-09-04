@@ -9,14 +9,14 @@
 服务端当前可运行：`health`、`echo`、`user.login`、`user.profile.get`、
 `user.profile.update`、`wallet.recharge`、`station.list`、
 `pile.list`、`order.active.get`、`order.history.list`、预约生命周期和充电
-开始/停止/结算。管理端后续依赖的 `admin.login`、统计、管理员桩/站/用户操作
-仍为契约，尚未由服务端实现。管理端第一阶段使用 `AdminRepository` 的 Mock
-实现；接入真实 Socket 前必须冻结字段并完成接口闸门确认。
+开始/停止/结算，以及本分支新增的 `admin.login`、统计、管理员桩/站/用户操作。
+管理端 `AdminRepository` 仍使用 Mock；真实 Socket adapter 尚未接入，需按下方
+wire 映射契约完成客户端联调。
 
 主分支协作约定仍适用：C 端的管理员登录、概览统计和桩状态接口是第一阶段
-联调闸门，目标时间为 9 月 7 日 18:00；在闸门通过前，A/C 保留 Mock 或离线
-回退，不得把 Mock 结果当作真实 Socket 验收证据。B 端用户接口和充电生命周期
-已按下文 v1 契约提供，管理端接口仍需单独实现和评审。
+联调闸门，目标时间为 9 月 7 日 18:00；在真实 Socket adapter 验证前，A/C
+保留 Mock 或离线回退，不得把 Mock 结果当作真实 Socket 验收证据。B 端用户接口、
+充电生命周期和本分支管理员接口均按下文 v1 契约提供。
 
 每个状态修改请求都必须使用客户端生成的 `id`（1 至 64 字符）。相同操作和
 标识性 payload 重放同一 ID 会返回第一次成功响应，即使客户端已重连；同一 ID
@@ -148,15 +148,15 @@ JSON `null`；历史接口只返回 `completed` 订单，按 `settled_at` 倒序
 业务拒绝或数据库失败会回滚且不会固化记录，因此相同 ID 可在条件修复后重试，参数
 变化或操作变化则返回 `CONFLICT`。
 
-管理员接口草案：
+管理员接口当前实现：
 
 | 接口 | 用途 | 状态 |
 |---|---|---|
-| `admin.login` | 管理员认证，错误码 1100 | 已列入协议，服务端待实现 |
-| `admin.statistics.get` | 营收、桩状态、利用率摘要 | 字段待评审 |
-| `admin.pile.restart` | 桩重启和审计 | 服务端待实现 |
-| `admin.station.*` | 站点查询/创建 | 服务端待实现 |
-| `admin.user.list/status.set` | 用户查询、冻结/解冻 | 服务端待实现 |
+| `admin.login` | 管理员认证，错误码 1100 | 服务端已实现；无状态 token，后续请求携带 `administrator_id` |
+| `admin.statistics.get` | 营收、桩状态、利用率摘要 | 服务端已实现，支持 `7d` / `30d` |
+| `admin.pile.restart` | 桩重启和审计 | 服务端已实现；故障/离线桩恢复为空闲，其它状态返回冲突并保留审计记录 |
+| `admin.station.list/create` | 站点查询/创建 | 服务端已实现；创建为超级管理员操作并按请求 ID 幂等 |
+| `admin.user.list/status.set` | 用户查询、冻结/解冻 | 服务端已实现；状态修改为超级管理员操作并按请求 ID 幂等 |
 
 ## 管理端 AdminRepository 契约与 wire 映射
 
@@ -167,9 +167,9 @@ Socket 任务落地）：
 
 | AdminRepository 方法 | 业务视图语义 | wire 映射策略 |
 |---|---|---|
-| `fetchOverview` | 概览指标（7 日/30 日营收、桩五态、利用率、快照时间） | `admin.statistics.get`（字段待冻结，9/4 评审 Q3–Q5） |
+| `fetchOverview` | 概览指标（7 日/30 日营收、桩五态、利用率、快照时间） | 分别请求 `admin.statistics.get` 的 `7d` 与 `30d`，再合并两份统计结果 |
 | `fetchStations` | 管理端全量站点（含桩数/在线率聚合视图） | `admin.station.list` |
-| `fetchUsers` | 管理端全量用户 | `admin.user.list` |
+| `fetchUsers` | 管理端全量用户（含注册时间和活动订单状态） | `admin.user.list` |
 | `fetchPiles` | 管理端**全量**桩列表（跨站，桩页过滤/搜索在本端完成） | 逐站 fan-out：`admin.station.list` → 每站 `pile.list(station_id)` → 合并（默认，D5） |
 
 `fetchPiles` 的已知权衡（对应 9/3 评审 Q2 协议缺口——wire 暂无 `admin.pile.list`）：

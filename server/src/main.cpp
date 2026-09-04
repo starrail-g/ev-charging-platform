@@ -72,6 +72,20 @@ private:
             handleActiveOrder(request);
         } else if (request.type == QStringLiteral("order.history.list")) {
             handleOrderHistory(request);
+        } else if (request.type == QStringLiteral("admin.login")) {
+            handleAdministratorLogin(request);
+        } else if (request.type == QStringLiteral("admin.statistics.get")) {
+            handleAdministratorStatistics(request);
+        } else if (request.type == QStringLiteral("admin.station.list")) {
+            handleAdministratorStationList(request);
+        } else if (request.type == QStringLiteral("admin.station.create")) {
+            handleAdministratorStationCreate(request);
+        } else if (request.type == QStringLiteral("admin.pile.restart")) {
+            handleAdministratorPileRestart(request);
+        } else if (request.type == QStringLiteral("admin.user.list")) {
+            handleAdministratorUserList(request);
+        } else if (request.type == QStringLiteral("admin.user.status.set")) {
+            handleAdministratorUserStatus(request);
         } else if (request.type == QStringLiteral("reservation.create")) {
             handleReservationCreate(request);
         } else if (request.type == QStringLiteral("reservation.confirm")) {
@@ -286,6 +300,167 @@ private:
         }
         sendResponse(request, QStringLiteral("order.history.list.result"),
                      QJsonObject{{QStringLiteral("orders"), orders}});
+    }
+
+    void handleAdministratorLogin(const Message &request)
+    {
+        const QJsonValue username = request.payload.value(QStringLiteral("username"));
+        const QJsonValue password = request.payload.value(QStringLiteral("password"));
+        if (!hasOnlyFields(request.payload, {QStringLiteral("username"), QStringLiteral("password")})
+            || !username.isString() || !password.isString()
+            || username.toString().trimmed().isEmpty() || password.toString().isEmpty()) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("username and password are required"));
+            return;
+        }
+        QJsonObject administrator;
+        QString error; ErrorKind kind = ErrorKind::None;
+        if (!database_.loginAdministrator(username.toString(), password.toString(),
+                                          &administrator, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error,
+                              QStringLiteral("administrator login failed"));
+            return;
+        }
+        sendResponse(request, QStringLiteral("admin.login.result"),
+                     QJsonObject{{QStringLiteral("admin"), administrator}});
+    }
+
+    void handleAdministratorStatistics(const Message &request)
+    {
+        const QJsonValue range = request.payload.value(QStringLiteral("range"));
+        if (!hasOnlyFields(request.payload, {QStringLiteral("range")})
+            || !range.isString()
+            || (range.toString() != QStringLiteral("7d")
+                && range.toString() != QStringLiteral("30d"))) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("range must be 7d or 30d"));
+            return;
+        }
+        QJsonObject statistics; QString error; ErrorKind kind = ErrorKind::None;
+        if (!database_.getStatistics(range.toString(), &statistics, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error,
+                              QStringLiteral("get administrator statistics failed"));
+            return;
+        }
+        sendResponse(request, QStringLiteral("admin.statistics.get.result"),
+                     QJsonObject{{QStringLiteral("statistics"), statistics}});
+    }
+
+    void handleAdministratorStationList(const Message &request)
+    {
+        const QJsonValue queryValue = request.payload.value(QStringLiteral("query"));
+        if (!hasOnlyFields(request.payload, {QStringLiteral("query")})
+            || (!queryValue.isUndefined() && !queryValue.isString())) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("query must be a string"));
+            return;
+        }
+        QJsonArray stations; QString error; ErrorKind kind = ErrorKind::None;
+        if (!database_.listAdminStations(queryValue.toString(), &stations, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error,
+                              QStringLiteral("list administrator stations failed"));
+            return;
+        }
+        sendResponse(request, QStringLiteral("admin.station.list.result"),
+                     QJsonObject{{QStringLiteral("stations"), stations}});
+    }
+
+    void handleAdministratorStationCreate(const Message &request)
+    {
+        qint64 administratorId = 0;
+        qint64 pileCount = 0;
+        const QJsonValue name = request.payload.value(QStringLiteral("name"));
+        const QJsonValue address = request.payload.value(QStringLiteral("address"));
+        const QJsonValue latitude = request.payload.value(QStringLiteral("latitude"));
+        const QJsonValue longitude = request.payload.value(QStringLiteral("longitude"));
+        if (!hasOnlyFields(request.payload, {QStringLiteral("administrator_id"), QStringLiteral("name"),
+                                             QStringLiteral("address"), QStringLiteral("latitude"),
+                                             QStringLiteral("longitude"), QStringLiteral("pile_count")})
+            || !positiveId(request.payload.value(QStringLiteral("administrator_id")), &administratorId)
+            || !name.isString() || !address.isString() || name.toString().trimmed().isEmpty()
+            || address.toString().trimmed().isEmpty() || !latitude.isDouble() || !longitude.isDouble()
+            || !positiveId(request.payload.value(QStringLiteral("pile_count")), &pileCount)) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("administrator_id, station fields and pile_count are invalid"));
+            return;
+        }
+        QJsonObject station; QString error; ErrorKind kind = ErrorKind::None;
+        if (!database_.createStation(request.id, administratorId, name.toString(), address.toString(),
+                                     latitude.toDouble(), longitude.toDouble(), pileCount,
+                                     &station, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error,
+                              QStringLiteral("create administrator station failed"));
+            return;
+        }
+        sendResponse(request, QStringLiteral("admin.station.create.result"),
+                     QJsonObject{{QStringLiteral("station"), station}});
+    }
+
+    void handleAdministratorPileRestart(const Message &request)
+    {
+        qint64 administratorId = 0;
+        qint64 pileId = 0;
+        if (!hasOnlyFields(request.payload, {QStringLiteral("administrator_id"), QStringLiteral("pile_id")})
+            || !positiveId(request.payload.value(QStringLiteral("administrator_id")), &administratorId)
+            || !positiveId(request.payload.value(QStringLiteral("pile_id")), &pileId)) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("administrator_id and pile_id must be positive integers"));
+            return;
+        }
+        QJsonObject pile; QString error; ErrorKind kind = ErrorKind::None;
+        if (!database_.restartPile(request.id, administratorId, pileId, &pile, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error,
+                              QStringLiteral("restart charging pile failed"));
+            return;
+        }
+        sendResponse(request, QStringLiteral("admin.pile.restart.result"),
+                     QJsonObject{{QStringLiteral("pile"), pile}});
+    }
+
+    void handleAdministratorUserList(const Message &request)
+    {
+        const QJsonValue phoneQuery = request.payload.value(QStringLiteral("phone_query"));
+        if (!hasOnlyFields(request.payload, {QStringLiteral("phone_query")})
+            || (!phoneQuery.isUndefined() && !phoneQuery.isString())) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("phone_query must be a string"));
+            return;
+        }
+        QJsonArray users; QString error; ErrorKind kind = ErrorKind::None;
+        if (!database_.listAdminUsers(phoneQuery.toString(), &users, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error,
+                              QStringLiteral("list administrator users failed"));
+            return;
+        }
+        sendResponse(request, QStringLiteral("admin.user.list.result"),
+                     QJsonObject{{QStringLiteral("users"), users}});
+    }
+
+    void handleAdministratorUserStatus(const Message &request)
+    {
+        qint64 administratorId = 0;
+        qint64 userId = 0;
+        const QJsonValue status = request.payload.value(QStringLiteral("status"));
+        if (!hasOnlyFields(request.payload, {QStringLiteral("administrator_id"), QStringLiteral("user_id"),
+                                             QStringLiteral("status")})
+            || !positiveId(request.payload.value(QStringLiteral("administrator_id")), &administratorId)
+            || !positiveId(request.payload.value(QStringLiteral("user_id")), &userId)
+            || !status.isString()
+            || (status.toString() != QStringLiteral("active")
+                && status.toString() != QStringLiteral("frozen"))) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("administrator_id, user_id and status are invalid"));
+            return;
+        }
+        QJsonObject user; QString error; ErrorKind kind = ErrorKind::None;
+        if (!database_.setUserStatus(request.id, administratorId, userId, status.toString(),
+                                     &user, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error,
+                              QStringLiteral("set user status failed"));
+            return;
+        }
+        sendResponse(request, QStringLiteral("admin.user.status.set.result"),
+                     QJsonObject{{QStringLiteral("user"), user}});
     }
 
     void handleReservationCreate(const Message &request)

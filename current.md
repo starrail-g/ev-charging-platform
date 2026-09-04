@@ -4,12 +4,20 @@
 
 Project: 东软电动汽车充电桩应用管理平台。
 
-Current stage: stage-I integration of the B backend lifecycle, A user-client
-Mock baseline, and C admin-client skeleton. Stage-I target date is 2026-09-10;
+Current stage: B backend lifecycle and the unified admin/dashboard UI have been
+merged into `main`; the project is now in stage-I cross-module integration with
+the A user-client Mock baseline and C admin-client UI/data Mock baseline.
+Stage-I target date is 2026-09-10;
 stage-II target date is 2026-09-17, with the individual report due 2026-09-18.
 The product source of truth is the requirements matrix and project
 specification; no Mock path is evidence of a real Socket/SQLite client
 integration.
+
+The three files at the repository root named `01.项目说明书-东软电动汽车充电桩应用管理平台.doc`,
+`01需求矩阵-第10组-张之杰.xls`, and `三人分工.md` are local reference material
+and are intentionally outside the upload/publish set. The tracked Markdown
+requirements and architecture documents under `docs/` are the repository's
+formal project artifacts.
 
 ## Status
 
@@ -20,19 +28,35 @@ integration.
   orders, reservation, charging and settlement.
 - Lifecycle writes use `BEGIN IMMEDIATE`, request-ID replay records, frozen-user
   checks, direct idle-pile charging, and settlement rollback paths.
+- PR #4 is merged into `main` at `20a3815`; remote `main` advanced to `994e5ff`
+  with the restored unified admin/dashboard UI and associated tests. Future
+  work must start from the updated `main` on a new task branch.
 - Profile updates persist nickname/avatar/timestamps. Recharge atomically
   updates the non-negative integer-cent balance, writes a recharge ledger row,
   and stores the replay response. Injected UPDATE/INSERT failures prove full
   rollback; successful idempotent replay takes precedence over frozen checks.
 - A user client is a deterministic Qt Widgets + Mock implementation. It has no
   `SocketUserService`; real DTO/protocol integration remains pending.
-- C admin client has a qmake shell, repository boundary, Mock data source,
-  login flow and overview states. Real management APIs remain pending.
+- C admin client now has the restored unified day/night UI, qmake build, async
+  Repository boundary, Mock data source, overview/pile/station/user pages and
+  UI tests. It still has no real Socket repository.
 - Cross-team gate: A retains Mock/offline fallback until a real Socket adapter
   is verified; C's administrator login, statistics, pile, station and user
   management APIs remain dependent on B-side endpoint implementation.
 - The clean-database server path can load `EV_DATABASE_SEED_PATH` once during
   initial creation; existing databases are not reseeded.
+- Current checkout is `feature/admin-api` based on `origin/main` at `994e5ff`,
+  with uncommitted administrator API work. The previous feature branch remains
+  at `3189e24`; new work should branch from the latest `main` rather than reuse
+  completed feature branches.
+- Local verification on 2026-09-04 used qmake6/Qt 6.2.4 and external `/tmp`
+  build directories: protocol tests passed; user-client app and QtTest passed
+  (6); admin app build, launch smoke (6), and login-flow tests (7) passed;
+  database Python tests passed (10); and server smoke plus concurrency passed
+  against a clean seeded v0.3 database. After syncing `origin/main`, admin UI
+  build and tests still pass; database/config/token tests pass (10/3/6).
+  Dashboard Node tests could not run because `node` is unavailable. `sqlite3`
+  CLI is not installed in this environment.
 - Main-branch A/C documentation is retained as collaboration context: A's
   Mock user flow remains separate from real Socket integration, while C's
   admin/dashboard work remains dependent on frozen B contracts.
@@ -43,14 +67,31 @@ integration.
 Qt user/admin clients -> protocol v1 / Socket -> server -> database layer -> SQLite
 dashboard and ML consume separately defined data interfaces
 ```
-- The unified day/night UI milestone `T-C1.1` (Qt admin + Web dashboard, PR #6) was
-  rolled back by PR #7 and is being restored on top of the current `main` via this
-  PR (`feature/ui-restore`), together with the 9/3 review fixes and the 9/3-late
-  admin gaps (A-04/A-07/A-06/A-02) and the P2-01 amount-format cleanup.
+- The unified day/night UI milestone `T-C1.1` (Qt admin + Web dashboard) is part
+  of the current `origin/main` baseline. This branch adds the B-side administrator
+  APIs and keeps the UI's Mock Repository boundary intact until Socket integration.
 
 Presentation code does not access SQLite directly. `libs/protocol` owns wire
 contracts, `libs/database` owns persistence and transactions, and `server`
 owns Socket dispatch and error mapping.
+
+## Next Development Plan
+
+1. **B administrator APIs**: implement `admin.login`, statistics, station/pile
+   queries and mutation endpoints, user list/status changes, and the
+   `active_order_status` field required by C.
+2. **A real Socket adapter**: implement `SocketUserService` against Protocol
+   v1 for login, profile, wallet, station/pile, order history, reservation,
+   charging and settlement; retain Mock/offline fallback.
+3. **Cross-module integration**: run A/B/C against a clean v0.3 database and
+   verify lifecycle state visibility, error mapping, request replay, disconnect
+   handling, and concurrent reservation/settlement.
+4. **Delivery evidence**: record qmake6 build commands, server smoke,
+   concurrency, end-to-end results, seed/migration commands and remaining
+   unimplemented interfaces.
+5. **Stage-II follow-up**: move synchronous database work behind a bounded
+   worker strategy, then connect dashboard statistics and the ML
+   forecast/recommendation/warning pipeline.
 
 ## TODO
 
@@ -68,8 +109,11 @@ owns Socket dispatch and error mapping.
   mid-transaction SQL failure paths.
 - [ ] Move slow database work off the Socket event-loop thread or define a
   bounded worker/lock strategy.
-- [ ] Implement administrator/statistics/management APIs, Socket adapters,
-  dashboard and intelligent-analysis pipeline.
+- [x] Implement server-side administrator login, statistics, station list/create,
+  pile restart, user list and user status APIs on `feature/admin-api`; real Qt
+  Socket adapters and end-to-end client integration remain open.
+- [ ] Implement Socket adapters, dashboard live data integration and intelligent-
+  analysis pipeline.
 - [ ] Complete A-S1-03 real Socket adapter and C's management/data integration
   after endpoint fields and error behavior are frozen.
 - [ ] Meet the main-branch integration milestones: real A/C endpoint alignment
@@ -85,8 +129,15 @@ owns Socket dispatch and error mapping.
 - Existing databases initialized at v0.2 must run the v0.2 -> v0.3 migration
   before starting the v0.3 server; the server rejects older versions.
 - Database calls are synchronous in the Qt Socket thread.
-- Real A Socket/SQLite integration and administrator server handlers are not
-  implemented.
+- Real A/C Socket/SQLite integration is not implemented; the current admin API
+  implementation is server-side and still needs a production client adapter.
+- `admin.statistics.get`, `admin.station.list`, and `admin.user.list` are
+  currently read-only endpoints without an `administrator_id`; this is a
+  temporary v1 exposure and must be resolved before production Socket
+  integration (either authenticated session context or an explicit admin ID).
+- Administrator API smoke coverage exists in `server/tests/admin.py`; full
+  end-to-end management-client tests and a persisted administrator session/token
+  design remain open.
 - Dashboard and ML remain extension/integration work and must not redefine the
   v1 protocol or SQLite state rules.
 - Tencent Maps credentials remain local-only; user-client navigation must keep
@@ -133,7 +184,7 @@ owns Socket dispatch and error mapping.
   validated qmake6 server/protocol/user-client builds, smoke, and concurrency.
 - Earlier work added direct start, frozen-user guards, request replay,
   `order.history.list`, seed-on-empty startup and migration failure-path tests.
-- Restored the unified day/night UI (PR #6 content) after PR #7 rolled it back:
-  this PR (`feature/ui-restore`) reverts `ec1e2b7` on top of the current `main`
-  and also carries the 9/3 review fixes and the 9/3-late admin gaps
-  (A-04/A-07/A-06/A-02) with the P2-01 amount-format cleanup.
+- Synced the restored unified admin/dashboard UI from `origin/main` at `994e5ff`.
+- Added server-side administrator login, statistics, station/pile management,
+  user listing/status APIs, request replay handling, and administrator API smoke
+  coverage; aligned `admin.user.list` with the admin UI's `created_at` field.
