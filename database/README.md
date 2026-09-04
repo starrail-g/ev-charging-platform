@@ -1,6 +1,6 @@
 # Database contract
 
-`schema/schema.sql` is the SQLite v0.2 schema used by the server. It is
+`schema/schema.sql` is the SQLite v0.3 schema used by the server. It is
 idempotent (`CREATE IF NOT EXISTS`) and records the schema version in
 `schema_meta`.
 
@@ -19,6 +19,14 @@ backup:
 python3 scripts/migrate_db.py var/ev-charging.db \
   database/migrations/001_v0.1_to_v0.2.sql
 python3 -c 'import sqlite3; c=sqlite3.connect("var/ev-charging.db"); assert not c.execute("PRAGMA foreign_key_check").fetchall()'
+```
+
+For databases already deployed with v0.2, apply the v0.2 -> v0.3 migration
+before starting the v0.3 server:
+
+```sh
+python3 scripts/migrate_db.py var/ev-charging.db \
+  database/migrations/002_v0.2_to_v0.3.sql
 ```
 
 The server must enable `PRAGMA foreign_keys = ON` on every new connection.

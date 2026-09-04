@@ -7,10 +7,12 @@ client, Qt administration client, and `server`. It is the authoritative
 contract for `libs/protocol`.
 
 Version 1 freezes framing, common fields, error responses, and operation
-names needed for the first project stage. Only `health` and `echo` are
-implemented by the initial server skeleton; the remaining operations are
-contracted for client parallel development and will be implemented against
-the database service.
+names needed for the first project stage. The current server implements the
+read/query, user profile/wallet, and user charging lifecycle operations
+(`health`, `echo`, `user.login`, `user.profile.*`, `wallet.recharge`,
+`station.list`, `pile.list`, `order.active.get`, `order.history.list`,
+`reservation.*`, and `charging.*`). Administrator operations remain
+contracted and will be implemented against the database service.
 
 ## Transport and Framing
 
@@ -78,6 +80,7 @@ Malformed frames without a usable request ID use `id: "server"`.
 | 1002 | `INVALID_REQUEST` | Envelope or operation payload is invalid, or type is unsupported. |
 | 1003 | `UNSUPPORTED_VERSION` | `v` is not supported by this server. |
 | 1100 | `UNAUTHORIZED` | Missing, invalid, or insufficient authentication. |
+| 1101 | `ACCOUNT_FROZEN` | User is frozen and the requested operation is not permitted. |
 | 1200 | `NOT_FOUND` | Requested resource does not exist. |
 | 1201 | `CONFLICT` | State transition is not permitted, including duplicate active orders. |
 | 1202 | `INSUFFICIENT_BALANCE` | Wallet balance cannot cover settlement. |
@@ -114,7 +117,7 @@ The following names and payloads are reserved for v1. Result types append
 | `admin.station.list` | optional `query` | `admin.station.list.result`: `stations` |
 | `admin.station.create` | `name`, `address`, `latitude`, `longitude`, `pile_count` | `admin.station.create.result`: `station` |
 | `admin.pile.restart` | `pile_id` | `admin.pile.restart.result`: `pile` |
-| `admin.user.list` | optional `phone_query` | `admin.user.list.result`: `users` |
+| `admin.user.list` | optional `phone_query` | `admin.user.list.result`: `users` (each user includes `active_order_status`) |
 | `admin.user.status.set` | `user_id`, `status` (`active` or `frozen`) | `admin.user.status.set.result`: `user` |
 
 Unless an operation says otherwise, object IDs are integers. Money is always
@@ -123,7 +126,9 @@ value. Timestamps are UTC ISO-8601 strings such as
 `2026-09-01T10:15:00Z`.
 
 The `user` object must at least contain `id`, `phone`, `nickname`,
-`balance_cents`, and `status`. The `station`, `pile`, `order`, `admin`, and
+`balance_cents`, and `status`. In `admin.user.list`, it also contains
+`active_order_status`, one of `pending_reservation`, `reserved`, `charging`,
+`pending_settlement`, or JSON `null`. The `station`, `pile`, `order`, `admin`, and
 `statistics` fields are finalized with the database schema and documented in
 the API reference before their handlers are enabled.
 
@@ -139,12 +144,40 @@ Order status values are `pending_reservation`, `reserved`, `charging`,
   `reserved`; confirmation changes only the order to `reserved`. Starting or
   cancelling a reservation atomically changes both order and pile. Fault or
   occupied piles return `CONFLICT`.
-- Stop and settlement operations are idempotent only when the same `id` is
-  replayed. Request ID persistence is a database-layer task before these
-  mutating handlers are exposed to clients.
-- Settlement must atomically update the order, pile, wallet balance, and
-  wallet transaction. Insufficient balance returns `INSUFFICIENT_BALANCE`
-  without partial updates.
+- Every state-changing request must carry a client-generated `id`. The
+  database stores the operation, a fingerprint of its identifying payload,
+  and the complete successful response in `request_records`. Replaying the
+  same `id` with the same operation and identifying payload returns the
+  original result, including after a reconnect. Reusing an `id` for another
+  operation or different identifying payload returns `CONFLICT`; clients must
+  not retry the same action with a new ID.
+- Idempotency currently covers `reservation.create`,
+  `reservation.confirm`, `reservation.cancel`, `charging.start`,
+  `charging.stop`, `charging.settle`, `user.profile.update`, and
+  `wallet.recharge`. Read operations do not require persistence records.
+- Request IDs are currently globally unique in the server database across
+  users and operations; clients must not reuse an ID for another request.
+- Login always succeeds for an existing frozen account and returns
+  `user.status: "frozen"`. Frozen users are blocked only from
+  `reservation.create`, `reservation.confirm`, `charging.start` (both direct
+  and reservation paths), and `wallet.recharge`, which return `ACCOUNT_FROZEN`
+  (1101). Read operations, `profile.update`, and cleanup/payment operations
+  (`reservation.cancel`, `charging.stop`, `charging.settle`) remain allowed.
+  A missing user receives `NOT_FOUND`; invalid field types or values receive
+  `INVALID_REQUEST`. Persistence details are logged server-side and are never
+  included in the public `DATABASE_ERROR` response.
+- Idempotency replay takes precedence over the frozen check: a matching
+  successful request record returns its original response even after the user
+  is frozen. A new request is checked for frozen status before execution.
+- Settlement must atomically update the order, wallet balance, charge ledger,
+  and pile counters. `charging.stop` first changes the order to
+  `pending_settlement` and releases the pile (`charging` -> `idle`) in the same
+  transaction. Settlement never changes pile status, so a replacement session
+  cannot be disturbed. Insufficient balance returns `INSUFFICIENT_BALANCE`
+  without changing balance, order, or charge ledger; the pile remains idle.
+- `charging.start` accepts either a confirmed reservation `order_id` or an
+  idle `pile_id` for direct start. The direct path creates the charging order
+  and changes the pile from `idle` to `charging` in one transaction.
 - A client connection is not an authentication session in v1. Until a
   token/session design is explicitly added, handlers verify the IDs and
   credentials supplied by their payloads. Administrative request access is
@@ -155,10 +188,14 @@ Order status values are `pending_reservation`, `reserved`, `charging`,
 
 `libs/protocol` implements envelope validation and incremental frame
 encoding/decoding. `server` accepts multiple TCP clients and currently
-implements `health` and `echo`; unknown operations return `INVALID_REQUEST`.
+implements `health`, `echo`, `user.login`, station/pile, active-order and
+order-history queries, reservation transitions, and charging
+start/stop/settlement; unknown operations return `INVALID_REQUEST`.
 When a read contains valid messages before a malformed frame, the server
 dispatches the valid messages before returning the frame error and closing
 that connection.
-It deliberately has no direct SQLite dependency, so the database/transaction
-service can be introduced behind the request dispatcher without changing the
-wire contract.
+The server dispatches to the shared SQLite-backed database service in the
+current stage. Clients still depend only on this wire contract and never
+access SQLite directly. Database work is currently synchronous in the
+connection event loop; moving long-running operations to bounded workers is a
+known follow-up before production deployment.

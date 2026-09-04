@@ -1,4 +1,4 @@
--- Deterministic development/demo data for schema v0.2.
+-- Deterministic development/demo data for schema v0.3.
 PRAGMA foreign_keys = ON;
 BEGIN;
 
@@ -62,10 +62,10 @@ VALUES
      '2026-09-01T00:30:00Z', '2026-09-01T00:40:00Z'),
     (1003, 'DEMO-20260901-0002', 4, 203, 'reserved',
      '2026-09-01T00:50:00Z', NULL, NULL,
-     0, 135, 0, 0, NULL,
+     0, 135, 50, 0, NULL,
      '2026-09-01T00:50:00Z', '2026-09-01T00:50:00Z'),
     (1004, 'DEMO-20260901-0003', 1, 201, 'pending_reservation',
-     NULL, NULL, NULL,
+     '2026-09-01T00:55:00Z', NULL, NULL,
      0, 135, 0, 0, NULL,
      '2026-09-01T00:55:00Z', '2026-09-01T00:55:00Z'),
     (1005, 'DEMO-20260901-0004', 3, 103, 'exception',

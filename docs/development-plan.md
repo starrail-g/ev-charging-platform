@@ -1,6 +1,6 @@
 # 项目整体认知与同学 B 开发计划
 
-> 版本：v0.2（2026-09-01）
+> 版本：v0.3（2026-09-04）
 > 适用范围：阶段 I 最小闭环，兼顾阶段 II 扩展
 
 ## 1. 项目整体认知
@@ -155,10 +155,12 @@ SQLite（用户、站点、桩、订单、管理员）
 
 ## 6. B 的第一批任务清单
 
-- [ ] 阅读并标注需求矩阵中的后端实体、状态和异常。
-- [x] 完成 `database/schema/schema.sql` v0.2、迁移脚本和初始化种子。
-- [ ] 完成 `docs/architecture/database.md` 的表/约束/事务说明。
-- [ ] 完成 `docs/architecture/protocol.md` 的帧、消息、错误码和样例。
-- [ ] 搭建 `server` 与 `libs/*` 的最小可构建入口。
-- [ ] 跑通一个请求写入 SQLite 并返回响应的验证程序。
-- [ ] 把接口样例和启动命令交给 A/C，登记未决问题。
+- [x] 阅读并标注需求矩阵中的后端实体、状态和异常。
+- [x] 完成 `database/schema/schema.sql` v0.3、v0.1→v0.2 与 v0.2→v0.3
+      迁移脚本和初始化种子。
+- [x] 完成 `docs/architecture/database.md` 的表/约束/事务说明。
+- [x] 完成 `docs/architecture/protocol.md` 的帧、消息、错误码和样例。
+- [x] 搭建 `server` 与 `libs/*` 的最小可构建入口。
+- [x] 跑通 `user.login` 请求写入/读取 SQLite 并返回响应的验证程序。
+- [x] 把接口样例和启动命令交给 A/C，登记未决问题；管理员接口和真实
+      A/C Socket 适配仍列为后续联调任务。

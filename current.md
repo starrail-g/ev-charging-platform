@@ -1,77 +1,131 @@
 # Current Project State
 
-## Project and stage
+## Overview
 
-- Project: 东软电动汽车充电桩应用管理平台。
-- Current stage: 第一阶段最小闭环开发；真实截止时间为 2026-09-10 24:00。第二阶段截止 2026-09-17 24:00，个人报告截止 2026-09-18 24:00。
-- This file was updated for `A-S1-02` on 2026-09-02. The requirements source of truth is `docs/requirements/requirements-matrix.md`.
+Project: 东软电动汽车充电桩应用管理平台。
 
-## Architecture and boundaries
+Current stage: stage-I integration of the B backend lifecycle, A user-client
+Mock baseline, and C admin-client skeleton. Stage-I target date is 2026-09-10;
+stage-II target date is 2026-09-17, with the individual report due 2026-09-18.
+The product source of truth is the requirements matrix and project
+specification; no Mock path is evidence of a real Socket/SQLite client
+integration.
 
-- `apps/user-client` (A): Qt user UI, session state, station/pile discovery, navigation entry, reservation–charging–billing–settlement interaction, profile and wallet. It never accesses runtime SQLite directly.
-- `apps/admin-client` and `dashboard` (C): management UI and ECharts presentation. They consume server/provided data and do not define database or Socket rules.
-- `server`, `libs/protocol`, `libs/database`, and `database` (B): Socket, authentication, business/state validation, transactions, concurrency and SQLite persistence.
-- `ml` (B/C, S2): 1/6/24-hour load and idle-pile/peak prediction, low-congestion recommendation, load warning, and a callable model-service boundary.
-- Mandatory build protocol: all Qt/C++ modules must use `qmake6`; CMake is forbidden as a build, test, acceptance, or release path. See `docs/meetings/build-system-protocol-2026-09-02.md`.
+## Status
 
-Target flow: Qt clients/dashboard → unified protocol or data interface → server → database layer → SQLite.
+- qmake6 is the authoritative Qt/C++ build path.
+- B currently provides SQLite schema v0.3, deterministic seed/migration,
+  protocol v1 framing/envelope/error codes, and server handlers for login,
+  profile read/update, wallet recharge, station/pile queries, active/history
+  orders, reservation, charging and settlement.
+- Lifecycle writes use `BEGIN IMMEDIATE`, request-ID replay records, frozen-user
+  checks, direct idle-pile charging, and settlement rollback paths.
+- Profile updates persist nickname/avatar/timestamps. Recharge atomically
+  updates the non-negative integer-cent balance, writes a recharge ledger row,
+  and stores the replay response. Injected UPDATE/INSERT failures prove full
+  rollback; successful idempotent replay takes precedence over frozen checks.
+- A user client is a deterministic Qt Widgets + Mock implementation. It has no
+  `SocketUserService`; real DTO/protocol integration remains pending.
+- C admin client has a qmake shell, repository boundary, Mock data source,
+  login flow and overview states. Real management APIs remain pending.
+- Cross-team gate: A retains Mock/offline fallback until a real Socket adapter
+  is verified; C's administrator login, statistics, pile, station and user
+  management APIs remain dependent on B-side endpoint implementation.
+- The clean-database server path can load `EV_DATABASE_SEED_PATH` once during
+  initial creation; existing databases are not reseeded.
+- Main-branch A/C documentation is retained as collaboration context: A's
+  Mock user flow remains separate from real Socket integration, while C's
+  admin/dashboard work remains dependent on frozen B contracts.
 
-## Current status
+## Architecture
 
-- `A-S1-01`: **已完成**. Requirements traceability, stage boundaries, dependencies and public-task assignments are recorded in `docs/requirements/requirements-matrix.md` and the project task records.
-- `A-S1-02`: Mock baseline is implemented in the submitted user-client sources. Only `MockUserService` is present; no `SocketUserService` or user-client protocol adapter is included.
-- B backend baseline is merged into `main` (`3b8cf78` via merge `3c31826`): SQLite schema v0.2, deterministic seed/migration, protocol v1 framing/envelope/error codes, and health/echo diagnostic server are available. Database-backed business handlers, runtime data-access integration, and full endpoint tests remain to be completed before end-to-end closure.
-- C admin/dashboard work and cross-module testing remain in progress; no C task is marked complete by this update.
+```text
+Qt user/admin clients -> protocol v1 / Socket -> server -> database layer -> SQLite
+dashboard and ML consume separately defined data interfaces
+```
 
-## A-S1-02 delivered scope
+Presentation code does not access SQLite directly. `libs/protocol` owns wire
+contracts, `libs/database` owns persistence and transactions, and `server`
+owns Socket dispatch and error mapping.
 
-- User-window navigation with a 420×760 mobile-style layout, centralized `SessionManager`, login/logout and two-step registration validation.
-- Deterministic Mock station/pile query with loading, empty, unavailable, timeout and service-error feedback; station cards show dynamic idle/total counts and pile details show type, power, status and price.
-- Mock-only order flow: create/reserve, start charging, stop charging, settle, cancel reservation, current-order status and newest-first completed history with completion time, station address and amount.
-- Mock/offline navigation route with explicit Mock labeling and local-only `TENCENT_MAP_KEY` configuration placeholder. No real key is stored in source, documentation or Git.
-- Profile nickname/avatar and wallet Mock operations; no UI code contains SQL or direct SQLite access.
-- Regression fix for early `orderSummary_` access; the label is constructed before login refresh can run.
-- Review fixes applied: all business methods reject empty user IDs; profile/avatar changes persist in Mock; registration is reachable from login; route mode is passed to the Mock service and coordinates are range/finite checked. Login behavior follows the documented phone-only Mock flow.
-- Monetary DTOs use integer cents (`walletBalanceCents`, `priceCentsPerKwh`, `amountCents`). Mock reservation now returns `PendingReservation` and requires `confirmReservation`; settlement checks balance, deducts cents atomically on success, and leaves the order pending on insufficient balance.
-- DTO includes a temporary `UserStatus` and `Offline` pile state. Mock external IDs remain strings for the current demo; no wire-ID conversion or Socket mapping is present in the submitted user-client sources.
-- Socket/Protocol status: no user-client `SocketUserService`, frame codec integration, request/response mapping, or protocol operation implementation is included in this PR. A-S1-03 remains pending until B freezes the contract and a separate adapter implementation is added and verified.
+## TODO
 
-## Validation and evidence
+- [x] Add `002_v0.2_to_v0.3.sql` for already-deployed v0.2 databases; it
+  replaces the pile uniqueness rule and adds v0.3 replay/state safeguards.
+- [x] Settlement includes `service_fee_cents` using the documented integer rule
+  (`ceil(energy_wh * unit_price / 1000) + service_fee`).
+- [x] History is formally completed-only, newest-first by `settled_at`, with
+  `station_name`, `station_address` and `pile_code` display fields.
+- [x] Cancellation verifies the order/pile/user relationship in the release
+  update; request-ID global scope and failed-request retry semantics are
+  documented.
+- [x] Reproducible concurrent reservation/settlement tests and isolated smoke
+  runs cover profile, recharge, lifecycle, malformed-frame, and injected
+  mid-transaction SQL failure paths.
+- [ ] Move slow database work off the Socket event-loop thread or define a
+  bounded worker/lock strategy.
+- [ ] Implement administrator/statistics/management APIs, Socket adapters,
+  dashboard and intelligent-analysis pipeline.
+- [ ] Complete A-S1-03 real Socket adapter and C's management/data integration
+  after endpoint fields and error behavior are frozen.
+- [ ] Meet the main-branch integration milestones: real A/C endpoint alignment
+  by 2026-09-07 18:00, clean-environment integration evidence by 2026-09-10,
+  and stage-II analysis/dashboard expansion by 2026-09-17.
 
-- qmake6 project files and QtTest sources are present, but this PR does not contain independent qmake6 build, test, or GUI-startup evidence. Re-run the commands in Ubuntu/VM and record the output before marking build verification as PASS.
-- This Windows host has no local qmake6 or SQLite CLI; qmake6 verification is performed in the Ubuntu VM. The real GUI/Socket/database end-to-end path is still pending.
-- Before each commit/PR, scan tracked content for credentials and inspect `git diff --check`; only placeholders may appear in `config/example.env`.
+## Known Issues
 
-## Dependencies and TODO
+- Existing in-progress orders are not automatically closed when an
+  administrator freezes a user. Frozen accounts can still use read and
+  cleanup/settlement operations; only new reservation/start/recharge requests
+  are blocked.
+- Existing databases initialized at v0.2 must run the v0.2 -> v0.3 migration
+  before starting the v0.3 server; the server rejects older versions.
+- Database calls are synchronous in the Qt Socket thread.
+- Real A Socket/SQLite integration and administrator server handlers are not
+  implemented.
+- Dashboard and ML remain extension/integration work and must not redefine the
+  v1 protocol or SQLite state rules.
+- Tencent Maps credentials remain local-only; user-client navigation must keep
+  the documented Mock/offline fallback when a key or network is unavailable.
 
-- `A-S1-02` real integration: implement a B-compatible `IUserService` Socket adapter only after the protocol and response fields are frozen; preserve the Mock/offline switch and map server errors without changing page code.
-- `A-S1-02` navigation: add Tencent Maps geocoding and basic driving/walking route display from local configuration; retain explicit Mock/offline fallback and record failure/Key-missing evidence.
-- Detailed user-client requirements and Tencent Maps investigation are recorded in `docs/ui/user-client-detailed-requirements.md`, including the Linux + Qt baseline, acceptance flow, API probe command, Key-safety rules and GitHub reference projects. Real POI fields are not yet treated as business prices/pile counts/statuses; those remain B/Mock data until verified.
-- `B-S1-01`/`B-S1-02`: finish runtime database access, transaction-backed login/station/pile/order handlers and stable request/response samples before client replacement.
-- `C-S1-01`/`C-S1-02`/`C-S1-03`: finish admin pages, dashboard data path, clean-build and cross-module evidence. End-to-end closure requires A, B and C paths plus abnormal-case tests.
-- S2 intelligent-analysis chain: data preparation → model-service contract → predictions/recommendation/warning → B service adaptation → C display → integrated validation. It must not block the S1 basic charging loop.
+## Decisions
 
-## Collaboration and security rules
+- Keep B as owner of `server`, `libs/protocol`, `libs/database` and `database`;
+  A owns the user client; C owns the admin client/dashboard.
+- Request IDs are retained in the database for successful state-changing
+  responses; a future protocol revision must explicitly define global scope,
+  retention and failed-request replay rules.
+- Request IDs are currently globally unique database keys across users and
+  operations; clients must not reuse an ID for another request.
+- Revenue reports use `settled_at` because revenue is final at settlement;
+  `ended_at` remains the physical charging-end timestamp.
+- `charging.stop` releases the pile immediately; `charging.settle` only performs
+  financial completion and increments counters, leaving replacement sessions
+  untouched. User-level active-order uniqueness includes `pending_settlement`,
+  while pile-level uniqueness excludes it.
+- Frozen policy is explicit: login succeeds with `status=frozen`; new
+  reservation/confirm/start/recharge return `ACCOUNT_FROZEN` (1101), while reads,
+  profile updates, cancel, stop and settle remain allowed; replay wins first.
+- Schema version `0.3` is the current server contract. Migration `001` remains
+  the immutable v0.1 -> v0.2 upgrade; migration `002` upgrades deployed v0.2
+  databases to the released pile lifecycle and replay constraints.
+- Main's collaboration gate remains applicable: before real A/C integration,
+  preserve the Mock/offline fallback and record qmake6, smoke, and end-to-end
+  evidence from a clean environment.
+- Build output and local process material stay outside the repository. Real
+  credentials and runtime databases are never committed.
 
-- Work on task branches and deliver through Pull Requests; do not push directly to `main` or force-push.
-- Any code or architecture change must update this file and the relevant design/API document, keeping only current, actionable information.
-- All Qt/C++ build and test evidence must use `qmake6`; CMake is not an accepted project path.
-- Never commit Tencent Maps keys, passwords, tokens, private keys, runtime databases, logs or generated build output. Real map credentials stay in ignored local configuration.
+## Recent History
 
-## Recent history
-
-- `A-S1-01` requirements baseline and repository/task records completed.
-- B schema/protocol foundation merged to `main`.
-- A user-client Mock baseline was added; independent real Socket/SQLite integration and reproducible qmake6 verification remain pending.
-- User-client detailed requirements file added; Tencent Maps POI/API probe and similar-project research are the next integration step.
-## 同学 A 任务计划
-
-- 新增 `docs/role-a-delivery-plan.md`，记录同学 A 阶段 I/II 任务、依赖、验收标准和交付清单。
-- `A-S1-01`、`A-S1-02` 已完成范围仅包括需求追踪和 Mock 用户端；当前没有用户端 Socket/Protocol v1 适配器，真实业务联调仍待后续 A-S1-03。
-- 后续 A 任务包括联调测试、腾讯地图导航优化、智能分析结果展示和最终 qmake6 交付；不得将 Mock 或适配器构建通过误记为真实闭环完成。
-## Main 合入后的 C 端状态
-
-- `main` 已包含 C 管理端基础工程：qmake 工程、五页导航、`AdminRepository`/`MockAdminRepository`、登录 TDD，以及概览页加载/空/错误/正常四态。
-- C 的真实管理业务接口、桩/站点/用户资源页面、ECharts 大屏数据链路和跨模块联调仍未完成；这些状态不能提前标记为完成。
-- C 的字段和接口必须继续对齐 B 的协议 v1、SQLite schema v0.2 和需求矩阵；不在 UI 文档中重新定义协议或数据库规则。
-- 阶段 I 仍以 2026-09-10 24:00 为截止；C 的接口对齐、qmake6 构建和联调证据按 `main` 当前计划推进。
+- Synced PR #4 with `origin/main` at `84911db`; retained A user-client files
+  and resolved configuration/state-document merge conflicts.
+- Verified the latest review: direct start and frozen-user protections exist;
+  state/time constraints, service-fee calculation, concurrency evidence and
+  history contract details were corrected in this work; stop/settle pile
+  semantics and frozen-user policy are now aligned across code, tests and docs;
+  asynchronous database dispatch remains open.
+- Added `user.profile.get`, `user.profile.update`, and `wallet.recharge` with
+  atomic persistence, replay, failure-injection rollback tests, and API docs;
+  validated qmake6 server/protocol/user-client builds, smoke, and concurrency.
+- Earlier work added direct start, frozen-user guards, request replay,
+  `order.history.list`, seed-on-empty startup and migration failure-path tests.
