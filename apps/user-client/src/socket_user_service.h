@@ -2,6 +2,8 @@
 
 #include "client_service.h"
 #include <QJsonValue>
+#include <QHash>
+#include <QMutex>
 #include <QHostAddress>
 
 namespace ev {
@@ -28,7 +30,8 @@ public:
   Result<Order> stopCharging(const QString &, const QString &) override;
   Result<Order> settle(const QString &, const QString &) override;
 private:
-  Result<QJsonObject> call(const QString &type, const QJsonObject &payload) const;
+  Result<QJsonObject> call(const QString &type, const QJsonObject &payload, const QString &idempotencyKey = {}) const;
+  QString requestIdFor(const QString &key) const;
   static Result<User> userFrom(const QJsonObject &payload);
   static Result<Order> orderFrom(const QJsonObject &payload);
   static Result<QVector<Order>> ordersFrom(const QJsonObject &payload);
@@ -38,6 +41,8 @@ private:
   quint16 port_;
   int timeoutMs_;
   mutable quint64 nextRequestId_{1};
+  mutable QHash<QString, QString> pendingRequestIds_;
+  mutable QMutex requestMutex_;
 };
 
 } // namespace ev

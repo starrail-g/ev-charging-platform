@@ -1,7 +1,17 @@
 #include "client_service.h"
 #include "socket_user_service.h"
+#include "ev_protocol/frame_codec.h"
+#include "ev_protocol/message.h"
+#include <QElapsedTimer>
+#include <QHostAddress>
+#include <QSemaphore>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QtTest>
+#include <memory>
+#include <thread>
 using namespace ev;
+using namespace ev::protocol;
 class ClientServiceTest : public QObject {
   Q_OBJECT
 private slots:
@@ -10,6 +20,87 @@ void unauthorizedAndProfilePersistence(){ MockUserService s; QVERIFY(!s.updatePr
 void stationAndRoute(){ MockUserService s; auto list=s.stations(""); QCOMPARE(list.value.size(),3); QCOMPARE(list.value[0].totalPiles,2); QCOMPARE(list.value[0].availablePiles,1); QCOMPARE(s.piles(list.value[0].id).value[0].priceCentsPerKwh, qint64(120)); QVERIFY(s.stations("timeout").error.contains("超时")); auto d=s.route(22.5,113.9,list.value[0],RouteMode::Driving); auto w=s.route(22.5,113.9,list.value[0],RouteMode::Walking); QVERIFY(d.value.mock); QVERIFY(w.value.mock); QVERIFY(d.value.mode!=w.value.mode); QVERIFY(d.value.distanceKm!=w.value.distanceKm); }
 void socketAdapterFailureCode(){ SocketUserService s(QStringLiteral("127.0.0.1"), 1, 100); auto result=s.login(QStringLiteral("13800000000")); QVERIFY(!result.ok); QVERIFY(result.code == 1500 || result.code == 1000); }
 void socketAdapterUnauthorizedGuards(){ SocketUserService s(QStringLiteral("127.0.0.1"), 1, 100); QCOMPARE(s.login("").code, 1002); QCOMPARE(s.profile("").code, 1100); QCOMPARE(s.recharge("", 100).code, 1100); QCOMPARE(s.currentOrder("").code, 1100); QCOMPARE(s.createOrder("", {}, {}).code, 1100); }
+void socketMutationRetryReusesRequestId(){
+  QSemaphore ready;
+  quint16 port = 0;
+  QStringList requestIds;
+  QString serverFailure;
+  std::thread serverThread([&] {
+    QTcpServer server;
+    if (!server.listen(QHostAddress::LocalHost, 0)) {
+      serverFailure = server.errorString();
+      ready.release();
+      return;
+    }
+    port = server.serverPort();
+    ready.release();
+    for (int attempt = 0; attempt < 3; ++attempt) {
+      if (!server.waitForNewConnection(2000)) {
+        serverFailure = QStringLiteral("test server did not receive connection %1").arg(attempt + 1);
+        return;
+      }
+      std::unique_ptr<QTcpSocket> socket(server.nextPendingConnection());
+      FrameDecoder decoder;
+      QList<Message> messages;
+      QElapsedTimer timer;
+      timer.start();
+      while (messages.isEmpty() && timer.elapsed() < 2000) {
+        if (!socket->bytesAvailable() && !socket->waitForReadyRead(2000 - int(timer.elapsed()))) break;
+        QString frameError;
+        ErrorCode frameCode = ErrorCode::Ok;
+        messages = decoder.feed(socket->readAll(), &frameError, &frameCode);
+        if (!frameError.isEmpty()) {
+          serverFailure = frameError;
+          return;
+        }
+      }
+      if (messages.size() != 1) {
+        serverFailure = QStringLiteral("test server did not decode one request");
+        return;
+      }
+      requestIds.push_back(messages.first().id);
+      if (attempt == 0) {
+        socket->disconnectFromHost();
+        continue;
+      }
+      const qint64 balance = attempt == 1 ? 100 : 200;
+      socket->write(encodeFrame(Message{kProtocolVersion,
+                                         messages.first().id,
+                                         QStringLiteral("wallet.recharge.result"),
+                                         QJsonObject{{QStringLiteral("balance_cents"), balance},
+                                                     {QStringLiteral("transaction_id"), attempt}}}));
+      if (!socket->waitForBytesWritten(1000)) {
+        serverFailure = socket->errorString();
+        return;
+      }
+    }
+  });
+
+  ready.acquire();
+  Result<qint64> lostResponse;
+  Result<qint64> retry;
+  Result<qint64> nextOperation;
+  if (port != 0) {
+    SocketUserService service(QStringLiteral("127.0.0.1"), port, 250);
+    lostResponse = service.recharge(QStringLiteral("1"), 100);
+    retry = service.recharge(QStringLiteral("1"), 100);
+    nextOperation = service.recharge(QStringLiteral("1"), 100);
+  }
+  serverThread.join();
+
+  QVERIFY2(port != 0, qPrintable(serverFailure));
+  QVERIFY(!lostResponse.ok);
+  QCOMPARE(lostResponse.code, 1500);
+  QVERIFY2(retry.ok, qPrintable(retry.error));
+  QCOMPARE(retry.value, qint64(100));
+  QVERIFY2(nextOperation.ok, qPrintable(nextOperation.error));
+  QCOMPARE(nextOperation.value, qint64(200));
+
+  QVERIFY2(serverFailure.isEmpty(), qPrintable(serverFailure));
+  QCOMPARE(requestIds.size(), 3);
+  QCOMPARE(requestIds.at(0), requestIds.at(1));
+  QVERIFY(requestIds.at(2) != requestIds.at(1));
+}
 void socketAdapterLifecycle(){
   if (qEnvironmentVariable("EV_RUN_SOCKET_INTEGRATION") != QStringLiteral("1"))
     QSKIP("set EV_RUN_SOCKET_INTEGRATION=1 to run against the B service");

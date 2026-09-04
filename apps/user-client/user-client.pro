@@ -1,4 +1,4 @@
-QT += widgets network
+QT += widgets network concurrent
 CONFIG += c++17
 CONFIG -= app_bundle
 TEMPLATE = app

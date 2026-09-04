@@ -2,7 +2,7 @@
 
 ## Scope and conventions
 
-`database/schema/schema.sql` defines SQLite schema version `0.2` for the
+`database/schema/schema.sql` defines SQLite schema version `0.3` for the
 server-side source of truth. The schema is deliberately small enough for the
 stage-I demo while retaining the entities required by the requirements and
 the backend traceability matrix.
@@ -12,7 +12,8 @@ the backend traceability matrix.
   them for local display.
 - Monetary values are integer Chinese fen (`*_cents`), never floating point.
 - `schema_meta.schema_version` identifies the schema. Existing v0.1 databases
-  must apply `database/migrations/001_v0.1_to_v0.2.sql` before use.
+  must apply `database/migrations/001_v0.1_to_v0.2.sql`, and deployed v0.2
+  databases must apply `database/migrations/002_v0.2_to_v0.3.sql`, before use.
 - `database/seeds/dev.sql` is deterministic and may be run repeatedly.
 
 ## Entities
@@ -26,6 +27,7 @@ the backend traceability matrix.
 | `charging_orders` | Reservation, charging, billing and settlement lifecycle | `pending_reservation`, `reserved`, `charging`, `pending_settlement`, `completed`, `cancelled`, `exception` |
 | `wallet_transactions` | Append-only wallet ledger | Positive recharge/refund, negative charge; one charge entry per order |
 | `pile_restart_logs` | Auditable remote restart attempts | Result is `succeeded`, `rejected` or `failed` |
+| `request_records` | Idempotency records for state-changing requests | Request ID is unique; stores operation, parameter fingerprint and original response |
 
 `station_pile_status` and `revenue_daily` are read-only views for management
 and dashboard queries. They derive values from source tables and must not be
@@ -61,13 +63,17 @@ from selecting it. Confirming the reservation changes only the order from
 pile to `charging` atomically. Cancelling a pending or confirmed reservation
 returns its pile to `idle`. A charging or settlement exception places the pile
 in `fault` when the device is unsafe; otherwise it returns it to `idle` only
-after the service has resolved the physical session.
+after the service has resolved the physical session. Stopping charging changes
+the order to `pending_settlement` and releases the pile immediately; settlement
+only completes the financial record and increments pile counters.
 
 ## State and consistency constraints
 
-The partial unique indexes `ux_orders_one_active_user` and
-`ux_orders_one_active_pile` prevent two active orders for one user or pile,
-including `pending_reservation` requests. The service should still query first
+The partial unique index `ux_orders_one_active_user` includes
+`pending_settlement` and prevents two unfinished orders for one user. The pile
+index `ux_orders_one_active_pile` excludes `pending_settlement`, allowing a
+replacement session on a released pile while the old order awaits payment. The
+service should still query first
 to produce the protocol's stable business error (for example duplicate-order
 or pile-state conflict) and translate a unique-index violation to the same
 error.
@@ -79,8 +85,11 @@ unavailable to other users.
 These cross-row rules belong in the service transaction because SQLite CHECK
 constraints cannot inspect another table.
 
-`charging_orders` CHECK constraints require a `pending_settlement` order to
-have `ended_at`, and a `completed` order to have `started_at`, `ended_at`, and
+`charging_orders` CHECK constraints require pending/reserved orders to have a
+reservation timestamp and no charging timestamps, charging orders to have a
+start timestamp but no end/settlement timestamps, and `pending_settlement`
+orders to have start/end timestamps, a positive amount and no settlement
+timestamp. Completed orders must have `started_at`, `ended_at`, and
 `settled_at`. Its amount columns are non-null integer values, preserving the
 settled total and pricing inputs even after tariffs change. The schema also
 requires every `charge` wallet entry to reference an order and allows at most
@@ -109,14 +118,14 @@ result unless an explicitly supported free-charge policy is introduced.
    the same transaction. Confirmation changes the order to `reserved`.
    Starting charging changes the matching order/pile pair to `charging`.
    Commit or roll back all writes.
-4. **End and settle**: calculate amount from the order's stored unit rate and
-   energy; begin `IMMEDIATE`; verify order is `pending_settlement` and balance
-   is sufficient; insert one negative `charge` ledger row, decrement balance,
-   update order to `completed` with non-null `ended_at` and `settled_at`,
-   update pile to `idle` and
-   increment pile counters; before commit, verify that the ledger row's user
-   and absolute amount match the completed order. Any failure rolls back every
-   change.
+4. **Stop and settle**: stop calculates the amount, updates the order to
+   `pending_settlement`, and releases the pile in one transaction. Settlement
+   then verifies `pending_settlement` and sufficient balance, inserts one
+   negative `charge` ledger row, decrements balance, updates the order to
+   `completed` with non-null `ended_at` and `settled_at`, and increments pile
+   counters without changing its status. Before commit, verify that the ledger
+   row's user and absolute amount match the completed order. Any failure rolls
+   back every change.
 5. **Freeze/unfreeze**: update `users.status` in one transaction. Freezing
    does not cancel an existing order, but blocks new starts.
 6. **Remote restart**: begin transaction, verify administrator role and pile
@@ -146,7 +155,9 @@ audit event.
 these CHECK constraints in place, an existing v0.1 database must be backed up
 and upgraded with `scripts/migrate_db.py` while the server is stopped. The
 migration runner owns the transaction, stops on the first SQLite error, and
-rolls back before returning non-zero. The migration rebuilds the affected tables, preserves valid rows,
+rolls back before returning non-zero. The v0.1 -> v0.2 migration preserves the
+deployed v0.2 shape. The v0.2 -> v0.3 migration adds the request replay table,
+replaces the pile uniqueness rule, and preserves valid rows,
 recreates indexes/views, changes revenue grouping to `settled_at`, and updates
 `schema_meta`. Invalid legacy completed/charge rows cause the transaction to
 roll back instead of being silently accepted. Run `PRAGMA foreign_key_check`

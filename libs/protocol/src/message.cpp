@@ -63,6 +63,7 @@ QString errorCodeName(ErrorCode code)
     case ErrorCode::InvalidRequest: return QStringLiteral("INVALID_REQUEST");
     case ErrorCode::UnsupportedVersion: return QStringLiteral("UNSUPPORTED_VERSION");
     case ErrorCode::Unauthorized: return QStringLiteral("UNAUTHORIZED");
+    case ErrorCode::AccountFrozen: return QStringLiteral("ACCOUNT_FROZEN");
     case ErrorCode::NotFound: return QStringLiteral("NOT_FOUND");
     case ErrorCode::Conflict: return QStringLiteral("CONFLICT");
     case ErrorCode::InsufficientBalance: return QStringLiteral("INSUFFICIENT_BALANCE");

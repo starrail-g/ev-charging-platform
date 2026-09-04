@@ -7,6 +7,10 @@
 #include <QElapsedTimer>
 #include <QUuid>
 #include <QTcpSocket>
+#include <QMutexLocker>
+#include <QtMath>
+
+#include <cmath>
 
 namespace ev {
 using namespace ev::protocol;
@@ -26,11 +30,25 @@ SocketUserService::SocketUserService(QString host, quint16 port, int timeoutMs)
   }
 }
 
-Result<QJsonObject> SocketUserService::call(const QString &type, const QJsonObject &payload) const {
+QString SocketUserService::requestIdFor(const QString &key) const {
+  QMutexLocker locker(&requestMutex_);
+  if (!key.isEmpty()) {
+    const auto existing = pendingRequestIds_.value(key);
+    if (!existing.isEmpty()) return existing;
+  }
+  const QString id = QStringLiteral("user-%1-%2").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)).arg(nextRequestId_++);
+  if (!key.isEmpty()) {
+    if (pendingRequestIds_.size() >= 256) pendingRequestIds_.erase(pendingRequestIds_.begin());
+    pendingRequestIds_.insert(key, id);
+  }
+  return id;
+}
+
+Result<QJsonObject> SocketUserService::call(const QString &type, const QJsonObject &payload, const QString &idempotencyKey) const {
   QTcpSocket socket;
+  const QString id = requestIdFor(idempotencyKey);
   socket.connectToHost(host_, port_);
   if (!socket.waitForConnected(timeoutMs_)) return Result<QJsonObject>::failure(1500, QStringLiteral("服务连接失败，请稍后重试"));
-  const QString id = QStringLiteral("user-%1-%2").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)).arg(nextRequestId_++);
   const QByteArray frame = encodeFrame(Message{kProtocolVersion, id, type, payload});
   qint64 written = 0;
   while (written < frame.size()) {
@@ -60,6 +78,7 @@ Result<QJsonObject> SocketUserService::call(const QString &type, const QJsonObje
       if (message.type != expectedType) {
         return Result<QJsonObject>::failure(static_cast<int>(ErrorCode::InvalidRequest), QStringLiteral("服务端响应类型错误"));
       }
+      if (!idempotencyKey.isEmpty()) { QMutexLocker locker(&requestMutex_); pendingRequestIds_.remove(idempotencyKey); }
       return Result<QJsonObject>::success(message.payload);
     }
   }
@@ -139,7 +158,7 @@ Result<User> SocketUserService::updateProfile(const QString &id, const QString &
   QJsonObject payload{{QStringLiteral("user_id"), wireValue(id)}};
   if (!name.trimmed().isEmpty()) payload.insert(QStringLiteral("nickname"), name.trimmed());
   if (!avatar.isEmpty()) payload.insert(QStringLiteral("avatar_path"), avatar);
-  const auto response = call(QStringLiteral("user.profile.update"), payload);
+  const auto response = call(QStringLiteral("user.profile.update"), payload, QStringLiteral("profile:%1:%2:%3").arg(id, name.trimmed(), avatar));
   return response.ok ? userFrom(response.value) : Result<User>::failure(response.code, response.error);
 }
 Result<qint64> SocketUserService::recharge(const QString &id, qint64 cents) {
@@ -147,15 +166,29 @@ Result<qint64> SocketUserService::recharge(const QString &id, qint64 cents) {
   if (id.trimmed().isEmpty()) return Result<qint64>::failure(1100, QStringLiteral("请先登录"));
   if (wire.isEmpty()) return Result<qint64>::failure(1002, QStringLiteral("用户标识无效"));
   if (cents <= 0) return Result<qint64>::failure(1002, QStringLiteral("充值金额必须大于 0"));
-  const auto response = call(QStringLiteral("wallet.recharge"), {{QStringLiteral("user_id"), wireValue(id)}, {QStringLiteral("amount_cents"), cents}});
+  const auto response = call(QStringLiteral("wallet.recharge"), {{QStringLiteral("user_id"), wireValue(id)}, {QStringLiteral("amount_cents"), cents}}, QStringLiteral("recharge:%1:%2").arg(id).arg(cents));
   return response.ok ? Result<qint64>::success(response.value.value(QStringLiteral("balance_cents")).toInteger()) : Result<qint64>::failure(response.code, response.error);
 }
 Result<QVector<Station>> SocketUserService::stations(const QString &query) {
-  QJsonObject payload; if (!query.trimmed().isEmpty()) payload.insert(QStringLiteral("query"), query.trimmed());
-  const auto response = call(QStringLiteral("station.list"), payload); if (!response.ok) return Result<QVector<Station>>::failure(response.code, response.error);
+  QJsonObject payload;
+  if (!query.trimmed().isEmpty()) payload.insert(QStringLiteral("query"), query.trimmed());
+  const auto response = call(QStringLiteral("station.list"), payload);
+  if (!response.ok) return Result<QVector<Station>>::failure(response.code, response.error);
   const QJsonValue stationsValue = response.value.value(QStringLiteral("stations"));
   if (!stationsValue.isArray()) return Result<QVector<Station>>::failure(1002, QStringLiteral("响应缺少站点列表"));
-  QVector<Station> result; for (const auto value : stationsValue.toArray()) { const auto object = value.toObject(); const int total = object.value(QStringLiteral("pile_total")).toInt(); const int idle = object.value(QStringLiteral("pile_idle")).toInt(); const bool open = object.value(QStringLiteral("status")).toString() == QStringLiteral("active"); const double distance = object.contains(QStringLiteral("distance_km")) ? object.value(QStringLiteral("distance_km")).toDouble(-1.0) : -1.0; result.push_back({QString::number(object.value(QStringLiteral("id")).toInteger()), object.value(QStringLiteral("name")).toString(), object.value(QStringLiteral("address")).toString(), object.value(QStringLiteral("latitude")).toDouble(), object.value(QStringLiteral("longitude")).toDouble(), distance, open, idle, 0, total}); }
+  const QString filter = query.trimmed();
+  QVector<Station> result;
+  for (const auto value : stationsValue.toArray()) {
+    const auto object = value.toObject();
+    const QString name = object.value(QStringLiteral("name")).toString();
+    const QString address = object.value(QStringLiteral("address")).toString();
+    if (!filter.isEmpty() && !name.contains(filter, Qt::CaseInsensitive) && !address.contains(filter, Qt::CaseInsensitive)) continue;
+    const int total = object.value(QStringLiteral("pile_total")).toInt();
+    const int idle = object.value(QStringLiteral("pile_idle")).toInt();
+    const bool open = object.value(QStringLiteral("status")).toString() == QStringLiteral("active");
+    const double distance = object.contains(QStringLiteral("distance_km")) ? object.value(QStringLiteral("distance_km")).toDouble(-1.0) : -1.0;
+    result.push_back({QString::number(object.value(QStringLiteral("id")).toInteger()), name, address, object.value(QStringLiteral("latitude")).toDouble(), object.value(QStringLiteral("longitude")).toDouble(), distance, open, idle, 0, total});
+  }
   return Result<QVector<Station>>::success(result);
 }
 Result<QVector<Pile>> SocketUserService::piles(const QString &id) {
@@ -165,15 +198,30 @@ Result<QVector<Pile>> SocketUserService::piles(const QString &id) {
   QVector<Pile> result; for (const auto value : pilesValue.toArray()) { const auto object = value.toObject(); const QString status = object.value(QStringLiteral("status")).toString(); PileStatus state = PileStatus::Offline; if (status == QStringLiteral("idle")) state = PileStatus::Idle; else if (status == QStringLiteral("reserved")) state = PileStatus::Reserved; else if (status == QStringLiteral("charging")) state = PileStatus::Charging; else if (status == QStringLiteral("fault")) state = PileStatus::Fault; const qint64 price = object.value(QStringLiteral("unit_price_cents_per_kwh")).toInteger(); result.push_back({QString::number(object.value(QStringLiteral("id")).toInteger()), object.value(QStringLiteral("pile_code")).toString(), object.value(QStringLiteral("pile_type")).toString(), state, object.value(QStringLiteral("power_kw")).toDouble(), price, QString::number(object.value(QStringLiteral("station_id")).toInteger())}); }
   return Result<QVector<Pile>>::success(result);
 }
-Result<Route> SocketUserService::route(double, double, const Station &, RouteMode) { return Result<Route>::failure(1002, QStringLiteral("路线属于腾讯地图外部服务，不通过 Socket v1")); }
+Result<Route> SocketUserService::route(double fromLat, double fromLng, const Station &target, RouteMode mode) {
+  if (!std::isfinite(fromLat) || !std::isfinite(fromLng) || fromLat < -90.0 || fromLat > 90.0 || fromLng < -180.0 || fromLng > 180.0
+      || target.id.isEmpty() || !std::isfinite(target.latitude) || !std::isfinite(target.longitude)
+      || target.latitude < -90.0 || target.latitude > 90.0 || target.longitude < -180.0 || target.longitude > 180.0) {
+    return Result<Route>::failure(1002, QStringLiteral("路线坐标无效"));
+  }
+  const double latScale = 111.0;
+  const double lngScale = 111.0 * qCos(qDegreesToRadians(fromLat));
+  const double dx = (target.longitude - fromLng) * lngScale;
+  const double dy = (target.latitude - fromLat) * latScale;
+  const double distance = qMax(0.1, qSqrt(dx * dx + dy * dy));
+  const bool driving = mode == RouteMode::Driving;
+  const int duration = qMax(1, qRound(driving ? distance / 40.0 * 60.0 : distance / 5.0 * 60.0));
+  const QString modeText = driving ? QStringLiteral("驾车") : QStringLiteral("步行");
+  return Result<Route>::success({true, mode, distance, duration, QStringLiteral("离线 Mock %1 路线：前往 %2").arg(modeText, target.name)});
+}
 Result<Order> SocketUserService::currentOrder(const QString &id) { const QString wire = wireId(id); if (id.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (wire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户标识无效")); const auto response = call(QStringLiteral("order.active.get"), {{QStringLiteral("user_id"), wireValue(id)}}); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
 Result<QVector<Order>> SocketUserService::orderHistory(const QString &userId) { const QString wire = wireId(userId); if (userId.trimmed().isEmpty()) return Result<QVector<Order>>::failure(1100, QStringLiteral("请先登录")); if (wire.isEmpty()) return Result<QVector<Order>>::failure(1002, QStringLiteral("用户标识无效")); const auto response = call(QStringLiteral("order.history.list"), {{QStringLiteral("user_id"), wireValue(userId)}}); return response.ok ? ordersFrom(response.value) : Result<QVector<Order>>::failure(response.code, response.error); }
-Result<Order> SocketUserService::createOrder(const QString &userId, const Station &, const Pile &pile) { const QString userWire = wireId(userId); const QString pileWire = wireId(pile.id); if (userId.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (userWire.isEmpty() || pileWire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户或充电桩标识无效")); const auto response = call(QStringLiteral("reservation.create"), {{QStringLiteral("user_id"), wireValue(userId)}, {QStringLiteral("pile_id"), wireValue(pile.id)}}); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
-Result<Order> SocketUserService::confirmReservation(const QString &userId, const QString &orderId) { const QString userWire = wireId(userId); const QString orderWire = wireId(orderId); if (userId.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (userWire.isEmpty() || orderWire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户或订单标识无效")); const auto response = call(QStringLiteral("reservation.confirm"), {{QStringLiteral("user_id"), wireValue(userId)}, {QStringLiteral("order_id"), wireValue(orderId)}}); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
-Result<Order> SocketUserService::cancelReservation(const QString &userId, const QString &orderId) { const QString userWire = wireId(userId); const QString orderWire = wireId(orderId); if (userId.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (userWire.isEmpty() || orderWire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户或订单标识无效")); const auto response = call(QStringLiteral("reservation.cancel"), {{QStringLiteral("user_id"), wireValue(userId)}, {QStringLiteral("order_id"), wireValue(orderId)}}); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
-Result<Order> SocketUserService::startCharging(const QString &userId, const QString &orderId) { const QString userWire = wireId(userId); const QString orderWire = wireId(orderId); if (userId.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (userWire.isEmpty() || orderWire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户或订单标识无效")); const auto response = call(QStringLiteral("charging.start"), {{QStringLiteral("user_id"), wireValue(userId)}, {QStringLiteral("order_id"), wireValue(orderId)}}); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
-Result<Order> SocketUserService::startChargingDirect(const QString &userId, const QString &pileId) { const QString userWire = wireId(userId); const QString pileWire = wireId(pileId); if (userId.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (userWire.isEmpty() || pileWire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户或充电桩标识无效")); const auto response = call(QStringLiteral("charging.start"), {{QStringLiteral("user_id"), wireValue(userId)}, {QStringLiteral("pile_id"), wireValue(pileId)}}); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
-Result<Order> SocketUserService::stopCharging(const QString &userId, const QString &orderId) { const QString userWire = wireId(userId); const QString orderWire = wireId(orderId); if (userId.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (userWire.isEmpty() || orderWire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户或订单标识无效")); const auto response = call(QStringLiteral("charging.stop"), {{QStringLiteral("user_id"), wireValue(userId)}, {QStringLiteral("order_id"), wireValue(orderId)}}); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
-Result<Order> SocketUserService::settle(const QString &userId, const QString &orderId) { const QString userWire = wireId(userId); const QString orderWire = wireId(orderId); if (userId.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (userWire.isEmpty() || orderWire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户或订单标识无效")); const auto response = call(QStringLiteral("charging.settle"), {{QStringLiteral("user_id"), wireValue(userId)}, {QStringLiteral("order_id"), wireValue(orderId)}}); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
+Result<Order> SocketUserService::createOrder(const QString &userId, const Station &, const Pile &pile) { const QString userWire = wireId(userId); const QString pileWire = wireId(pile.id); if (userId.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (userWire.isEmpty() || pileWire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户或充电桩标识无效")); const auto response = call(QStringLiteral("reservation.create"), {{QStringLiteral("user_id"), wireValue(userId)}, {QStringLiteral("pile_id"), wireValue(pile.id)}}, QStringLiteral("reservation.create:%1:%2").arg(userId, pile.id)); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
+Result<Order> SocketUserService::confirmReservation(const QString &userId, const QString &orderId) { const QString userWire = wireId(userId); const QString orderWire = wireId(orderId); if (userId.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (userWire.isEmpty() || orderWire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户或订单标识无效")); const auto response = call(QStringLiteral("reservation.confirm"), {{QStringLiteral("user_id"), wireValue(userId)}, {QStringLiteral("order_id"), wireValue(orderId)}}, QStringLiteral("reservation.confirm:%1:%2").arg(userId, orderId)); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
+Result<Order> SocketUserService::cancelReservation(const QString &userId, const QString &orderId) { const QString userWire = wireId(userId); const QString orderWire = wireId(orderId); if (userId.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (userWire.isEmpty() || orderWire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户或订单标识无效")); const auto response = call(QStringLiteral("reservation.cancel"), {{QStringLiteral("user_id"), wireValue(userId)}, {QStringLiteral("order_id"), wireValue(orderId)}}, QStringLiteral("reservation.cancel:%1:%2").arg(userId, orderId)); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
+Result<Order> SocketUserService::startCharging(const QString &userId, const QString &orderId) { const QString userWire = wireId(userId); const QString orderWire = wireId(orderId); if (userId.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (userWire.isEmpty() || orderWire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户或订单标识无效")); const auto response = call(QStringLiteral("charging.start"), {{QStringLiteral("user_id"), wireValue(userId)}, {QStringLiteral("order_id"), wireValue(orderId)}}, QStringLiteral("charging.start.order:%1:%2").arg(userId, orderId)); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
+Result<Order> SocketUserService::startChargingDirect(const QString &userId, const QString &pileId) { const QString userWire = wireId(userId); const QString pileWire = wireId(pileId); if (userId.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (userWire.isEmpty() || pileWire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户或充电桩标识无效")); const auto response = call(QStringLiteral("charging.start"), {{QStringLiteral("user_id"), wireValue(userId)}, {QStringLiteral("pile_id"), wireValue(pileId)}}, QStringLiteral("charging.start.pile:%1:%2").arg(userId, pileId)); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
+Result<Order> SocketUserService::stopCharging(const QString &userId, const QString &orderId) { const QString userWire = wireId(userId); const QString orderWire = wireId(orderId); if (userId.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (userWire.isEmpty() || orderWire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户或订单标识无效")); const auto response = call(QStringLiteral("charging.stop"), {{QStringLiteral("user_id"), wireValue(userId)}, {QStringLiteral("order_id"), wireValue(orderId)}}, QStringLiteral("charging.stop:%1:%2").arg(userId, orderId)); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
+Result<Order> SocketUserService::settle(const QString &userId, const QString &orderId) { const QString userWire = wireId(userId); const QString orderWire = wireId(orderId); if (userId.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (userWire.isEmpty() || orderWire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户或订单标识无效")); const auto response = call(QStringLiteral("charging.settle"), {{QStringLiteral("user_id"), wireValue(userId)}, {QStringLiteral("order_id"), wireValue(orderId)}}, QStringLiteral("charging.settle:%1:%2").arg(userId, orderId)); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
 
 } // namespace ev
