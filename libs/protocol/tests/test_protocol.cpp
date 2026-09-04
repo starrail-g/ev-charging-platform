@@ -37,6 +37,7 @@ int main(int argc, char **argv)
     result = decoder.feed(badBatch, &error, &errorCode);
     if (result.size() != 1 || result.first().id != good.id
         || error.isEmpty() || errorCode != ErrorCode::InvalidJson) return 7;
+    if (errorCodeName(ErrorCode::AccountFrozen) != QStringLiteral("ACCOUNT_FROZEN")) return 8;
     qInfo() << "protocol tests passed";
     return 0;
 }

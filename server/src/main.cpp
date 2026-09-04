@@ -143,6 +143,7 @@ private:
         ErrorCode code = ErrorCode::DatabaseError;
         if (kind == ErrorKind::InvalidArgument) code = ErrorCode::InvalidRequest;
         else if (kind == ErrorKind::Unauthorized) code = ErrorCode::Unauthorized;
+        else if (kind == ErrorKind::AccountFrozen) code = ErrorCode::AccountFrozen;
         else if (kind == ErrorKind::NotFound) code = ErrorCode::NotFound;
         else if (kind == ErrorKind::Conflict) code = ErrorCode::Conflict;
         else if (kind == ErrorKind::InsufficientBalance) code = ErrorCode::InsufficientBalance;

@@ -80,6 +80,7 @@ Malformed frames without a usable request ID use `id: "server"`.
 | 1002 | `INVALID_REQUEST` | Envelope or operation payload is invalid, or type is unsupported. |
 | 1003 | `UNSUPPORTED_VERSION` | `v` is not supported by this server. |
 | 1100 | `UNAUTHORIZED` | Missing, invalid, or insufficient authentication. |
+| 1101 | `ACCOUNT_FROZEN` | User is frozen and the requested operation is not permitted. |
 | 1200 | `NOT_FOUND` | Requested resource does not exist. |
 | 1201 | `CONFLICT` | State transition is not permitted, including duplicate active orders. |
 | 1202 | `INSUFFICIENT_BALANCE` | Wallet balance cannot cover settlement. |
@@ -116,7 +117,7 @@ The following names and payloads are reserved for v1. Result types append
 | `admin.station.list` | optional `query` | `admin.station.list.result`: `stations` |
 | `admin.station.create` | `name`, `address`, `latitude`, `longitude`, `pile_count` | `admin.station.create.result`: `station` |
 | `admin.pile.restart` | `pile_id` | `admin.pile.restart.result`: `pile` |
-| `admin.user.list` | optional `phone_query` | `admin.user.list.result`: `users` |
+| `admin.user.list` | optional `phone_query` | `admin.user.list.result`: `users` (each user includes `active_order_status`) |
 | `admin.user.status.set` | `user_id`, `status` (`active` or `frozen`) | `admin.user.status.set.result`: `user` |
 
 Unless an operation says otherwise, object IDs are integers. Money is always
@@ -125,7 +126,9 @@ value. Timestamps are UTC ISO-8601 strings such as
 `2026-09-01T10:15:00Z`.
 
 The `user` object must at least contain `id`, `phone`, `nickname`,
-`balance_cents`, and `status`. The `station`, `pile`, `order`, `admin`, and
+`balance_cents`, and `status`. In `admin.user.list`, it also contains
+`active_order_status`, one of `pending_reservation`, `reserved`, `charging`,
+`pending_settlement`, or JSON `null`. The `station`, `pile`, `order`, `admin`, and
 `statistics` fields are finalized with the database schema and documented in
 the API reference before their handlers are enabled.
 
@@ -154,23 +157,27 @@ Order status values are `pending_reservation`, `reserved`, `charging`,
   `wallet.recharge`. Read operations do not require persistence records.
 - Request IDs are currently globally unique in the server database across
   users and operations; clients must not reuse an ID for another request.
-- A frozen user receives `UNAUTHORIZED` for profile reads/updates and wallet
-  recharge. A missing user receives `NOT_FOUND`; invalid field types or values
-  receive `INVALID_REQUEST`. Persistence details are logged server-side and
-  are never included in the public `DATABASE_ERROR` response.
-- Frozen-user validation takes precedence over a successful replay record for
-  profile updates and wallet recharge. A replay while frozen returns
-  `UNAUTHORIZED`; after unfreezing, the original successful response is
-  replayed without a second write.
-- Settlement must atomically update the order, pile, wallet balance, and
-  wallet transaction. Insufficient balance returns `INSUFFICIENT_BALANCE`
-  without partial updates.
+- Login always succeeds for an existing frozen account and returns
+  `user.status: "frozen"`. Frozen users are blocked only from
+  `reservation.create`, `reservation.confirm`, `charging.start` (both direct
+  and reservation paths), and `wallet.recharge`, which return `ACCOUNT_FROZEN`
+  (1101). Read operations, `profile.update`, and cleanup/payment operations
+  (`reservation.cancel`, `charging.stop`, `charging.settle`) remain allowed.
+  A missing user receives `NOT_FOUND`; invalid field types or values receive
+  `INVALID_REQUEST`. Persistence details are logged server-side and are never
+  included in the public `DATABASE_ERROR` response.
+- Idempotency replay takes precedence over the frozen check: a matching
+  successful request record returns its original response even after the user
+  is frozen. A new request is checked for frozen status before execution.
+- Settlement must atomically update the order, wallet balance, charge ledger,
+  and pile counters. `charging.stop` first changes the order to
+  `pending_settlement` and releases the pile (`charging` -> `idle`) in the same
+  transaction. Settlement never changes pile status, so a replacement session
+  cannot be disturbed. Insufficient balance returns `INSUFFICIENT_BALANCE`
+  without changing balance, order, or charge ledger; the pile remains idle.
 - `charging.start` accepts either a confirmed reservation `order_id` or an
   idle `pile_id` for direct start. The direct path creates the charging order
   and changes the pile from `idle` to `charging` in one transaction.
-- Frozen users cannot create or confirm reservations, start charging, or
-  settle an order. A user must be `active` for each of those operations;
-  existing in-progress orders are not silently resumed after a freeze.
 - A client connection is not an authentication session in v1. Until a
   token/session design is explicitly added, handlers verify the IDs and
   credentials supplied by their payloads. Administrative request access is

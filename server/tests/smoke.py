@@ -71,6 +71,9 @@ def assert_error(response, code):
     return response["payload"]
 
 
+ACCOUNT_FROZEN = 1101
+
+
 def database_row(query, parameters=()):
     with sqlite3.connect(DATABASE_PATH, timeout=5) as connection:
         return connection.execute(query, parameters).fetchone()
@@ -174,8 +177,26 @@ assert isinstance(recharged["payload"]["transaction_id"], int)
 assert recharged["payload"]["transaction_id"] > 0
 assert exchange(recharge) == recharged
 execute_database("UPDATE users SET status = 'frozen' WHERE id = %d" % new_user["id"])
-assert_error(exchange(profile_update), 1100)
-assert_error(exchange(recharge), 1100)
+# Successful state-changing requests are replayed before any new business
+# operation is evaluated, so freezing the account does not duplicate either
+# write and does not change the original response.
+assert exchange(profile_update) == updated_profile
+assert exchange(recharge) == recharged
+# A new profile update is still allowed for frozen accounts; a new recharge is
+# rejected with the stable account-frozen error.
+frozen_profile_update = request("smoke-profile-update-frozen", "user.profile.update", {
+    "user_id": new_user["id"], "nickname": "冻结状态仍可改资料"
+})
+frozen_updated = exchange(frozen_profile_update)
+assert frozen_updated["type"] == "user.profile.update.result"
+assert frozen_updated["payload"]["user"]["status"] == "frozen"
+assert frozen_updated["payload"]["user"]["nickname"] == "冻结状态仍可改资料"
+assert_error(exchange(request("smoke-recharge-frozen-new", "wallet.recharge", {
+    "user_id": new_user["id"], "amount_cents": 1
+})), ACCOUNT_FROZEN)
+assert exchange(request("smoke-profile-get-frozen", "user.profile.get", {
+    "user_id": new_user["id"]
+}))["payload"]["user"]["status"] == "frozen"
 execute_database("UPDATE users SET status = 'active' WHERE id = %d" % new_user["id"])
 assert exchange(profile_update) == updated_profile
 assert exchange(recharge) == recharged
@@ -286,22 +307,52 @@ assert cancelled["payload"]["order"]["status"] == "cancelled"
 assert cancelled["payload"]["pile"]["status"] == "idle"
 assert exchange(cancel) == cancelled
 
+# A frozen user may cancel an existing reservation, but cannot confirm it or
+# create a new reservation.
+frozen_reservation = request("smoke-frozen-reservation-cancel", "reservation.create", {
+    "user_id": reservation_user["id"], "pile_id": 101
+})
+frozen_created = exchange(frozen_reservation)
+frozen_order_id = frozen_created["payload"]["order"]["id"]
+execute_database("UPDATE users SET status = 'frozen' WHERE id = %d" % reservation_user["id"])
+assert_error(exchange(request("smoke-frozen-reservation-confirm", "reservation.confirm", {
+    "user_id": reservation_user["id"], "order_id": frozen_order_id
+})), ACCOUNT_FROZEN)
+frozen_cancel = exchange(request("smoke-frozen-reservation-cancel-action", "reservation.cancel", {
+    "user_id": reservation_user["id"], "order_id": frozen_order_id
+}))
+assert frozen_cancel["type"] == "reservation.cancel.result", frozen_cancel
+assert frozen_cancel["payload"]["pile"]["status"] == "idle", frozen_cancel
+assert_error(exchange(request("smoke-frozen-reservation-create", "reservation.create", {
+    "user_id": reservation_user["id"], "pile_id": 101
+})), ACCOUNT_FROZEN)
+execute_database("UPDATE users SET status = 'active' WHERE id = %d" % reservation_user["id"])
+
 # Frozen users are rejected before pile allocation and direct start is valid.
 frozen = exchange(request("smoke-login-frozen", "user.login", {"phone": "13700137000"}))["payload"]["user"]
 assert frozen["status"] == "frozen"
-assert_error(exchange(request("smoke-frozen-profile-get", "user.profile.get", {
+frozen_profile = exchange(request("smoke-frozen-profile-get", "user.profile.get", {
     "user_id": frozen["id"]
-})), 1100)
-assert_error(exchange(request("smoke-frozen-profile-update", "user.profile.update", {
-    "user_id": frozen["id"], "nickname": "不应写入"
-})), 1100)
+}))
+assert frozen_profile["type"] == "user.profile.get.result"
+assert frozen_profile["payload"]["user"]["status"] == "frozen"
+frozen_profile_update = exchange(request("smoke-frozen-profile-update", "user.profile.update", {
+    "user_id": frozen["id"], "nickname": "冻结用户资料可更新"
+}))
+assert frozen_profile_update["type"] == "user.profile.update.result"
+assert frozen_profile_update["payload"]["user"]["nickname"] == "冻结用户资料可更新"
 assert_error(exchange(request("smoke-frozen-recharge", "wallet.recharge", {
     "user_id": frozen["id"], "amount_cents": 100
-})), 1100)
+})), ACCOUNT_FROZEN)
 assert database_row("SELECT nickname, balance_cents FROM users WHERE id = ?", (frozen["id"],)) \
-    == ("演示冻结用户", 0)
-frozen_error = assert_error(exchange(request("smoke-frozen-reservation", "reservation.create", {"user_id": frozen["id"], "pile_id": 101})), 1201)
-assert "frozen" in frozen_error["message"]
+    == ("冻结用户资料可更新", 0)
+assert exchange(request("smoke-frozen-active-empty", "order.active.get", {
+    "user_id": frozen["id"]
+}))["payload"]["order"] is None
+assert exchange(request("smoke-frozen-history-empty", "order.history.list", {
+    "user_id": frozen["id"]
+}))["payload"]["orders"] == []
+assert_error(exchange(request("smoke-frozen-reservation", "reservation.create", {"user_id": frozen["id"], "pile_id": 101})), ACCOUNT_FROZEN)
 
 direct_user = exchange(request("smoke-login-direct", "user.login", {"phone": "13512345678"}))["payload"]["user"]
 direct = request("smoke-direct-start", "charging.start", {"user_id": direct_user["id"], "pile_id": 101})
@@ -318,7 +369,47 @@ assert direct_active["payload"]["order"]["status"] == "pending_settlement"
 direct_after_failure = exchange(request("smoke-direct-login-after-failure", "user.login", {"phone": "13512345678"}))
 assert direct_after_failure["payload"]["user"]["balance_cents"] == 0
 direct_pile = exchange(request("smoke-direct-pile", "pile.list", {"station_id": 1}))
-assert any(pile["id"] == 101 and pile["status"] == "charging" for pile in direct_pile["payload"]["piles"])
+assert any(pile["id"] == 101 and pile["status"] == "idle" for pile in direct_pile["payload"]["piles"])
+
+# Frozen accounts may stop and settle an order that was already started.  The
+# stop operation releases the pile immediately; settlement must then leave the
+# already-idle pile untouched.
+frozen_lifecycle = exchange(request("smoke-login-frozen-lifecycle", "user.login", {
+    "phone": "13412345678"
+}))["payload"]["user"]
+assert exchange(request("smoke-frozen-lifecycle-recharge", "wallet.recharge", {
+    "user_id": frozen_lifecycle["id"], "amount_cents": 1000
+}))["type"] == "wallet.recharge.result"
+frozen_start = exchange(request("smoke-frozen-lifecycle-start", "charging.start", {
+    "user_id": frozen_lifecycle["id"], "pile_id": 101
+}))
+assert frozen_start["type"] == "charging.start.result"
+frozen_lifecycle_order_id = frozen_start["payload"]["order"]["id"]
+execute_database("UPDATE users SET status = 'frozen' WHERE id = %d" % frozen_lifecycle["id"])
+frozen_active = exchange(request("smoke-frozen-lifecycle-active", "order.active.get", {
+    "user_id": frozen_lifecycle["id"]
+}))
+assert frozen_active["payload"]["order"]["id"] == frozen_lifecycle_order_id
+assert frozen_active["payload"]["order"]["status"] == "charging"
+frozen_stop = exchange(request("smoke-frozen-lifecycle-stop", "charging.stop", {
+    "user_id": frozen_lifecycle["id"], "order_id": frozen_lifecycle_order_id,
+    "ended_at": frozen_start["payload"]["order"]["started_at"]
+}))
+assert frozen_stop["type"] == "charging.stop.result"
+assert frozen_stop["payload"]["order"]["status"] == "pending_settlement"
+frozen_pile_after_stop = exchange(request("smoke-frozen-lifecycle-pile-after-stop", "pile.list", {
+    "station_id": 1
+}))
+assert any(pile["id"] == 101 and pile["status"] == "idle"
+           for pile in frozen_pile_after_stop["payload"]["piles"])
+frozen_settled = exchange(request("smoke-frozen-lifecycle-settle", "charging.settle", {
+    "user_id": frozen_lifecycle["id"], "order_id": frozen_lifecycle_order_id
+}))
+assert frozen_settled["type"] == "charging.settle.result"
+assert frozen_settled["payload"]["order"]["status"] == "completed"
+assert exchange(request("smoke-frozen-lifecycle-history", "order.history.list", {
+    "user_id": frozen_lifecycle["id"]
+}))["payload"]["orders"][0]["id"] == frozen_lifecycle_order_id
 
 # Valid frames already parsed in a batch are dispatched before malformed input.
 batch = exchange_batch([

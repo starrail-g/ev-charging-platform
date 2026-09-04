@@ -118,8 +118,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_orders_one_active_user
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_orders_one_active_pile
     ON charging_orders(pile_id)
-    WHERE status IN ('pending_reservation', 'reserved', 'charging',
-                     'pending_settlement');
+    WHERE status IN ('pending_reservation', 'reserved', 'charging');
 
 CREATE TABLE IF NOT EXISTS wallet_transactions (
     id INTEGER PRIMARY KEY,

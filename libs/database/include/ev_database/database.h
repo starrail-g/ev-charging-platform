@@ -12,6 +12,7 @@ enum class ErrorKind {
     None,
     InvalidArgument,
     Unauthorized,
+    AccountFrozen,
     NotFound,
     Conflict,
     InsufficientBalance,

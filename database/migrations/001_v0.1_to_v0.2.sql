@@ -134,8 +134,7 @@ CREATE UNIQUE INDEX ux_orders_one_active_user
                      'pending_settlement');
 CREATE UNIQUE INDEX ux_orders_one_active_pile
     ON charging_orders(pile_id)
-    WHERE status IN ('pending_reservation', 'reserved', 'charging',
-                     'pending_settlement');
+    WHERE status IN ('pending_reservation', 'reserved', 'charging');
 CREATE UNIQUE INDEX ux_wallet_one_charge_per_order
     ON wallet_transactions(order_id)
     WHERE transaction_type = 'charge' AND order_id IS NOT NULL;

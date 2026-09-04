@@ -89,6 +89,21 @@ stop = exchange(request("concurrent-stop", "charging.stop",
                         {"user_id": 2, "order_id": 1002,
                          "ended_at": "2026-09-01T00:32:00Z"}))
 assert stop["type"] == "charging.stop.result", stop
+assert stop["payload"]["order"]["status"] == "pending_settlement", stop
+stopped_piles = exchange(request("concurrent-stopped-pile", "pile.list",
+                                  {"station_id": 1}))
+assert next(pile for pile in stopped_piles["payload"]["piles"]
+            if pile["id"] == 102)["status"] == "idle", stopped_piles
+
+# Once the old order is stopped its pile is immediately available.  Start a
+# new order for a different user on that same pile while the old order remains
+# pending settlement.  Settling the old order must not release or otherwise
+# mutate the new order's pile.
+replacement_start = exchange(request("concurrent-replacement-start", "charging.start",
+                                     {"user_id": user_a, "pile_id": 102}))
+assert replacement_start["type"] == "charging.start.result", replacement_start
+replacement_order_id = replacement_start["payload"]["order"]["id"]
+assert replacement_start["payload"]["pile"]["status"] == "charging", replacement_start
 settle_results = parallel([
     request("concurrent-settle-a", "charging.settle",
             {"user_id": 2, "order_id": 1002}),
@@ -103,6 +118,27 @@ assert_conflict(next(result for result in settle_results
 settled = settle_successes[0]["payload"]
 assert settled["order"]["status"] == "completed", settled
 assert settled["balance_cents"] == 4996, settled
+
+replacement_active = exchange(request("concurrent-replacement-active", "order.active.get",
+                                      {"user_id": user_a}))
+assert replacement_active["payload"]["order"]["id"] == replacement_order_id, replacement_active
+assert replacement_active["payload"]["order"]["status"] == "charging", replacement_active
+replacement_piles = exchange(request("concurrent-replacement-pile", "pile.list",
+                                     {"station_id": 1}))
+replacement_pile = next(pile for pile in replacement_piles["payload"]["piles"]
+                        if pile["id"] == 102)
+assert replacement_pile["status"] == "charging", replacement_pile
+
+# Clean up the replacement order without settling it; this also verifies that
+# the pile can be stopped normally after the concurrent old-order settlement.
+replacement_stop = exchange(request("concurrent-replacement-stop", "charging.stop",
+                                    {"user_id": user_a, "order_id": replacement_order_id,
+                                     "ended_at": replacement_start["payload"]["order"]["started_at"]}))
+assert replacement_stop["type"] == "charging.stop.result", replacement_stop
+replacement_piles_after = exchange(request("concurrent-replacement-pile-after-stop", "pile.list",
+                                            {"station_id": 1}))
+assert next(pile for pile in replacement_piles_after["payload"]["piles"]
+            if pile["id"] == 102)["status"] == "idle"
 
 history = exchange(request("concurrent-history", "order.history.list", {"user_id": 2}))
 completed = [order for order in history["payload"]["orders"] if order["id"] == 1002]

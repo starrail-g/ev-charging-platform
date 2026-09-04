@@ -21,7 +21,7 @@ real Socket/SQLite client integration.
 - Profile updates persist nickname/avatar/timestamps. Recharge atomically
   updates the non-negative integer-cent balance, writes a recharge ledger row,
   and stores the replay response. Injected UPDATE/INSERT failures prove full
-  rollback; frozen-user checks take precedence over successful replay.
+  rollback; successful idempotent replay takes precedence over frozen checks.
 - A user client is a deterministic Qt Widgets + Mock implementation. It has no
   `SocketUserService`; real DTO/protocol integration remains pending.
 - C admin client has a qmake shell, repository boundary, Mock data source,
@@ -63,7 +63,9 @@ owns Socket dispatch and error mapping.
 ## Known Issues
 
 - Existing in-progress orders are not automatically closed when an
-  administrator freezes a user; freeze currently blocks later lifecycle calls.
+  administrator freezes a user. Frozen accounts can still use read and
+  cleanup/settlement operations; only new reservation/start/recharge requests
+  are blocked.
 - Existing databases already initialized at v0.2 do not receive the new
   timestamp checks automatically; an in-place follow-up migration is needed
   before production rollout.
@@ -82,6 +84,13 @@ owns Socket dispatch and error mapping.
   operations; clients must not reuse an ID for another request.
 - Revenue reports use `settled_at` because revenue is final at settlement;
   `ended_at` remains the physical charging-end timestamp.
+- `charging.stop` releases the pile immediately; `charging.settle` only performs
+  financial completion and increments counters, leaving replacement sessions
+  untouched. User-level active-order uniqueness includes `pending_settlement`,
+  while pile-level uniqueness excludes it.
+- Frozen policy is explicit: login succeeds with `status=frozen`; new
+  reservation/confirm/start/recharge return `ACCOUNT_FROZEN` (1101), while reads,
+  profile updates, cancel, stop and settle remain allowed; replay wins first.
 - Build output and local process material stay outside the repository. Real
   credentials and runtime databases are never committed.
 
@@ -91,8 +100,9 @@ owns Socket dispatch and error mapping.
   and resolved configuration/state-document merge conflicts.
 - Verified the latest review: direct start and frozen-user protections exist;
   state/time constraints, service-fee calculation, concurrency evidence and
-  history contract details were corrected in this work; asynchronous database
-  dispatch remains open.
+  history contract details were corrected in this work; stop/settle pile
+  semantics and frozen-user policy are now aligned across code, tests and docs;
+  asynchronous database dispatch remains open.
 - Added `user.profile.get`, `user.profile.update`, and `wallet.recharge` with
   atomic persistence, replay, failure-injection rollback tests, and API docs;
   validated qmake6 server/protocol/user-client builds, smoke, and concurrency.

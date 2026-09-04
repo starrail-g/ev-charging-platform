@@ -173,6 +173,42 @@ class SchemaV02Test(unittest.TestCase):
             UPDATE wallet_transactions SET amount_cents=-1 WHERE id=5002
         """)
 
+    def test_pending_settlement_releases_pile_but_locks_user(self):
+        self.db.execute("UPDATE charging_piles SET status='idle' WHERE id=202")
+        self.db.execute("""
+            INSERT INTO users
+                (id, phone, nickname, balance_cents, status, created_at, updated_at)
+            VALUES (10, '13000000010', 'test-user-10', 0, 'active', 't0', 't0'),
+                   (11, '13000000011', 'test-user-11', 0, 'active', 't0', 't0')
+        """)
+        self.db.execute("""
+            INSERT INTO charging_orders
+                (id, order_no, user_id, pile_id, status, started_at, ended_at,
+                 energy_wh, unit_price_cents_per_kwh, total_amount_cents,
+                 created_at, updated_at)
+            VALUES (9200, 'PENDING-SETTLEMENT', 10, 202, 'pending_settlement',
+                    '2026-09-01T00:00:00Z', '2026-09-01T00:01:00Z',
+                    1, 95, 1, 't0', 't1')
+        """)
+        # The pile index excludes pending_settlement, so a different user can
+        # start a replacement session on the released pile.
+        self.db.execute("""
+            INSERT INTO charging_orders
+                (id, order_no, user_id, pile_id, status, started_at,
+                 unit_price_cents_per_kwh, created_at, updated_at)
+            VALUES (9201, 'REPLACEMENT-CHARGING', 11, 202, 'charging',
+                    '2026-09-01T00:02:00Z', 95, 't0', 't1')
+        """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute("""
+                INSERT INTO charging_orders
+                    (id, order_no, user_id, pile_id, status, started_at,
+                     unit_price_cents_per_kwh, created_at, updated_at)
+                VALUES (9202, 'SECOND-USER-10', 10, 101, 'charging',
+                        '2026-09-01T00:03:00Z', 95, 't0', 't1')
+            """)
+        self.db.rollback()
+
 
 class MigrationTest(unittest.TestCase):
     def run_migration(self, database):
@@ -225,6 +261,14 @@ class MigrationTest(unittest.TestCase):
             self.assertEqual(
                 db.execute("PRAGMA foreign_key_check").fetchall(), []
             )
+            indexes = {
+                name: sql for name, sql in db.execute(
+                    "SELECT name, sql FROM sqlite_master WHERE type='index' "
+                    "AND name IN ('ux_orders_one_active_user', 'ux_orders_one_active_pile')"
+                )
+            }
+            self.assertIn("'pending_settlement'", indexes["ux_orders_one_active_user"])
+            self.assertNotIn("'pending_settlement'", indexes["ux_orders_one_active_pile"])
             db.execute("UPDATE charging_piles SET status='reserved' WHERE id=1")
 
     def test_migration_copy_failure_preserves_legacy_tables(self):

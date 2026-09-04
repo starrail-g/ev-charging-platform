@@ -15,6 +15,7 @@ enum class ErrorCode {
     InvalidRequest = 1002,
     UnsupportedVersion = 1003,
     Unauthorized = 1100,
+    AccountFrozen = 1101,
     NotFound = 1200,
     Conflict = 1201,
     InsufficientBalance = 1202,

@@ -62,13 +62,17 @@ from selecting it. Confirming the reservation changes only the order from
 pile to `charging` atomically. Cancelling a pending or confirmed reservation
 returns its pile to `idle`. A charging or settlement exception places the pile
 in `fault` when the device is unsafe; otherwise it returns it to `idle` only
-after the service has resolved the physical session.
+after the service has resolved the physical session. Stopping charging changes
+the order to `pending_settlement` and releases the pile immediately; settlement
+only completes the financial record and increments pile counters.
 
 ## State and consistency constraints
 
-The partial unique indexes `ux_orders_one_active_user` and
-`ux_orders_one_active_pile` prevent two active orders for one user or pile,
-including `pending_reservation` requests. The service should still query first
+The partial unique index `ux_orders_one_active_user` includes
+`pending_settlement` and prevents two unfinished orders for one user. The pile
+index `ux_orders_one_active_pile` excludes `pending_settlement`, allowing a
+replacement session on a released pile while the old order awaits payment. The
+service should still query first
 to produce the protocol's stable business error (for example duplicate-order
 or pile-state conflict) and translate a unique-index violation to the same
 error.
@@ -113,14 +117,14 @@ result unless an explicitly supported free-charge policy is introduced.
    the same transaction. Confirmation changes the order to `reserved`.
    Starting charging changes the matching order/pile pair to `charging`.
    Commit or roll back all writes.
-4. **End and settle**: calculate amount from the order's stored unit rate and
-   energy; begin `IMMEDIATE`; verify order is `pending_settlement` and balance
-   is sufficient; insert one negative `charge` ledger row, decrement balance,
-   update order to `completed` with non-null `ended_at` and `settled_at`,
-   update pile to `idle` and
-   increment pile counters; before commit, verify that the ledger row's user
-   and absolute amount match the completed order. Any failure rolls back every
-   change.
+4. **Stop and settle**: stop calculates the amount, updates the order to
+   `pending_settlement`, and releases the pile in one transaction. Settlement
+   then verifies `pending_settlement` and sufficient balance, inserts one
+   negative `charge` ledger row, decrements balance, updates the order to
+   `completed` with non-null `ended_at` and `settled_at`, and increments pile
+   counters without changing its status. Before commit, verify that the ledger
+   row's user and absolute amount match the completed order. Any failure rolls
+   back every change.
 5. **Freeze/unfreeze**: update `users.status` in one transaction. Freezing
    does not cancel an existing order, but blocks new starts.
 6. **Remote restart**: begin transaction, verify administrator role and pile

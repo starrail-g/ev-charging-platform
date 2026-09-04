@@ -59,14 +59,14 @@
 
 ```json
 {"v":1,"id":"profile-missing","type":"error","payload":{"code":1200,"name":"NOT_FOUND","message":"user not found"}}
-{"v":1,"id":"profile-frozen","type":"error","payload":{"code":1100,"name":"UNAUTHORIZED","message":"user is frozen"}}
+{"v":1,"id":"recharge-frozen","type":"error","payload":{"code":1101,"name":"ACCOUNT_FROZEN","message":"user is frozen"}}
 {"v":1,"id":"recharge-invalid","type":"error","payload":{"code":1002,"name":"INVALID_REQUEST","message":"user_id and amount_cents must be positive integers"}}
 {"v":1,"id":"recharge-db-error","type":"error","payload":{"code":1300,"name":"DATABASE_ERROR","message":"wallet recharge failed"}}
 ```
 
 相同请求 ID 和相同 payload 的资料更新或充值会返回第一次成功结果，不重复更新或
-入账；同一 ID 更换操作或参数返回 `CONFLICT`。冻结校验优先于成功回放：用户被冻结
-后重放返回 `1100`，解冻后再次重放才返回原结果。业务拒绝和数据库失败不写回放记录，
+入账；同一 ID 更换操作或参数返回 `CONFLICT`。成功回放优先于冻结校验：用户被冻结
+后仍返回原成功结果；新请求才会返回 `1101 ACCOUNT_FROZEN`。业务拒绝和数据库失败不写回放记录，
 故障解除后可使用原 ID 重试。
 
 ```json
@@ -113,8 +113,8 @@ JSON `null`；历史接口只返回 `completed` 订单，按 `settled_at` 倒序
 {"v":1,"id":"settle-1","type":"charging.settle","payload":{"user_id":1,"order_id":2001}}
 ```
 
-停止后订单为 `pending_settlement`；结算原子写入 charge 流水、扣减余额、将订单
-置为 `completed` 并释放电桩。已完成订单必须同时具有 `started_at`、`ended_at`、
+停止后订单为 `pending_settlement` 且电桩立即回到 `idle`；结算只原子写入 charge
+流水、扣减余额、将订单置为 `completed` 并累加电桩计数，不改变电桩状态。已完成订单必须同时具有 `started_at`、`ended_at`、
 `settled_at` 和匹配的钱包流水。
 
 结算金额完全使用整数分：`energy_wh` 为瓦时，费率为分/千瓦时，服务费为分，
@@ -130,13 +130,14 @@ JSON `null`；历史接口只返回 `completed` 订单，按 `settled_at` 倒序
 {"v":1,"id":"settle-1","type":"error","payload":{"code":1202,"name":"INSUFFICIENT_BALANCE","message":"insufficient balance"}}
 ```
 
-余额不足时订单保持 `pending_settlement`，电桩保持 `charging`，余额和 charge 流水
+余额不足时订单保持 `pending_settlement`，电桩已经是 `idle`，余额和 charge 流水
 不变。非法状态转换、重复活动订单、占用/故障电桩和重复请求 ID 参数冲突返回
 `CONFLICT`（1201）；缺少资源返回 `NOT_FOUND`（1200）；持久化失败返回
 `DATABASE_ERROR`（1300）且事务回滚。
 
-冻结用户不能创建或确认预约、开始充电或结算。当前冻结不会自动关闭已经运行的
-订单，该策略将在管理员冻结接口实现时单独确定。
+登录冻结用户仍成功并返回 `status: "frozen"`。冻结只拦截预约创建、预约确认、开始
+充电（直充和预约）及充值，统一返回 `1101 ACCOUNT_FROZEN`；所有只读接口、资料更新、
+预约取消、停止充电和结算均放行。冻结不会自动关闭已经运行的订单。
 
 请求 ID 在服务端数据库保留期内全局唯一。只有成功提交的状态修改会写入回放记录；
 业务拒绝或数据库失败会回滚且不会固化记录，因此相同 ID 可在条件修复后重试，参数

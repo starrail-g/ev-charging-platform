@@ -369,12 +369,6 @@ bool Database::getUserProfile(qint64 userId, QJsonObject *user, QString *error,
         setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found"));
         return false;
     }
-    if (query.value(5).toString() != QStringLiteral("active")) {
-        setFailure(error, kind, ErrorKind::Unauthorized,
-                   QStringLiteral("user is frozen"));
-        return false;
-    }
-
     const QJsonValue avatar = query.value(3).isNull()
         ? QJsonValue(QJsonValue::Null) : QJsonValue(query.value(3).toString());
     *user = QJsonObject{{QStringLiteral("id"), query.value(0).toLongLong()},
@@ -418,7 +412,7 @@ bool Database::updateUserProfile(const QString &requestId, qint64 userId,
     if (!begin(error, kind)) return false;
 
     QSqlQuery query(connection_);
-    query.prepare(QStringLiteral("SELECT status FROM users WHERE id = :id"));
+    query.prepare(QStringLiteral("SELECT id FROM users WHERE id = :id"));
     query.bindValue(QStringLiteral(":id"), userId);
     if (!query.exec()) {
         rollback();
@@ -431,13 +425,6 @@ bool Database::updateUserProfile(const QString &requestId, qint64 userId,
         setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found"));
         return false;
     }
-    if (query.value(0).toString() != QStringLiteral("active")) {
-        rollback();
-        setFailure(error, kind, ErrorKind::Unauthorized,
-                   QStringLiteral("user is frozen"));
-        return false;
-    }
-
     QJsonObject replay;
     bool found = false;
     if (!loadRequest(requestId, QStringLiteral("user.profile.update"), fingerprint,
@@ -454,7 +441,7 @@ bool Database::updateUserProfile(const QString &requestId, qint64 userId,
     QStringList assignments{QStringLiteral("updated_at = :updated_at")};
     if (hasNickname) assignments.append(QStringLiteral("nickname = :nickname"));
     if (hasAvatar) assignments.append(QStringLiteral("avatar_path = :avatar_path"));
-    query.prepare(QStringLiteral("UPDATE users SET %1 WHERE id = :id AND status = 'active'")
+    query.prepare(QStringLiteral("UPDATE users SET %1 WHERE id = :id")
                       .arg(assignments.join(QStringLiteral(", "))));
     query.bindValue(QStringLiteral(":updated_at"), timestamp);
     query.bindValue(QStringLiteral(":id"), userId);
@@ -473,7 +460,7 @@ bool Database::updateUserProfile(const QString &requestId, qint64 userId,
     }
     if (query.numRowsAffected() != 1) {
         rollback();
-        setFailure(error, kind, ErrorKind::Unauthorized,
+        setFailure(error, kind, ErrorKind::Database,
                    QStringLiteral("user is unavailable"));
         return false;
     }
@@ -531,13 +518,6 @@ bool Database::rechargeWallet(const QString &requestId, qint64 userId,
         setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found"));
         return false;
     }
-    if (query.value(1).toString() != QStringLiteral("active")) {
-        rollback();
-        setFailure(error, kind, ErrorKind::Unauthorized,
-                   QStringLiteral("user is frozen"));
-        return false;
-    }
-
     QJsonObject replay;
     bool found = false;
     if (!loadRequest(requestId, QStringLiteral("wallet.recharge"), fingerprint,
@@ -549,6 +529,12 @@ bool Database::rechargeWallet(const QString &requestId, qint64 userId,
         *balanceCents = replay.value(QStringLiteral("balance_cents")).toVariant().toLongLong();
         *transactionId = replay.value(QStringLiteral("transaction_id")).toVariant().toLongLong();
         return commit(error, kind);
+    }
+    if (query.value(1).toString() != QStringLiteral("active")) {
+        rollback();
+        setFailure(error, kind, ErrorKind::AccountFrozen,
+                   QStringLiteral("user is frozen"));
+        return false;
     }
     const qint64 before = query.value(0).toLongLong();
     if (amountCents > std::numeric_limits<qint64>::max() - before) {
@@ -958,7 +944,7 @@ bool Database::createReservation(const QString &requestId, qint64 userId, qint64
     if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("lookup user failed: %1").arg(queryError(query))); return false; }
     if (!query.next()) { rollback(); setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found")); return false; }
     if (query.value(0).toString() != QStringLiteral("active")) {
-        rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("user is frozen")); return false;
+        rollback(); setFailure(error, kind, ErrorKind::AccountFrozen, QStringLiteral("user is frozen")); return false;
     }
     query.prepare(QStringLiteral(
         "SELECT 1 FROM charging_orders WHERE user_id = :user_id AND status IN "
@@ -1036,7 +1022,7 @@ bool Database::confirmReservation(const QString &requestId, qint64 userId, qint6
     if (!query.next()) { rollback(); setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found")); return false; }
     if (query.value(0).toString() != QStringLiteral("active")) {
         rollback();
-        setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("user is frozen"));
+        setFailure(error, kind, ErrorKind::AccountFrozen, QStringLiteral("user is frozen"));
         return false;
     }
     query.prepare(QStringLiteral("UPDATE charging_orders SET status = 'reserved', updated_at = :updated_at WHERE id = :id AND user_id = :user_id AND status = 'pending_reservation'"));
@@ -1135,7 +1121,7 @@ bool Database::startCharging(const QString &requestId, qint64 userId, qint64 ord
     if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, queryError(query)); return false; }
     if (!query.next()) { rollback(); setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found")); return false; }
     if (query.value(0).toString() != QStringLiteral("active")) {
-        rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("user is frozen")); return false;
+        rollback(); setFailure(error, kind, ErrorKind::AccountFrozen, QStringLiteral("user is frozen")); return false;
     }
     if (orderId > 0) {
         query.prepare(QStringLiteral("SELECT pile_id, status FROM charging_orders WHERE id = :id AND user_id = :user_id"));
@@ -1243,10 +1229,18 @@ bool Database::stopCharging(const QString &requestId, qint64 userId, qint64 orde
     updateQuery.prepare(QStringLiteral("UPDATE charging_orders SET status='pending_settlement', ended_at=:ended_at, energy_wh=:energy_wh, total_amount_cents=:total, updated_at=:updated_at WHERE id=:id AND status='charging'"));
     updateQuery.bindValue(QStringLiteral(":ended_at"), finish); updateQuery.bindValue(QStringLiteral(":energy_wh"), energyWh); updateQuery.bindValue(QStringLiteral(":total"), total); updateQuery.bindValue(QStringLiteral(":updated_at"), finish); updateQuery.bindValue(QStringLiteral(":id"), orderId);
     if (!updateQuery.exec() || updateQuery.numRowsAffected() != 1) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("order changed concurrently: %1").arg(queryError(updateQuery))); return false; }
+    QSqlQuery pileQuery(connection_);
+    pileQuery.prepare(QStringLiteral("UPDATE charging_piles SET status='idle', updated_at=:updated_at WHERE id=:id AND status='charging'"));
+    pileQuery.bindValue(QStringLiteral(":updated_at"), finish);
+    pileQuery.bindValue(QStringLiteral(":id"), pileId);
+    if (!pileQuery.exec() || pileQuery.numRowsAffected() != 1) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("charging pile is not active"));
+        return false;
+    }
     QSqlQuery readQuery(connection_);
     readQuery.prepare(QStringLiteral("SELECT id, order_no, user_id, pile_id, status, reserved_at, started_at, ended_at, energy_wh, unit_price_cents_per_kwh, service_fee_cents, total_amount_cents, settled_at, created_at, updated_at FROM charging_orders WHERE id=?")); readQuery.bindValue(0, orderId);
     if (!readQuery.exec() || !readQuery.next() || !readOrder(readQuery, order, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read stopped order failed: %1").arg(queryError(readQuery))); return false; }
-    Q_UNUSED(pileId);
     if (!saveRequest(requestId, QStringLiteral("charging.stop"), fingerprint,
                      QJsonObject{{QStringLiteral("order"), *order},
                                  {QStringLiteral("estimated_amount_cents"), total}}, error, kind)) {
@@ -1281,8 +1275,9 @@ bool Database::settleCharging(const QString &requestId, qint64 userId, qint64 or
     const QString started = query.value(2).toString();
     const QString ended = query.value(3).toString();
     if (query.value(4).toString() != QStringLiteral("pending_settlement")) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("order is not pending settlement")); return false; }
-    query.prepare(QStringLiteral("SELECT balance_cents FROM users WHERE id=:id AND status='active'")); query.bindValue(QStringLiteral(":id"), userId);
-    if (!query.exec() || !query.next()) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("user is unavailable")); return false; }
+    query.prepare(QStringLiteral("SELECT balance_cents FROM users WHERE id=:id")); query.bindValue(QStringLiteral(":id"), userId);
+    if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read wallet balance failed: %1").arg(queryError(query))); return false; }
+    if (!query.next()) { rollback(); setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found")); return false; }
     const qint64 balance = query.value(0).toLongLong();
     if (balance < total) { rollback(); setFailure(error, kind, ErrorKind::InsufficientBalance, QStringLiteral("insufficient balance")); return false; }
     const qint64 after = balance - total;
@@ -1295,8 +1290,8 @@ bool Database::settleCharging(const QString &requestId, qint64 userId, qint64 or
     query.prepare(QStringLiteral("UPDATE charging_orders SET status='completed', settled_at=:settled_at, updated_at=:updated_at WHERE id=:id AND status='pending_settlement'")); query.bindValue(QStringLiteral(":settled_at"), settled); query.bindValue(QStringLiteral(":updated_at"), settled); query.bindValue(QStringLiteral(":id"), orderId);
     if (!query.exec() || query.numRowsAffected() != 1) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("complete order failed")); return false; }
     const qint64 seconds = QDateTime::fromString(started, Qt::ISODate).secsTo(QDateTime::fromString(ended, Qt::ISODate));
-    query.prepare(QStringLiteral("UPDATE charging_piles SET status='idle', total_charge_count=total_charge_count+1, total_charge_seconds=total_charge_seconds+:seconds, updated_at=:updated_at WHERE id=:id AND status='charging'")); query.bindValue(QStringLiteral(":seconds"), qMax<qint64>(0, seconds)); query.bindValue(QStringLiteral(":updated_at"), settled); query.bindValue(QStringLiteral(":id"), pileId);
-    if (!query.exec() || query.numRowsAffected() != 1) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("charging pile is not active")); return false; }
+    query.prepare(QStringLiteral("UPDATE charging_piles SET total_charge_count=total_charge_count+1, total_charge_seconds=total_charge_seconds+:seconds, updated_at=:updated_at WHERE id=:id")); query.bindValue(QStringLiteral(":seconds"), qMax<qint64>(0, seconds)); query.bindValue(QStringLiteral(":updated_at"), settled); query.bindValue(QStringLiteral(":id"), pileId);
+    if (!query.exec() || query.numRowsAffected() != 1) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("update charging pile counters failed")); return false; }
     query.prepare(QStringLiteral("SELECT id, order_no, user_id, pile_id, status, reserved_at, started_at, ended_at, energy_wh, unit_price_cents_per_kwh, service_fee_cents, total_amount_cents, settled_at, created_at, updated_at FROM charging_orders WHERE id=:id")); query.bindValue(QStringLiteral(":id"), orderId);
     if (!query.exec() || !query.next() || !readOrder(query, order, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read settled order failed")); return false; }
     *balanceCents = after;
