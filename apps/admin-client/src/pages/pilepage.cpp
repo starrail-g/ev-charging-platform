@@ -69,12 +69,13 @@ PilePage::PilePage(ev::AdminRepository *repository, QWidget *parent)
     toolbar->addWidget(m_filterCombo);
     toolbar->addStretch();
 
-    // ---- 桩列表 ----
-    m_table = new QTableWidget(0, 6, this);
+    // ---- 桩列表（A-04：编号/站点/类型/功率/单价/状态/累计次数/累计时长）----
+    m_table = new QTableWidget(0, 8, this);
     m_table->setObjectName(QStringLiteral("pileTable"));
     m_table->setHorizontalHeaderLabels({
         QStringLiteral("桩编号"), QStringLiteral("站点"), QStringLiteral("类型"),
         QStringLiteral("额定功率"), QStringLiteral("单价"), QStringLiteral("状态"),
+        QStringLiteral("累计次数"), QStringLiteral("累计时长"),
     });
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -164,10 +165,16 @@ void PilePage::rebuildRows()
         auto *powerItem = new QTableWidgetItem(
             QStringLiteral("%1 kW").arg(pile.powerKw, 0, 'f', 0));
         auto *priceItem = new QTableWidgetItem(
-            QStringLiteral("¥%1/kWh")
-                .arg(pile.unitPriceCentsPerKwh / 100.0, 0, 'f', 2));
+            ev::formatYuanCents(pile.unitPriceCentsPerKwh) + QStringLiteral("/kWh"));
 
         auto *tag = new StatusTag(pile.status, m_table);
+
+        auto *countItem = new QTableWidgetItem(QString::number(pile.totalChargeCount));
+        auto *durationItem = new QTableWidgetItem(
+            ev::formatChargeDuration(pile.totalChargeSeconds));
+        // 数字列右对齐，与金额/功率列同风格（视觉可扫描）
+        countItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        durationItem->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
         m_table->setItem(row, 0, codeItem);
         m_table->setItem(row, 1, stationItem);
@@ -175,6 +182,8 @@ void PilePage::rebuildRows()
         m_table->setItem(row, 3, powerItem);
         m_table->setItem(row, 4, priceItem);
         m_table->setCellWidget(row, 5, tag);
+        m_table->setItem(row, 6, countItem);
+        m_table->setItem(row, 7, durationItem);
     }
 
     if (m_piles.isEmpty()) {

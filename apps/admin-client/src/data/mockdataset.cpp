@@ -18,18 +18,20 @@ MockResult<PileInfo> piles(DataMode mode)
     if (mode != DataMode::Normal)
         return result; // Empty：ok=true，空列表
 
+    // 累计次数/时长与演示口径自洽：seconds ≈ count × 单次均时
+    //（P-101-* 均约 40min、P-101-C 45min、P-202-A 35min、P-202-C 30min）
     result.items.append(PileInfo{1, 1, QStringLiteral("P-101-A"), QStringLiteral("fast"),
-                                 120.0, 120, PileStatus::Charging});
+                                 120.0, 120, PileStatus::Charging, 132, 316800});
     result.items.append(PileInfo{2, 1, QStringLiteral("P-101-B"), QStringLiteral("fast"),
-                                 120.0, 120, PileStatus::Idle});
+                                 120.0, 120, PileStatus::Idle, 96, 230400});
     result.items.append(PileInfo{3, 1, QStringLiteral("P-101-C"), QStringLiteral("slow"),
-                                 60.0, 90, PileStatus::Fault});
+                                 60.0, 90, PileStatus::Fault, 45, 121500});
     result.items.append(PileInfo{4, 2, QStringLiteral("P-202-A"), QStringLiteral("fast"),
-                                 150.0, 150, PileStatus::Charging});
+                                 150.0, 150, PileStatus::Charging, 187, 392700});
     result.items.append(PileInfo{5, 2, QStringLiteral("P-202-B"), QStringLiteral("fast"),
-                                 150.0, 150, PileStatus::Reserved});
+                                 150.0, 150, PileStatus::Reserved, 64, 153600});
     result.items.append(PileInfo{6, 2, QStringLiteral("P-202-C"), QStringLiteral("slow"),
-                                 60.0, 90, PileStatus::Offline});
+                                 60.0, 90, PileStatus::Offline, 28, 50400});
     return result;
 }
 

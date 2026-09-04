@@ -38,4 +38,32 @@ QString pileStatusToProtocol(PileStatus status)
     return QStringLiteral("unknown");
 }
 
+QString formatChargeDuration(int totalSeconds)
+{
+    if (totalSeconds < 0)
+        totalSeconds = 0;
+    const int hours = totalSeconds / 3600;
+    const int minutes = (totalSeconds % 3600) / 60;
+    return QStringLiteral("%1h %2m").arg(hours).arg(minutes);
+}
+
+// 金额格式：整数分 → "¥2,865.40"（千分位、无浮点漂移；口径同 Web formatCents）。
+// 评审 P2-01：负值/零值/大额统一走绝对值运算、负号前置（-¥0.01 不丢符号）。
+QString formatYuanCents(qint64 cents)
+{
+    const bool negative = cents < 0;
+    const qint64 absCents = qAbs(cents);
+    const QString frac = QString::number(absCents % 100).rightJustified(2, QLatin1Char('0'));
+    const QString digits = QString::number(absCents / 100);
+    QString grouped;
+    const int length = digits.size();
+    for (int i = 0; i < length; ++i) {
+        if (i > 0 && (length - i) % 3 == 0)
+            grouped += QLatin1Char(',');
+        grouped += digits.at(i);
+    }
+    // 负号置于货币符号前（-¥0.01），与中文展示惯例一致
+    return QStringLiteral("%1¥%2.%3").arg(negative ? QStringLiteral("-") : QString(), grouped, frac);
+}
+
 } // namespace ev

@@ -34,7 +34,16 @@ struct PileInfo {
     double powerKw = 0.0;
     int unitPriceCentsPerKwh = 0;  // 整数分/千瓦时
     PileStatus status = PileStatus::Idle;
+    int totalChargeCount = 0;      // 累计充电次数（schema total_charge_count，A-04 桩表格）
+    int totalChargeSeconds = 0;    // 累计充电时长（秒，schema total_charge_seconds，A-04 桩表格）
 };
+
+// 累计充电时长秒数 → 展示文本（如 316800 → "88h 0m"）。纯函数，tst_ui 锁定格式。
+QString formatChargeDuration(int totalSeconds);
+
+// 金额（整数分）→ 展示文本（如 286540 → "¥2,865.40"，千分位、无浮点漂移；
+// 口径同 Web formatCents）。纯函数，tst_ui 锁定格式；负值/零值/大额统一处理。
+QString formatYuanCents(qint64 cents);
 
 struct StationInfo {
     int id = 0;
