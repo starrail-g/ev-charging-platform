@@ -11,18 +11,18 @@
 // 时间 UTC ISO-8601、桩状态协议五态。待 9/4 与 B 评审后最终冻结。
 namespace ev {
 
-// 桩状态（协议五态 + 未知兜底，protocol.md；解析不出协议值 → Unknown）
+// 桩状态（协议五态，protocol.md）
 enum class PileStatus {
     Idle,      // idle
     Reserved,  // reserved
     Charging,  // charging
     Fault,     // fault
     Offline,   // offline
-    Unknown,   // unknown（协议未知值 / 解析失败；可展示、不可参与关注排序）
 };
 
 // 解析协议状态字符串；未知值返回 Unknown 语义（不崩溃，见 C-S1-019）
-PileStatus parsePileStatus(const QString &status);
+enum class PileStatusParse { Idle, Reserved, Charging, Fault, Offline, Unknown };
+PileStatusParse parsePileStatus(const QString &status);
 QString pileStatusToDisplay(PileStatus status);        // 中文展示
 QString pileStatusToProtocol(PileStatus status);       // 协议原串
 
@@ -67,20 +67,9 @@ struct OverviewStats {
     QString updatedAt;                    // UTC ISO-8601，如 2026-09-01T10:15:00Z
 };
 
-// 通用列表结果包装(数据层与页面层共用;原 mockdataset::MockResult 语义):
-//   ok=false    —— 接口失败(调用方必须按 ok 分支展示错误态,不能只依赖列表长度)
-//   error       —— 失败原因文案(展示/日志用)
-//   items       —— 成功时的数据列表
-template <typename T>
-struct ListResult {
-    bool ok = true;
-    QString error;
-    QList<T> items;
-};
-
-// 概览结果包装(数据层与页面层共用,P2 review 修复后上移为通用模型):
-//   ok=false     —— 接口失败(调用方按 ok 分支展示错误态)
-//   hasData=false —— 空数据,由数据层显式声明;禁止从指标全零反推
+// 概览结果包装（数据层与页面层共用，P2 review 修复后上移为通用模型）：
+//   ok=false     —— 接口失败（调用方按 ok 分支展示错误态）
+//   hasData=false —— 空数据，由数据层显式声明；禁止从指标全零反推
 //                    （新站点/当日无营收时全零可能是有效数据）
 struct OverviewResult {
     bool ok = true;

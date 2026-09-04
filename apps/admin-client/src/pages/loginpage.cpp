@@ -1,7 +1,6 @@
 #include "loginpage.h"
 
 #include <QFormLayout>
-#include <QFrame>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -18,65 +17,36 @@ LoginPage::LoginPage(ev::AdminRepository *repository, QWidget *parent)
     : QWidget(parent)
     , m_repository(repository)
 {
-    setObjectName(QStringLiteral("loginPage"));
-
-    auto *productMark = new QLabel(QStringLiteral("GRID SHIFT / 充电运营中心"), this);
-    productMark->setObjectName(QStringLiteral("loginProductMark"));
-
     auto *title = new QLabel(QStringLiteral("管理员登录"), this);
-    title->setObjectName(QStringLiteral("loginTitle"));
-    auto *description = new QLabel(
-        QStringLiteral("进入运营工作台，查看充电网络态势并处理设备异常。"), this);
-    description->setObjectName(QStringLiteral("loginDescription"));
-    description->setWordWrap(true);
 
     m_usernameEdit = new QLineEdit(this);
     m_usernameEdit->setObjectName(QStringLiteral("usernameEdit"));
     m_usernameEdit->setPlaceholderText(QStringLiteral("管理员账号"));
     m_usernameEdit->setMaxLength(kMaxUsernameLength);
-    m_usernameEdit->setAccessibleName(QStringLiteral("管理员账号"));
 
     m_passwordEdit = new QLineEdit(this);
     m_passwordEdit->setObjectName(QStringLiteral("passwordEdit"));
     m_passwordEdit->setPlaceholderText(QStringLiteral("密码"));
     m_passwordEdit->setEchoMode(QLineEdit::Password);
     m_passwordEdit->setMaxLength(kMaxPasswordLength);
-    m_passwordEdit->setAccessibleName(QStringLiteral("管理员密码"));
 
     m_loginButton = new QPushButton(QStringLiteral("登 录"), this);
     m_loginButton->setObjectName(QStringLiteral("loginButton"));
-    m_loginButton->setAccessibleName(QStringLiteral("登录管理端"));
 
     m_errorLabel = new QLabel(this);
     m_errorLabel->setObjectName(QStringLiteral("errorLabel"));
-    m_errorLabel->setProperty("role", QStringLiteral("alert"));
     m_errorLabel->setVisible(false);
 
     auto *form = new QFormLayout;
     form->addRow(QStringLiteral("账号"), m_usernameEdit);
     form->addRow(QStringLiteral("密码"), m_passwordEdit);
 
-    auto *panel = new QFrame(this);
-    panel->setObjectName(QStringLiteral("loginPanel"));
-    panel->setProperty("panel", true);
-    panel->setMinimumWidth(420);
-    panel->setMaximumWidth(520);
-
-    auto *panelLayout = new QVBoxLayout(panel);
-    panelLayout->setContentsMargins(34, 32, 34, 34);
-    panelLayout->setSpacing(16);
-    panelLayout->addWidget(title);
-    panelLayout->addWidget(description);
-    panelLayout->addSpacing(4);
-    panelLayout->addLayout(form);
-    panelLayout->addWidget(m_errorLabel);
-    panelLayout->addWidget(m_loginButton);
-
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(40, 32, 40, 40);
-    layout->addWidget(productMark, 0, Qt::AlignLeft);
     layout->addStretch();
-    layout->addWidget(panel, 0, Qt::AlignHCenter);
+    layout->addWidget(title, 0, Qt::AlignHCenter);
+    layout->addLayout(form);
+    layout->addWidget(m_errorLabel, 0, Qt::AlignHCenter);
+    layout->addWidget(m_loginButton, 0, Qt::AlignHCenter);
     layout->addStretch();
 
     m_timeoutTimer.setSingleShot(true);
