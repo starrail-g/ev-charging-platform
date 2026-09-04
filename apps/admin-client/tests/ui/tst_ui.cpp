@@ -6,6 +6,7 @@
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QTableWidget>
 
 #include "app/mainwindow.h"
 #include "data/mockadminrepository.h"
@@ -44,6 +45,7 @@ private slots:
     void auroraBackdropAnimatesWhenMotionEnabled();
     void reducedMotionFreezesAuroraBackdrop();
     void pilePageFiltersByAttentionStateAndCode();
+    void pileRowsExposeCumulativeMetrics();
     void stationAndUserPagesRenderMockRows();
 };
 
@@ -140,6 +142,9 @@ void TestUi::overviewShowsTraceableMockMetrics()
              QStringLiteral("2"));
     QCOMPARE(page.findChild<QLabel *>("metricRevenue")->text(),
              QStringLiteral("¥2,865.40"));
+    // A-02：近 30 日合计与 demo.json revenue30dCents 数组和同值（983840 分 = ¥9,838.40）
+    const auto overviewStats = ev::mockdata::overview(ev::mockdata::DataMode::Normal).stats;
+    QCOMPARE(overviewStats.revenue30dCents, qint64(983840));
 }
 
 void TestUi::availabilityRateFormulaIsIndependent()
@@ -262,14 +267,67 @@ void TestUi::pilePageFiltersByAttentionStateAndCode()
     QCOMPARE(page.currentPileCode(), QStringLiteral("P-101-C"));
 }
 
+void TestUi::pileRowsExposeCumulativeMetrics()
+{
+    // A-04：桩表格八列，累计次数/时长与 mockdataset 同口径可追溯
+    PilePage page;
+    page.refresh(ev::mockdata::DataMode::Normal);
+    QTRY_COMPARE_WITH_TIMEOUT(page.visibleRowCount(), 6, 3000);
+
+    auto *table = page.findChild<QTableWidget *>(QStringLiteral("pileTable"));
+    QVERIFY(table);
+    QCOMPARE(table->columnCount(), 8);
+    QCOMPARE(table->horizontalHeaderItem(6)->text(), QStringLiteral("累计次数"));
+    QCOMPARE(table->horizontalHeaderItem(7)->text(), QStringLiteral("累计时长"));
+
+    // P-101-A：132 次 / 316800 s（88h 0m）；P-202-A：187 次 / 392700 s（109h 5m）
+    QCOMPARE(table->item(0, 6)->text(), QStringLiteral("132"));
+    QCOMPARE(table->item(0, 7)->text(), QStringLiteral("88h 0m"));
+    QCOMPARE(table->item(3, 6)->text(), QStringLiteral("187"));
+    QCOMPARE(table->item(3, 7)->text(), QStringLiteral("109h 5m"));
+
+    // 时长格式纯函数锁定（秒 → "Xh Ym"）
+    QCOMPARE(ev::formatChargeDuration(121500), QStringLiteral("33h 45m"));
+    QCOMPARE(ev::formatChargeDuration(153600), QStringLiteral("42h 40m"));
+    QCOMPARE(ev::formatChargeDuration(-1), QStringLiteral("0h 0m"));
+
+    // 金额格式纯函数锁定（整数分 → "¥2,865.40"，千分位/零/负/大额；口径同 Web formatCents）
+    QCOMPARE(ev::formatYuanCents(286540), QStringLiteral("¥2,865.40"));
+    QCOMPARE(ev::formatYuanCents(983840), QStringLiteral("¥9,838.40"));
+    QCOMPARE(ev::formatYuanCents(80), QStringLiteral("¥0.80"));
+    QCOMPARE(ev::formatYuanCents(0), QStringLiteral("¥0.00"));
+    QCOMPARE(ev::formatYuanCents(-1), QStringLiteral("-¥0.01"));
+    QCOMPARE(ev::formatYuanCents(-150), QStringLiteral("-¥1.50"));
+    QCOMPARE(ev::formatYuanCents(123456789), QStringLiteral("¥1,234,567.89"));
+}
+
 void TestUi::stationAndUserPagesRenderMockRows()
 {
     StationPage stations;
     stations.refresh(ev::mockdata::DataMode::Normal);
     QTRY_COMPARE_WITH_TIMEOUT(stations.visibleRowCount(), 2, 3000);
+
+    // A-06：五列；两站均 3 桩中 1 台故障/离线 → 在线率 66.7%（mockdataset 同快照派生）
+    auto *stationTable = stations.findChild<QTableWidget *>(QStringLiteral("stationTable"));
+    QVERIFY(stationTable);
+    QCOMPARE(stationTable->columnCount(), 5);
+    QCOMPARE(stationTable->horizontalHeaderItem(4)->text(), QStringLiteral("在线率"));
+    QCOMPARE(stationTable->item(0, 2)->text(), QStringLiteral("3"));
+    QCOMPARE(stationTable->item(0, 4)->text(), QStringLiteral("66.7%"));
+    QCOMPARE(stationTable->item(1, 2)->text(), QStringLiteral("3"));
+    QCOMPARE(stationTable->item(1, 4)->text(), QStringLiteral("66.7%"));
+
     UserPage users;
     users.refresh(ev::mockdata::DataMode::Normal);
     QTRY_COMPARE_WITH_TIMEOUT(users.visibleRowCount(), 3, 3000);
+
+    // A-07：五列；注册时间 UTC ISO-8601 原串（mockdataset 同口径可追溯）
+    auto *userTable = users.findChild<QTableWidget *>(QStringLiteral("userTable"));
+    QVERIFY(userTable);
+    QCOMPARE(userTable->columnCount(), 5);
+    QCOMPARE(userTable->horizontalHeaderItem(4)->text(), QStringLiteral("注册时间 (UTC)"));
+    QCOMPARE(userTable->item(0, 4)->text(), QStringLiteral("2026-08-15T03:24:00Z"));
+    QCOMPARE(userTable->item(1, 4)->text(), QStringLiteral("2026-08-02T11:40:00Z"));
 }
 
 QTEST_MAIN(TestUi)
