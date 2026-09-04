@@ -289,7 +289,11 @@ void OverviewPage::renderContent()
     m_availabilityCard->setValue(QString::number(rate * 100.0, 'f', 1) + QStringLiteral("%"));
     m_utilizationCard->setValue(
         QString::number(stats.avgStationUtilization * 100.0, 'f', 0) + QStringLiteral("%"));
-    m_revenueCard->setValue(formatYuanCents(stats.revenueCents));
+    m_revenueCard->setValue(ev::formatYuanCents(stats.revenueCents));
+    // A-02 近 30 日汇总（hint 小字；趋势/时间维度切换由 Web 大屏承担，
+    // Qt 侧统一 UI 无趋势图设计，今日/本月/总口径待 9/4 评审定裁）
+    m_revenueCard->setHint(
+        QStringLiteral("近 30 日 %1").arg(ev::formatYuanCents(stats.revenue30dCents)));
 
     // 需关注列表：故障/离线桩（同一五态语义；"需关注"= 故障 + 离线）
     int attentionCount = 0;

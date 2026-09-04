@@ -80,6 +80,8 @@ export function adaptDashboardData(fixture) {
       counts,
     },
     revenue7dCents: fixture.revenue7dCents ?? [],
+    // A-02 近 30 日营收序列（末 7 日与 revenue7dCents 同源；合计与 Qt mockdataset 一致）
+    revenue30dCents: fixture.revenue30dCents ?? [],
     demoSeries: fixture.demoSeries,
   };
 }

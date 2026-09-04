@@ -67,7 +67,7 @@
       <nav class="ops-tabs" aria-label="趋势图页签">
         <button type="button" class="ops-tab is-active" data-chart-tab="chart-load" aria-pressed="true">24 小时充电负荷</button>
         <button type="button" class="ops-tab" data-chart-tab="chart-states" aria-pressed="false">桩状态分布</button>
-        <button type="button" class="ops-tab" data-chart-tab="chart-revenue" aria-pressed="false">近 7 日营收</button>
+        <button type="button" class="ops-tab" data-chart-tab="chart-revenue" aria-pressed="false">营收趋势</button>
       </nav>
       <div class="panel chart-panel" data-chart-panel="chart-load">
         <h2 class="panel-title">24 小时充电负荷 <span class="demo-badge">演示</span></h2>
@@ -78,8 +78,14 @@
         <div id="chart-states" class="chart-box" role="img" aria-label="充电桩五态分布环图（演示数据）"></div>
       </div>
       <div class="panel chart-panel" data-chart-panel="chart-revenue">
-        <h2 class="panel-title">近 7 日营收趋势 <span class="demo-badge">演示</span></h2>
-        <div id="chart-revenue" class="chart-box" role="img" aria-label="近 7 日营收趋势图（演示数据）"></div>
+        <div class="panel-head">
+          <h2 class="panel-title">营收趋势 <span class="demo-badge">演示</span></h2>
+          <div class="chart-range" role="group" aria-label="营收趋势时间范围">
+            <button type="button" class="range-btn is-active" data-range-days="7" aria-pressed="true">近 7 日</button>
+            <button type="button" class="range-btn" data-range-days="30" aria-pressed="false">近 30 日</button>
+          </div>
+        </div>
+        <div id="chart-revenue" class="chart-box" role="img" aria-label="营收趋势图（演示数据）"></div>
       </div>
     </section>
   </main>

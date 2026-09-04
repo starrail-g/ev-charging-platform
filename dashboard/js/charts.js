@@ -126,8 +126,27 @@ export function renderStateDonut(el, counts) {
   return chart;
 }
 
-/** 近 7 日营收小型趋势（金额由整数分转换）。 */
-export function renderRevenueTrend(el, centsSeries) {
+/**
+ * UTC 日标签序列（'M/d'）：以 endDateIso 所在 UTC 日为终点，向前 count-1 天。
+ * 纯函数（无 DOM），供近 7 日/近 30 日营收图共用 x 轴。
+ */
+export function buildDayLabels(endDateIso, count) {
+  const day = (endDateIso ?? '').slice(0, 10);
+  const parts = day.split('-').map(Number);
+  if (parts.length !== 3 || parts.some((v) => !Number.isInteger(v) || v <= 0)) {
+    return [];
+  }
+  const endUtc = Date.UTC(parts[0], parts[1] - 1, parts[2]);
+  const labels = [];
+  for (let offset = count - 1; offset >= 0; offset -= 1) {
+    const at = new Date(endUtc - offset * 86400000);
+    labels.push(`${at.getUTCMonth() + 1}/${at.getUTCDate()}`);
+  }
+  return labels;
+}
+
+/** 营收趋势（金额由整数分转换；endDateIso 决定 x 轴日期终点）。 */
+export function renderRevenueTrend(el, centsSeries, endDateIso) {
   const chart = getChart(el);
   const theme = chartTheme();
   chart.setOption({
@@ -140,7 +159,7 @@ export function renderRevenueTrend(el, centsSeries) {
     },
     xAxis: {
       type: 'category',
-      data: ['8/26', '8/27', '8/28', '8/29', '8/30', '8/31', '9/1'],
+      data: buildDayLabels(endDateIso, centsSeries.length),
       axisLabel: { color: theme.palette.muted },
       axisLine: { lineStyle: { color: theme.palette.divider } },
     },

@@ -101,6 +101,9 @@ OverviewResult overview(DataMode mode)
         return result; // Empty：ok=true，指标全零
 
     result.stats.revenueCents = 286540;             // 2865.40 元（近 7 日）
+    // 近 30 日合计（分）与 dashboard/data/demo.json revenue30dCents 数组和一致；
+    // 完整 30 日序列以 demo.json 为源（末 7 日 = revenueCents 对应日序列）
+    result.stats.revenue30dCents = 983840;          // 9838.40 元（近 30 日）
     result.stats.pileIdle = 1;
     result.stats.pileReserved = 1;
     result.stats.pileCharging = 2;
