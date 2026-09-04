@@ -1,0 +1,81 @@
+{
+  "demo": true,
+  "meta": {
+    "name": "role-c-dashboard-demo",
+    "version": 1,
+    "source": "apps/admin-client/src/data/mockdataset.cpp (同口径：金额整数分、时间 UTC ISO-8601、桩状态协议五态)",
+    "note": "纯演示数据，不代表真实运行数据"
+  },
+  "updatedAt": "2026-09-01T10:15:00Z",
+  "overview": {
+    "revenueCents": 286540,
+    "avgStationUtilization": 0.42,
+    "updatedAt": "2026-09-01T10:15:00Z"
+  },
+  "stations": [
+    {
+      "id": 1,
+      "code": "S1",
+      "name": "东软园区充电站",
+      "address": "沈阳市浑南区东软软件园",
+      "latitude": 41.7331,
+      "longitude": 123.4395,
+      "status": "active",
+      "pileCount": 3
+    },
+    {
+      "id": 2,
+      "code": "S2",
+      "name": "沈阳站前充电站",
+      "address": "沈阳市和平区胜利南街",
+      "latitude": 41.7923,
+      "longitude": 123.3942,
+      "status": "active",
+      "pileCount": 3
+    }
+  ],
+  "piles": [
+    { "id": 1, "stationId": 1, "code": "P-101-A", "type": "fast", "powerKw": 120, "unitPriceCentsPerKwh": 120, "status": "charging", "totalChargeCount": 132, "totalChargeSeconds": 316800 },
+    { "id": 2, "stationId": 1, "code": "P-101-B", "type": "fast", "powerKw": 120, "unitPriceCentsPerKwh": 120, "status": "idle", "totalChargeCount": 96, "totalChargeSeconds": 230400 },
+    { "id": 3, "stationId": 1, "code": "P-101-C", "type": "slow", "powerKw": 60, "unitPriceCentsPerKwh": 90, "status": "fault", "totalChargeCount": 45, "totalChargeSeconds": 121500 },
+    { "id": 4, "stationId": 2, "code": "P-202-A", "type": "fast", "powerKw": 150, "unitPriceCentsPerKwh": 150, "status": "charging", "totalChargeCount": 187, "totalChargeSeconds": 392700 },
+    { "id": 5, "stationId": 2, "code": "P-202-B", "type": "fast", "powerKw": 150, "unitPriceCentsPerKwh": 150, "status": "reserved", "totalChargeCount": 64, "totalChargeSeconds": 153600 },
+    { "id": 6, "stationId": 2, "code": "P-202-C", "type": "slow", "powerKw": 60, "unitPriceCentsPerKwh": 90, "status": "offline", "totalChargeCount": 28, "totalChargeSeconds": 50400 }
+  ],
+  "stationUtilization": [
+    { "stationId": 1, "name": "东软园区充电站", "utilization": 0.38 },
+    { "stationId": 2, "name": "沈阳站前充电站", "utilization": 0.46 }
+  ],
+  "revenue7dCents": [35600, 41200, 38240, 44700, 46800, 40200, 39800],
+  "revenue30dCents": [25400, 27100, 28900, 26600, 31200, 33500, 29800, 24300, 26200, 28100, 30500, 32800, 35200, 31400, 27500, 29600, 31800, 34300, 36900, 33100, 28800, 30900, 33400, 35600, 41200, 38240, 44700, 46800, 40200, 39800],
+  "demoSeries": {
+    "label": "24 小时充电负荷（演示）",
+    "unit": "kW",
+    "points": [
+      { "hour": 0, "loadKw": 16 },
+      { "hour": 1, "loadKw": 11 },
+      { "hour": 2, "loadKw": 8 },
+      { "hour": 3, "loadKw": 5 },
+      { "hour": 4, "loadKw": 5 },
+      { "hour": 5, "loadKw": 8 },
+      { "hour": 6, "loadKw": 16 },
+      { "hour": 7, "loadKw": 49 },
+      { "hour": 8, "loadKw": 113 },
+      { "hour": 9, "loadKw": 148 },
+      { "hour": 10, "loadKw": 170 },
+      { "hour": 11, "loadKw": 162 },
+      { "hour": 12, "loadKw": 140 },
+      { "hour": 13, "loadKw": 127 },
+      { "hour": 14, "loadKw": 135 },
+      { "hour": 15, "loadKw": 157 },
+      { "hour": 16, "loadKw": 178 },
+      { "hour": 17, "loadKw": 211 },
+      { "hour": 18, "loadKw": 256 },
+      { "hour": 19, "loadKw": 248 },
+      { "hour": 20, "loadKw": 216 },
+      { "hour": 21, "loadKw": 167 },
+      { "hour": 22, "loadKw": 103 },
+      { "hour": 23, "loadKw": 49 }
+    ]
+  }
+}

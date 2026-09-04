@@ -18,14 +18,11 @@ enum class DataMode {
     Error,
 };
 
-// 通用结果包装：ok=false 表示接口失败（Error 模式），
-// 调用方必须按 ok 分支展示错误态，不能只依赖列表长度。
+// 通用结果包装(兼容别名):ok=false 表示接口失败(Error 模式),
+// 调用方必须按 ok 分支展示错误态,不能只依赖列表长度。
+// 定义已上移 models/adminmodels.h(ListResult),供 Repository 抽象层复用。
 template <typename T>
-struct MockResult {
-    bool ok = true;
-    QString error;
-    QList<T> items;
-};
+using MockResult = ListResult<T>;
 
 MockResult<PileInfo> piles(DataMode mode);
 MockResult<StationInfo> stations(DataMode mode);

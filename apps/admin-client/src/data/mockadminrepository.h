@@ -33,6 +33,14 @@ public:
     void fetchOverview(QObject *context,
                        std::function<void(const ev::OverviewResult &)> callback) override;
 
+    // 异步桩明细/站点列表：与 fetchOverview 同构（同一演示模式、模拟网络往返）
+    void fetchPiles(QObject *context,
+                    std::function<void(const ev::ListResult<ev::PileInfo> &)> callback) override;
+    void fetchStations(QObject *context,
+                       std::function<void(const ev::ListResult<ev::StationInfo> &)> callback) override;
+    void fetchUsers(QObject *context,
+                    std::function<void(const ev::ListResult<ev::UserInfo> &)> callback) override;
+
     QString dataSourceName() const override { return QStringLiteral("Mock 演示"); }
 
     // 演示数据模式（Mock 特有，不进抽象接口；供概览页下拉驱动，

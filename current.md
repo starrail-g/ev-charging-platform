@@ -21,7 +21,7 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 - `A-S1-01`: **已完成**. Requirements traceability, stage boundaries, dependencies and public-task assignments are recorded in `docs/requirements/requirements-matrix.md` and the project task records.
 - `A-S1-02`: Mock baseline remains the default runtime path and has been validated. `SocketUserService` now covers the complete B PR #4 user contract; A-S1-03 is complete pending the separate A-S1-04 cross-module regression.
 - Mock 地图页面的驾车/步行下拉框采用深色圆角样式：默认项为黑底白字，当前选中项为白底黑字。
-- B PR #4 is merged into `origin/main` at `20a3815`; the database/protocol baseline is Schema v0.3. The VM copy is used only for controlled integration verification; A does not modify B code.
+- B PR #4 supplies the Schema v0.3 database/protocol baseline. PR #8 is merged in `origin/main` at `994e5ff`, restoring the unified admin/dashboard UI and its review fixes; A does not modify B/C implementation code.
 - The 2026-09-04 final-decision addendum in `docs/meetings/protocol-summary-2026-09-02.md` overrides the older stop-release/frozen wording; `docs/architecture/protocol.md` and `SocketUserService` are aligned to it.
 - C admin/dashboard work and cross-module testing remain in progress; no C task is marked complete by this update.
 
@@ -63,12 +63,9 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 
 ## Recent history
 
-- `A-S1-01` requirements baseline and repository/task records completed.
-- B schema/protocol foundation merged to `main`.
-- A user-client Mock baseline and opt-in Socket adapter are implemented; VM qmake6 evidence covers the real Socket order lifecycle, profile/wallet persistence, frozen read/write policy and settlement behavior against the controlled B PR #4 latest-head server copy.
-- User-client detailed requirements file added; Tencent Maps POI/API probe and similar-project research are the next integration step.
-## 同学 A 任务计划
-
-- 新增 `docs/role-a-delivery-plan.md`，记录同学 A 阶段 I/II 任务、依赖、验收标准和交付清单。
+- B Schema v0.3 protocol/database foundation and profile/wallet endpoints are merged; its smoke and concurrency suites cover transaction rollback, replay, lifecycle, frozen policy and completed-order history.
+- A user-client Mock baseline and opt-in Socket adapter are implemented; the PR #9 P1 follow-up makes Socket UI calls asynchronous, preserves mutation request IDs across retryable failures and exposes recovery for `pending_reservation`.
+- PR #8 restored the unified admin/dashboard UI plus the A-02/A-04/A-06/A-07 and amount-format review fixes on the current main line.
+- `docs/role-a-delivery-plan.md` records A's phase-I/II dependencies, acceptance gates and delivery list.
 - `A-S1-01`、`A-S1-02`、`A-S1-03` 已完成；A-S1-04 待进行跨模块最终回归和交付验证。
 - 后续 A 任务包括联调测试、腾讯地图导航优化、智能分析结果展示和最终 qmake6 交付；不得将 Mock 或适配器构建通过误记为真实闭环完成。
