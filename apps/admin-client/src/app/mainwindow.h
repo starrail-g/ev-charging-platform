@@ -13,6 +13,7 @@ class AdminRepository;
 
 class QStackedWidget;
 class QListWidget;
+class QLabel;
 class LoginPage;
 class OverviewPage;
 class PilePage;
@@ -53,6 +54,8 @@ private:
     LoginPage *m_loginPage = nullptr;
     QWidget *m_businessArea = nullptr;
     QListWidget *m_navList = nullptr;
+    QLabel *m_sessionBadge = nullptr;
+    QLabel *m_pageTitle = nullptr;
     OverviewPage *m_overviewPage = nullptr;
     PilePage *m_pilePage = nullptr;
     StationPage *m_stationPage = nullptr;
