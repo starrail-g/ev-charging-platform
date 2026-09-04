@@ -1,13 +1,98 @@
 #include "client_service.h"
+#include "socket_user_service.h"
 #include <QtTest>
 using namespace ev;
 class ClientServiceTest : public QObject {
   Q_OBJECT
 private slots:
-void loginValidation(){ MockUserService s; QVERIFY(s.login("", "123456").error.contains("手机号")); QVERIFY(s.login("13800000000", "").error.contains("请输入密码")); QVERIFY(s.login("13800000000", "123").error.contains("长度")); QVERIFY(s.login("13800000000", "badbad").error.contains("密码错误")); QVERIFY(s.login("bad", "123456").error.contains("手机号格式")); QVERIFY(s.login("13800000000", "123456").ok); }
-void unauthorizedAndProfilePersistence(){ MockUserService s; QVERIFY(!s.updateProfile("", "x", {}).ok); QVERIFY(!s.recharge("", 1000).ok); auto u=s.login("13800000000", "123456").value; QVERIFY(s.updateProfile(u.id,"新昵称","/tmp/avatar.png").ok); auto relogin=s.login("13800000000","123456"); QCOMPARE(relogin.value.displayName, QString("新昵称")); QCOMPARE(relogin.value.avatarPath, QString("/tmp/avatar.png")); }
-void stationAndRoute(){ MockUserService s; auto list=s.stations(""); QCOMPARE(list.value.size(),3); QCOMPARE(list.value[0].totalPiles,2); QCOMPARE(list.value[0].availablePiles,1); QVERIFY(s.stations("timeout").error.contains("超时")); auto d=s.route(22.5,113.9,list.value[0],RouteMode::Driving); auto w=s.route(22.5,113.9,list.value[0],RouteMode::Walking); QVERIFY(d.value.mock); QVERIFY(w.value.mock); QVERIFY(d.value.mode!=w.value.mode); QVERIFY(d.value.distanceKm!=w.value.distanceKm); }
-void reservationAndSettlement(){ MockUserService s; auto u=s.login("13800000000","123456").value; auto st=s.stations("").value[0]; auto p=s.piles(st.id).value[0]; auto pending=s.createOrder(u.id,st,p); QVERIFY(pending.ok); QCOMPARE(pending.value.status,OrderStatus::PendingReservation); auto reservation=s.confirmReservation(u.id,pending.value.id); QVERIFY(reservation.ok); QCOMPARE(reservation.value.status,OrderStatus::Reserved); QVERIFY(s.startCharging(u.id,reservation.value.id).ok); QVERIFY(s.stopCharging(u.id,reservation.value.id).ok); auto insufficient=s.settle(u.id,reservation.value.id); QVERIFY(!insufficient.ok); QCOMPARE(s.currentOrder(u.id).value.status,OrderStatus::PendingSettlement); QVERIFY(s.recharge(u.id,2000).ok); auto completed=s.settle(u.id,reservation.value.id); QVERIFY(completed.ok); QCOMPARE(completed.value.amountCents,qint64(1860)); QCOMPARE(s.profile(u.id).value.walletBalanceCents,qint64(140)); QVERIFY(!s.settle(u.id,reservation.value.id).ok); }
+void loginValidation(){ MockUserService s; QVERIFY(s.login("").error.contains("手机号")); QVERIFY(s.login("bad").error.contains("手机号格式")); QVERIFY(s.login("13800000000").ok); QVERIFY(s.login("13800000000", "ignored-password").ok); }
+void unauthorizedAndProfilePersistence(){ MockUserService s; QVERIFY(!s.updateProfile("", "x", {}).ok); QVERIFY(!s.recharge("", 1000).ok); auto u=s.login("13800000000").value; QVERIFY(s.updateProfile(u.id,"新昵称","/tmp/avatar.png").ok); auto relogin=s.login("13800000000"); QCOMPARE(relogin.value.displayName, QString("新昵称")); QCOMPARE(relogin.value.avatarPath, QString("/tmp/avatar.png")); }
+void stationAndRoute(){ MockUserService s; auto list=s.stations(""); QCOMPARE(list.value.size(),3); QCOMPARE(list.value[0].totalPiles,2); QCOMPARE(list.value[0].availablePiles,1); QCOMPARE(s.piles(list.value[0].id).value[0].priceCentsPerKwh, qint64(120)); QVERIFY(s.stations("timeout").error.contains("超时")); auto d=s.route(22.5,113.9,list.value[0],RouteMode::Driving); auto w=s.route(22.5,113.9,list.value[0],RouteMode::Walking); QVERIFY(d.value.mock); QVERIFY(w.value.mock); QVERIFY(d.value.mode!=w.value.mode); QVERIFY(d.value.distanceKm!=w.value.distanceKm); }
+void socketAdapterFailureCode(){ SocketUserService s(QStringLiteral("127.0.0.1"), 1, 100); auto result=s.login(QStringLiteral("13800000000")); QVERIFY(!result.ok); QVERIFY(result.code == 1500 || result.code == 1000); }
+void socketAdapterUnauthorizedGuards(){ SocketUserService s(QStringLiteral("127.0.0.1"), 1, 100); QCOMPARE(s.login("").code, 1002); QCOMPARE(s.profile("").code, 1100); QCOMPARE(s.recharge("", 100).code, 1100); QCOMPARE(s.currentOrder("").code, 1100); QCOMPARE(s.createOrder("", {}, {}).code, 1100); }
+void socketAdapterLifecycle(){
+  if (qEnvironmentVariable("EV_RUN_SOCKET_INTEGRATION") != QStringLiteral("1"))
+    QSKIP("set EV_RUN_SOCKET_INTEGRATION=1 to run against the B service");
+  SocketUserService s;
+  const auto user = s.login(QStringLiteral("13600136000"));
+  QVERIFY2(user.ok, qPrintable(user.error));
+  const auto current = s.currentOrder(user.value.id);
+  QVERIFY2(current.ok, qPrintable(current.error));
+  Order order = current.value;
+  if (order.id.isEmpty()) {
+    const auto stationResult = s.stations(QString());
+    QVERIFY2(stationResult.ok, qPrintable(stationResult.error));
+    bool created = false;
+    for (const Station &station : stationResult.value) {
+      const auto pileResult = s.piles(station.id);
+      QVERIFY2(pileResult.ok, qPrintable(pileResult.error));
+      for (const Pile &pile : pileResult.value) {
+        if (pile.status != PileStatus::Idle) continue;
+        const auto pending = s.createOrder(user.value.id, station, pile);
+        QVERIFY2(pending.ok, qPrintable(pending.error));
+        order = pending.value;
+        created = true;
+        break;
+      }
+      if (created) break;
+    }
+    QVERIFY2(created, "integration database has no idle pile");
+  }
+  if (order.status == OrderStatus::PendingReservation) {
+    const auto confirmed = s.confirmReservation(user.value.id, order.id);
+    QVERIFY2(confirmed.ok, qPrintable(confirmed.error));
+    order = confirmed.value;
+  }
+  if (order.status == OrderStatus::Reserved) {
+    const auto started = s.startCharging(user.value.id, order.id);
+    QVERIFY2(started.ok, qPrintable(started.error));
+    order = started.value;
+  }
+  QCOMPARE(order.status, OrderStatus::Charging);
+  const auto stopped = s.stopCharging(user.value.id, order.id);
+  QVERIFY2(stopped.ok, qPrintable(stopped.error));
+  order = stopped.value;
+  QCOMPARE(order.status, OrderStatus::PendingSettlement);
+  const auto settled = s.settle(user.value.id, order.id);
+  QVERIFY2(settled.ok, qPrintable(settled.error));
+  QCOMPARE(settled.value.status, OrderStatus::Completed);
+  const auto history = s.orderHistory(user.value.id);
+  QVERIFY2(history.ok, qPrintable(history.error));
+  QVERIFY(!history.value.isEmpty());
+  QCOMPARE(history.value.first().status, OrderStatus::Completed);
+}
+void socketAdapterProfileWallet(){
+  if (qEnvironmentVariable("EV_RUN_SOCKET_INTEGRATION") != QStringLiteral("1"))
+    QSKIP("set EV_RUN_SOCKET_INTEGRATION=1 to run against the B service");
+  SocketUserService s;
+  const auto login = s.login(QStringLiteral("13200132000"));
+  QVERIFY2(login.ok, qPrintable(login.error));
+  const auto profile = s.profile(login.value.id);
+  QVERIFY2(profile.ok, qPrintable(profile.error));
+  QCOMPARE(profile.value.phone, QStringLiteral("13200132000"));
+  const auto updated = s.updateProfile(login.value.id, QStringLiteral("Socket用户"), QStringLiteral("avatars/socket.png"));
+  QVERIFY2(updated.ok, qPrintable(updated.error));
+  QCOMPARE(updated.value.displayName, QStringLiteral("Socket用户"));
+  QCOMPARE(updated.value.avatarPath, QStringLiteral("avatars/socket.png"));
+  const auto balance = s.recharge(login.value.id, 5000);
+  QVERIFY2(balance.ok, qPrintable(balance.error));
+  QVERIFY(balance.value >= 5000);
+}
+void socketAdapterFrozenPolicy(){
+  if (qEnvironmentVariable("EV_RUN_SOCKET_INTEGRATION") != QStringLiteral("1"))
+    QSKIP("set EV_RUN_SOCKET_INTEGRATION=1 to run against the B service");
+  SocketUserService s;
+  const auto login = s.login(QStringLiteral("13700137000"));
+  QVERIFY2(login.ok, qPrintable(login.error));
+  QCOMPARE(login.value.status, UserStatus::Frozen);
+  QVERIFY2(s.profile(login.value.id).ok, "frozen profile read must remain allowed");
+  const auto current = s.currentOrder(login.value.id);
+  QVERIFY2(current.ok, qPrintable(current.error));
+  const auto recharge = s.recharge(login.value.id, 100);
+  QVERIFY(!recharge.ok);
+  QCOMPARE(recharge.code, 1101);
+  QVERIFY(recharge.error.contains(QStringLiteral("冻结")));
+}void reservationAndSettlement(){ MockUserService s; auto u=s.login("13800000000").value; auto st=s.stations("").value[0]; auto p=s.piles(st.id).value[0]; auto pending=s.createOrder(u.id,st,p); QVERIFY(pending.ok); QCOMPARE(pending.value.status,OrderStatus::PendingReservation); auto reservation=s.confirmReservation(u.id,pending.value.id); QVERIFY(reservation.ok); QCOMPARE(reservation.value.status,OrderStatus::Reserved); QVERIFY(s.startCharging(u.id,reservation.value.id).ok); QVERIFY(s.stopCharging(u.id,reservation.value.id).ok); auto insufficient=s.settle(u.id,reservation.value.id); QVERIFY(!insufficient.ok); QCOMPARE(s.currentOrder(u.id).value.status,OrderStatus::PendingSettlement); QVERIFY(s.recharge(u.id,2000).ok); auto completed=s.settle(u.id,reservation.value.id); QVERIFY(completed.ok); QCOMPARE(completed.value.amountCents,qint64(1860)); QCOMPARE(s.profile(u.id).value.walletBalanceCents,qint64(140)); QVERIFY(!s.settle(u.id,reservation.value.id).ok); }
 };
 QTEST_MAIN(ClientServiceTest)
 #include "client_service_test.moc"

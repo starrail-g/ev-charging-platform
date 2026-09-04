@@ -1,6 +1,6 @@
-# User client (A-S1-02)
+# User client (A-S1-02 / A-S1-03)
 
-Qt Widgets user-facing client baseline. It deliberately uses `MockUserService` until B-S1-02 Socket and B-S1-01 data contracts are frozen. Pages are centrally coordinated by `UserWindow` and `SessionManager`.
+Qt Widgets user-facing client baseline. It defaults to deterministic `MockUserService`; `SocketUserService` is available behind an explicit environment switch and follows the v1 contract. Pages are centrally coordinated by `UserWindow` and `SessionManager`.
 
 ## Run
 
@@ -26,7 +26,9 @@ make -j"$(nproc)"
 QT_QPA_PLATFORM=offscreen ./ev-user-client-tests -txt
 ```
 
-The client starts in deterministic Mock mode. Demo credentials are `13800000000 / 123456`. Registration is two-step: valid phone, password and matching confirmation first; nickname is entered on the second step. Password fields have show/hide eye buttons. `timeout`, `error`, and `server-error` inputs expose failure states without leaking internals.
+The client starts in deterministic Mock mode. Set `EV_USER_CLIENT_TRANSPORT=socket` to select `SocketUserService`; the adapter sends protocol v1 envelopes with UUID request IDs to `EV_SERVER_HOST`/`EV_SERVER_PORT` (defaults `127.0.0.1:45454`). Against B PR #4 latest head 20a3815 (PR #4 merged main; Schema v0.3), login, profile update, wallet recharge, station/pile queries, active/history orders, reservation transitions, and charging start/stop/settlement are available. Frozen accounts return status=frozen; the adapter maps 1101 ACCOUNT_FROZEN, 1202 INSUFFICIENT_BALANCE, timeout and connection failures to user-readable messages. Login is phone-only per protocol v1; the registration page remains a Mock-only convenience flow until a server registration operation is defined.
+
+Demo credentials are `13800000000`. Registration is two-step: valid phone, password and matching confirmation first; nickname is entered on the second step. Password fields have show/hide eye buttons. `timeout`, `error`, and `server-error` inputs expose failure states without leaking internals.
 
 The home page uses separated dark station cards with light-blue rounded borders and white text, and displays idle-pile count over total-pile count; price is shown only in the station/pile detail and order confirmation. The top-right shortcut buttons were removed in favor of the bottom navigation. The charging page is the single current-status entry and includes a deterministic completed-charge history plus a summary; opening it from the bottom bar does not show the unfinished-order dialog. That dialog appears only when selecting another pile while an order is charging or awaiting settlement. Cancelling an unconfirmed pile selection returns to the pile detail page. Station and pile cards share the same dark/light-blue/white visual treatment.
 
@@ -38,7 +40,7 @@ After selecting an idle pile, the confirmation row provides both `确认创建�
 
 ## Adapter boundary
 
-`IUserService` is the replacement point for B's eventual Socket client. DTOs, pile/order status mapping, completion-time mapping, success/error responses, timeout/connection errors, dynamic pile availability, reservation cancellation and deterministic sample data live in `src/client_service.*`; page code does not access SQLite or wire fields. `orderHistory()` and `cancelReservation()` are temporary contracts and should be mapped to B's final endpoints later.
+`IUserService` is the replacement point for B's eventual Socket client. `SocketUserService` is the protocol-v1 implementation and reuses `libs/protocol/protocol.pri`; it sends protocol integer IDs, accepts the canonical B station/pile/order fields, and propagates numeric error codes. In the merged PR #4 contract, `station.list` supplies `pile_total/pile_idle/pile_reserved/pile_charging` but no price or distance; `pile.list` supplies `unit_price_cents_per_kwh`, which is stored on each `Pile`. When the server does not provide a distance, the UI shows `距离待定位` instead of inventing a value. DTOs, pile/order status mapping, completion-time mapping, success/error responses, timeout/connection errors, dynamic pile availability, reservation cancellation and deterministic sample data live in `src/client_service.*`; page code does not access SQLite or wire fields. `orderHistory()` maps B's `order.history.list` operation; profile/recharge map B's persisted integer-cent responses. All protocol field/status changes remain isolated in `SocketUserService`.
 
 ## A-S1-02 checklist
 

@@ -36,26 +36,24 @@ MockUserService::MockUserService() {
       {QStringLiteral("S002"), QStringLiteral("软件园南区"), QStringLiteral("学府大道 88 号"), 22.5268, 113.9432, 3.8, true, 1, 135, 1},
       {QStringLiteral("S003"), QStringLiteral("滨海停车场"), QStringLiteral("后海大道 6 号"), 22.5154, 113.9461, 6.1, false, 0, 110, 0}};
   pileData_ = {
-      {QStringLiteral("P001"), QStringLiteral("A01"), QStringLiteral("直流快充"), PileStatus::Idle, 120, QStringLiteral("S001")},
-      {QStringLiteral("P002"), QStringLiteral("A02"), QStringLiteral("交流慢充"), PileStatus::Charging, 7, QStringLiteral("S001")},
-      {QStringLiteral("P003"), QStringLiteral("B01"), QStringLiteral("直流快充"), PileStatus::Fault, 60, QStringLiteral("S002")},
-      {QStringLiteral("P004"), QStringLiteral("C01"), QStringLiteral("直流快充"), PileStatus::Idle, 90, QStringLiteral("S002")}};
+      {QStringLiteral("P001"), QStringLiteral("A01"), QStringLiteral("直流快充"), PileStatus::Idle, 120, 120, QStringLiteral("S001")},
+      {QStringLiteral("P002"), QStringLiteral("A02"), QStringLiteral("交流慢充"), PileStatus::Charging, 7, 120, QStringLiteral("S001")},
+      {QStringLiteral("P003"), QStringLiteral("B01"), QStringLiteral("直流快充"), PileStatus::Fault, 60, 135, QStringLiteral("S002")},
+      {QStringLiteral("P004"), QStringLiteral("C01"), QStringLiteral("直流快充"), PileStatus::Idle, 90, 135, QStringLiteral("S002")}};
 }
 
 bool isValidPhone(const QString &phone) { return QRegularExpression(QStringLiteral("^1[3-9]\\d{9}$")).match(phone).hasMatch(); }
 
-Result<User> MockUserService::login(const QString &phone, const QString &password) {
-  if (phone == QStringLiteral("timeout")) return Result<User>::failure(QStringLiteral("请求超时，请稍后重试"));
-  if (phone == QStringLiteral("server-error")) return Result<User>::failure(QStringLiteral("服务暂不可用"));
-  if (phone.trimmed().isEmpty()) return Result<User>::failure(QStringLiteral("请输入手机号"));
-  if (!isValidPhone(phone)) return Result<User>::failure(QStringLiteral("手机号格式错误"));
-  if (password.isEmpty()) return Result<User>::failure(QStringLiteral("请输入密码"));
-  if (password.size() < 6) return Result<User>::failure(QStringLiteral("密码长度不能少于 6 位"));
-  if (phone == registeredPhone_ and password != registeredPassword_) return Result<User>::failure(QStringLiteral("密码错误"));
-  if (phone != registeredPhone_) { registeredPhone_ = phone; registeredPassword_ = password; registeredDisplayName_ = QStringLiteral("用户") + phone.right(4); registeredAvatarPath_.clear(); walletBalanceCents_ = 0; activeOrder_ = Order{}; orderHistory_.clear(); }
+Result<User> MockUserService::login(const QString &phone) {
+  if (phone == QStringLiteral("timeout")) return Result<User>::failure(1500, QStringLiteral("请求超时，请稍后重试"));
+  if (phone == QStringLiteral("server-error")) return Result<User>::failure(1500, QStringLiteral("服务暂不可用"));
+  if (phone.trimmed().isEmpty()) return Result<User>::failure(1002, QStringLiteral("请输入手机号"));
+  if (!isValidPhone(phone)) return Result<User>::failure(1002, QStringLiteral("手机号格式错误"));
+  if (phone != registeredPhone_) { registeredPhone_ = phone; registeredDisplayName_ = QStringLiteral("用户") + phone.right(4); registeredAvatarPath_.clear(); walletBalanceCents_ = 0; activeOrder_ = Order{}; orderHistory_.clear(); }
   activeUserId_ = QStringLiteral("U001");
   return Result<User>::success({activeUserId_, registeredPhone_, registeredDisplayName_, walletBalanceCents_, registeredAvatarPath_});
 }
+Result<User> MockUserService::login(const QString &phone, const QString &password) { Q_UNUSED(password); return login(phone); }
 Result<User> MockUserService::registerUser(const QString &phone, const QString &password, const QString &name) {
   if (phone.trimmed().isEmpty()) return Result<User>::failure(QStringLiteral("请输入手机号"));
   if (!isValidPhone(phone)) return Result<User>::failure(QStringLiteral("手机号格式错误"));
@@ -105,7 +103,8 @@ Result<Order> MockUserService::createOrder(const QString &userId, const Station 
   if (!activeOrder_.id.isEmpty() && activeOrder_.status != OrderStatus::Completed && activeOrder_.status != OrderStatus::Cancelled) return Result<Order>::failure(QStringLiteral("已有活动订单，请先完成结算"));
   if (pile.status != PileStatus::Idle) return Result<Order>::failure(QStringLiteral("该充电桩当前不可用"));
   for (auto &storedPile : pileData_) if (storedPile.id == pile.id && storedPile.stationId == station.id) storedPile.status = PileStatus::Reserved;
-  activeOrder_ = {QStringLiteral("O%1").arg(nextOrder_++), station.id, pile.id, station.name, pile.number, OrderStatus::PendingReservation, station.priceCentsPerKwh, 0, {}, {}}; activeOrder_.stationAddress = station.address; return Result<Order>::success(activeOrder_);
+  const qint64 price = pile.priceCentsPerKwh > 0 ? pile.priceCentsPerKwh : station.priceCentsPerKwh;
+  activeOrder_ = {QStringLiteral("O%1").arg(nextOrder_++), station.id, pile.id, station.name, pile.number, OrderStatus::PendingReservation, price, 0, {}, {}}; activeOrder_.stationAddress = station.address; return Result<Order>::success(activeOrder_);
 }
 Result<Order> MockUserService::confirmReservation(const QString &userId, const QString &orderId) { if (userId.isEmpty() || userId != activeUserId_ || activeOrder_.id != orderId) return Result<Order>::failure(QStringLiteral("订单不存在")); if (activeOrder_.status != OrderStatus::PendingReservation) return Result<Order>::failure(QStringLiteral("当前订单不在待确认状态")); activeOrder_.status = OrderStatus::Reserved; return Result<Order>::success(activeOrder_); }
 Result<Order> MockUserService::cancelReservation(const QString &userId, const QString &orderId) {
@@ -117,6 +116,6 @@ Result<Order> MockUserService::cancelReservation(const QString &userId, const QS
 }
 Result<Order> MockUserService::startCharging(const QString &userId, const QString &orderId) { if (userId.isEmpty() || userId != activeUserId_ || activeOrder_.id != orderId) return Result<Order>::failure(QStringLiteral("订单不存在")); if (activeOrder_.status != OrderStatus::Reserved) return Result<Order>::failure(QStringLiteral("订单状态不允许开始充电")); for (auto &pile : pileData_) if (pile.id == activeOrder_.pileId) pile.status = PileStatus::Charging; activeOrder_.status = OrderStatus::Charging; return Result<Order>::success(activeOrder_); }
 Result<Order> MockUserService::stopCharging(const QString &userId, const QString &orderId) { if (userId.isEmpty() || userId != activeUserId_ || activeOrder_.id != orderId) return Result<Order>::failure(QStringLiteral("订单不存在")); if (activeOrder_.status != OrderStatus::Charging) return Result<Order>::failure(QStringLiteral("当前未在充电")); for (auto &pile : pileData_) if (pile.id == activeOrder_.pileId) pile.status = PileStatus::Idle; activeOrder_.status = OrderStatus::PendingSettlement; activeOrder_.amountCents = 1860; return Result<Order>::success(activeOrder_); }
-Result<Order> MockUserService::settle(const QString &userId, const QString &orderId) { if (userId.isEmpty() || userId != activeUserId_ || activeOrder_.id != orderId) return Result<Order>::failure(QStringLiteral("订单不存在")); if (activeOrder_.status != OrderStatus::PendingSettlement) return Result<Order>::failure(QStringLiteral("订单尚未达到结算条件")); if (walletBalanceCents_ < activeOrder_.amountCents) return Result<Order>::failure(QStringLiteral("余额不足，无法结算 ¥ %1").arg(activeOrder_.amountCents / 100.0, 0, 'f', 2)); walletBalanceCents_ -= activeOrder_.amountCents; activeOrder_.status = OrderStatus::Completed; activeOrder_.completedAt = QStringLiteral("2026-09-02 12:%1").arg(orderHistory_.size(), 2, 10, QChar('0')); if (orderHistory_.isEmpty() || orderHistory_.last().id != activeOrder_.id) orderHistory_.push_back(activeOrder_); return Result<Order>::success(activeOrder_); }
+Result<Order> MockUserService::settle(const QString &userId, const QString &orderId) { if (userId.isEmpty() || userId != activeUserId_ || activeOrder_.id != orderId) return Result<Order>::failure(QStringLiteral("订单不存在")); if (activeOrder_.status != OrderStatus::PendingSettlement) return Result<Order>::failure(QStringLiteral("订单尚未达到结算条件")); if (walletBalanceCents_ < activeOrder_.amountCents) return Result<Order>::failure(QStringLiteral("余额不足，无法结算 ¥ %1").arg(activeOrder_.amountCents / 100.0, 0, 'f', 2)); walletBalanceCents_ -= activeOrder_.amountCents; activeOrder_.status = OrderStatus::Completed; activeOrder_.completedAt = QStringLiteral("2026-09-02T12:%1:00Z").arg(orderHistory_.size(), 2, 10, QChar('0')); if (orderHistory_.isEmpty() || orderHistory_.last().id != activeOrder_.id) orderHistory_.push_back(activeOrder_); return Result<Order>::success(activeOrder_); }
 
 } // namespace ev
