@@ -42,7 +42,6 @@ dist/
 .env
 .env.*
 !example.env
-config/local.env
 
 # IDE
 .vscode/
