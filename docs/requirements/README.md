@@ -20,7 +20,7 @@
 | C-S1-009 | Repository 抽象 + Mock/Socket 双实现，页面不建 Socket 不写 SQL | `apps/admin-client/src/data/*` | C | 无 | 9/2 抽象+Mock / 9/6 Socket | `AdminRepository` 抽象 + `MockAdminRepository` 已建（9/2），`MockAdminRepository` 对接登录 | 已确认 |
 | C-S1-010 | 大屏近 7 日营收趋势图 | `dashboard/index.html` + `js/app.js` | C | B：营收统计字段 | 9/3 | 本地 HTTP 200 + 图表有数据 | 已确认 |
 | C-S1-011 | 大屏桩状态分布图 | 同上 | C | B：桩状态枚举 | 9/3 | 同上 | 已确认 |
-| C-S1-012 | 大屏站点利用率排行图 | 同上 | C | B：利用率口径 | 9/3 | 同上 | 已确认 |
+| C-S1-012 | 大屏站点利用率排行图 | 同上 | C | B：利用率口径 | 9/3 | `admin.station.list[].utilization`，固定 `7d` UTC 口径 | 已确认 |
 | C-S1-013 | 大屏更新时间与数据来源说明 | `dashboard/index.html` | C | 无 | 9/3 | 页面可见 | 已确认 |
 | C-S1-014 | 大屏离线能力：本地 ECharts、不依赖 CDN/外网 | `dashboard/vendor/echarts.min.js` | C | 无 | 9/3 | 断网验证 | 已确认 |
 | C-S1-015 | 大屏离线备用入口（无 fetch、无 CDN） | `dashboard/offline.html` + `offline-data.js` | C | 无 | 9/4 | 断网演示 | 已确认 |
@@ -111,7 +111,7 @@
 | 事项 | 等待对象 | 最晚时间 | 影响 |
 |---|---|---|---|
 | 三接口（登录/概览/桩状态）草案交付 | B | 9/7 18:00 闸门 | C 先行 Mock 口径，不阻塞（admin.login 契约已冻结，B PR #1 已合） |
-| statistics/admin/pile/station/user 字段冻结 | B | 9/4 需求评审 | C Mock 字段对齐（当前按 schema.sql 自拟） |
+| statistics/admin/pile/station/user 字段冻结 | B | 9/4 需求评审 | 已冻结；`admin.statistics.get` 的 `revenue_daily` 为 7/30 条 UTC 日序列，C/Dashboard 适配器按协议映射 |
 | 第一阶段唯一演示链路与答辩顺序 | A | 9/1 内确认 | 影响页面范围冻结 |
 | 课堂派五份材料模板 | 课堂派 | 发布即适配 | 不影响骨架建立 |
 | 构建系统二选一 | A/B | 9/1 15:30 | 已确认 qmake；见 `apps/admin-client/README.md` |

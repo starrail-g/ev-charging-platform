@@ -11,8 +11,9 @@ names needed for the first project stage. The current server implements the
 read/query, user profile/wallet, and user charging lifecycle operations
 (`health`, `echo`, `user.login`, `user.profile.*`, `wallet.recharge`,
 `station.list`, `pile.list`, `order.active.get`, `order.history.list`,
-`reservation.*`, and `charging.*`). Administrator operations remain
-contracted and will be implemented against the database service.
+`reservation.*`, `charging.*`, and the administrator operations listed below).
+The administrator wire operations are implemented by the server on this branch;
+the Qt adapter remains pending.
 
 ## Transport and Framing
 
@@ -112,13 +113,13 @@ The following names and payloads are reserved for v1. Result types append
 | `charging.start` | `user_id`, `order_id` for a reservation, or `pile_id` for direct start | `charging.start.result`: `order`, `pile` (`charging`) |
 | `charging.stop` | `user_id`, `order_id`, optional `ended_at` | `charging.stop.result`: `order`, `estimated_amount_cents` |
 | `charging.settle` | `user_id`, `order_id` | `charging.settle.result`: `order`, `balance_cents` |
-| `admin.login` | `username`, `password` | `admin.login.result`: `admin` |
-| `admin.statistics.get` | `range` (`7d` or `30d`) | `admin.statistics.get.result`: `statistics` |
-| `admin.station.list` | optional `query` | `admin.station.list.result`: `stations` |
-| `admin.station.create` | `name`, `address`, `latitude`, `longitude`, `pile_count` | `admin.station.create.result`: `station` |
-| `admin.pile.restart` | `pile_id` | `admin.pile.restart.result`: `pile` |
-| `admin.user.list` | optional `phone_query` | `admin.user.list.result`: `users` (each user includes `active_order_status`) |
-| `admin.user.status.set` | `user_id`, `status` (`active` or `frozen`) | `admin.user.status.set.result`: `user` |
+| `admin.login` | `username`, `password` | `admin.login.result`: `admin`, short-lived `token`, `expires_in_seconds` |
+| `admin.statistics.get` | `token`, `range` (`7d` or `30d`) | `admin.statistics.get.result`: `statistics`（含固定长度 `revenue_daily`） |
+| `admin.station.list` | `token`, optional `query` | `admin.station.list.result`: `stations` |
+| `admin.station.create` | `token`, `administrator_id`, `name`, `address`, `latitude`, `longitude`, `pile_count` | `admin.station.create.result`: `station` |
+| `admin.pile.restart` | `token`, `administrator_id`, `pile_id` | `admin.pile.restart.result`: `pile` |
+| `admin.user.list` | `token`, optional `phone_query` | `admin.user.list.result`: `users` (each user includes `active_order_status`) |
+| `admin.user.status.set` | `token`, `administrator_id`, `user_id`, `status` (`active` or `frozen`) | `admin.user.status.set.result`: `user` |
 
 Unless an operation says otherwise, object IDs are integers. Money is always
 an integer number of Chinese fen (`*_cents`), never a floating-point yuan
@@ -127,10 +128,34 @@ value. Timestamps are UTC ISO-8601 strings such as
 
 The `user` object must at least contain `id`, `phone`, `nickname`,
 `balance_cents`, and `status`. In `admin.user.list`, it also contains
-`active_order_status`, one of `pending_reservation`, `reserved`, `charging`,
-`pending_settlement`, or JSON `null`. The `station`, `pile`, `order`, `admin`, and
-`statistics` fields are finalized with the database schema and documented in
-the API reference before their handlers are enabled.
+`avatar_path`, `created_at`, and `active_order_status`; `active_order_status` is
+one of `pending_reservation`, `reserved`, `charging`, `pending_settlement`,
+or JSON `null`. The `station`, `pile`, `order`, `admin`, and `statistics`
+fields follow the database schema and the response examples in the API
+reference.
+
+`admin.statistics.get` returns a UTC calendar-day revenue series in
+`statistics.revenue_daily`. The array contains exactly 7 or 30 entries for
+the requested range, ordered from the oldest day to the current UTC day;
+days without completed orders are included with zero values. Each entry has
+`date` (`YYYY-MM-DD`), `revenue_cents`, `completed_order_count`, and
+`energy_wh`. The top-level `revenue_cents`, `completed_order_count`, and
+`energy_wh` fields are the sums of that same array, so a client can map
+`revenue_daily[*].revenue_cents` to the 7-day or 30-day trend series without
+reconstructing or merging rolling windows.
+
+Admin station responses include `utilization` and `utilization_range` (`"7d"`).
+The utilization range is always the most recent seven UTC calendar days. For
+each station, utilization is the total intersection of `started_at`–`ended_at`
+charging intervals for orders in `charging`, `pending_settlement`, or
+`completed` status divided by the sum, over every pile, of
+`period_end - max(period_start, pile.created_at)`. An open `charging` order
+uses `period_end` when `ended_at` is null; `reserved`, `pending_reservation`,
+and `cancelled` orders do not contribute, and `fault`/`offline` time remains in
+the denominator. `admin.statistics.get.statistics.avg_station_utilization`
+is the unweighted arithmetic mean of the same per-station values. A newly
+created station response includes `utilization: 0.0` and
+`utilization_range: "7d"`.
 
 Pile status values are `idle`, `reserved`, `charging`, `fault`, and `offline`.
 Order status values are `pending_reservation`, `reserved`, `charging`,
@@ -153,8 +178,10 @@ Order status values are `pending_reservation`, `reserved`, `charging`,
   not retry the same action with a new ID.
 - Idempotency currently covers `reservation.create`,
   `reservation.confirm`, `reservation.cancel`, `charging.start`,
-  `charging.stop`, `charging.settle`, `user.profile.update`, and
-  `wallet.recharge`. Read operations do not require persistence records.
+  `charging.stop`, `charging.settle`, `user.profile.update`,
+  `wallet.recharge`, `admin.station.create`, `admin.pile.restart`, and
+  `admin.user.status.set`. Read operations and `admin.login` do not create
+  persistence records.
 - Request IDs are currently globally unique in the server database across
   users and operations; clients must not reuse an ID for another request.
 - Login always succeeds for an existing frozen account and returns
@@ -178,19 +205,27 @@ Order status values are `pending_reservation`, `reserved`, `charging`,
 - `charging.start` accepts either a confirmed reservation `order_id` or an
   idle `pile_id` for direct start. The direct path creates the charging order
   and changes the pile from `idle` to `charging` in one transaction.
-- A client connection is not an authentication session in v1. Until a
-  token/session design is explicitly added, handlers verify the IDs and
-  credentials supplied by their payloads. Administrative request access is
-  restricted by the corresponding verified administrator context when that
-  handler is implemented.
+- `admin.pile.restart` is a fault-recovery action. Only `fault` and `offline`
+  piles may transition to `idle` (with `restart_count` and audit log updated).
+  `idle`, `reserved`, and `charging` piles return `CONFLICT`; the rejected
+  request only records the audit attempt and does not interrupt a reservation
+  or an active charging session.
+- `admin.login` verifies username/password and returns a cryptographically
+  random, process-local token valid for 8 hours. Every other `admin.*` request
+  must carry that token; missing, unknown, expired, or mismatched tokens return
+  `UNAUTHORIZED` (1100). Mutation requests continue to carry
+  `administrator_id`, which must match the token subject and is checked for
+  active status and required role. Tokens are invalidated when the server
+  restarts; v1 does not persist sessions.
 
 ## Current Implementation
 
 `libs/protocol` implements envelope validation and incremental frame
 encoding/decoding. `server` accepts multiple TCP clients and currently
 implements `health`, `echo`, `user.login`, station/pile, active-order and
-order-history queries, reservation transitions, and charging
-start/stop/settlement; unknown operations return `INVALID_REQUEST`.
+order-history queries, reservation transitions, charging start/stop/settlement,
+and the administrator operations in the contract table; unknown operations
+return `INVALID_REQUEST`.
 When a read contains valid messages before a malformed frame, the server
 dispatches the valid messages before returning the frame error and closing
 that connection.

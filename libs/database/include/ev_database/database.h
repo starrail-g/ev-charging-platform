@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QDateTime>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSqlDatabase>
@@ -51,6 +53,26 @@ public:
                         QString *error = nullptr, ErrorKind *kind = nullptr);
     bool listOrderHistory(qint64 userId, QJsonArray *orders, QString *error = nullptr,
                           ErrorKind *kind = nullptr);
+    bool loginAdministrator(const QString &username, const QString &password,
+                            QJsonObject *administrator, QString *error = nullptr,
+                            ErrorKind *kind = nullptr);
+    bool getAdministrator(qint64 administratorId, QJsonObject *administrator,
+                          QString *error = nullptr, ErrorKind *kind = nullptr);
+    bool getStatistics(const QString &range, QJsonObject *statistics,
+                       QString *error = nullptr, ErrorKind *kind = nullptr);
+    bool listAdminStations(const QString &queryText, QJsonArray *stations,
+                           QString *error = nullptr, ErrorKind *kind = nullptr);
+    bool createStation(const QString &requestId, qint64 administratorId, const QString &name,
+                       const QString &address, double latitude, double longitude,
+                       qint64 pileCount, QJsonObject *station,
+                       QString *error = nullptr, ErrorKind *kind = nullptr);
+    bool restartPile(const QString &requestId, qint64 administratorId, qint64 pileId, QJsonObject *pile,
+                     QString *error = nullptr, ErrorKind *kind = nullptr);
+    bool listAdminUsers(const QString &phoneQuery, QJsonArray *users,
+                        QString *error = nullptr, ErrorKind *kind = nullptr);
+    bool setUserStatus(const QString &requestId, qint64 administratorId, qint64 userId, const QString &status,
+                       QJsonObject *user, QString *error = nullptr,
+                       ErrorKind *kind = nullptr);
     bool createReservation(const QString &requestId, qint64 userId, qint64 pileId, QJsonObject *order,
                            QJsonObject *pile, QString *error = nullptr,
                            ErrorKind *kind = nullptr);
@@ -85,6 +107,11 @@ private:
     bool saveRequest(const QString &requestId, const QString &operation,
                      const QString &fingerprint, const QJsonObject &response,
                      QString *error, ErrorKind *kind);
+    bool getStationUtilizations(const QDateTime &periodStart, const QDateTime &periodEnd,
+                                QHash<qint64, double> *utilizations,
+                                QString *error = nullptr, ErrorKind *kind = nullptr);
+    bool checkAdministrator(qint64 administratorId, bool superAdminOnly,
+                            QString *error, ErrorKind *kind);
     void setFailure(QString *error, ErrorKind *kind, ErrorKind value,
                     const QString &message) const;
     void close();

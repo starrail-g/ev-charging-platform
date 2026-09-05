@@ -164,3 +164,45 @@ SQLite（用户、站点、桩、订单、管理员）
 - [x] 跑通 `user.login` 请求写入/读取 SQLite 并返回响应的验证程序。
 - [x] 把接口样例和启动命令交给 A/C，登记未决问题；管理员接口和真实
       A/C Socket 适配仍列为后续联调任务。
+
+## 7. PR #4 合并后的开发计划
+
+PR #4 已合并到 `main`（merge commit `20a3815`）。后续开发必须从最新
+`main` 新建任务分支，不能继续在已合并的功能分支上直接开发。
+
+### 第一优先级：管理员服务端接口（B）
+
+- 实现并测试 `admin.login`、`admin.statistics.get`、`admin.station.list`、
+  `admin.station.create`、`admin.pile.restart`、`admin.user.list` 和
+  `admin.user.status.set`。
+- `admin.statistics.get` 的 `7d`/`30d` 响应必须同时返回固定长度、按 UTC
+  日升序且缺失日补零的 `revenue_daily`；聚合营收、订单数和能耗必须与序列求和一致，
+  供 C/Dashboard 绘制趋势图。
+- 站点利用率统一按最近 7 个 UTC 自然日的订单时长交集/桩可提供时长计算；
+  `admin.station.list` 与 `admin.statistics.get.avg_station_utilization` 复用同一口径，
+  后者为各站点利用率的算术平均。
+- `admin.user.list` 的用户对象必须返回 `active_order_status`，并继续遵守
+  v1 错误码、整数金额、UTC 时间和数据库事务约束。
+- 为 C 提供请求/响应样例、种子数据、启动命令和稳定错误场景。
+
+### 第二优先级：真实用户端 Socket 联调（A/B）
+
+- A 实现 `SocketUserService`，对接现有 Protocol v1 用户接口。
+- 覆盖登录、资料、钱包、站点/电桩、订单历史、预约、充电、停止和结算。
+- 保留 Mock/离线回退；不得让用户端直接访问运行时 SQLite。
+- 验证半包/粘包、断连、错误码和 request id 重放。
+
+### 第三优先级：跨模块验收（A/B/C）
+
+- 在干净数据库上执行 schema v0.3 和 seed，启动服务端并完成真实主链路。
+- 验证管理端能观察用户端造成的订单、桩、余额和统计变化。
+- 补齐并发预约、并发结算、冻结用户、余额不足、数据库失败回滚和
+  v0.2→v0.3 升级路径的端到端证据。
+- 记录 `qmake6` 版本、`.pro` 配置命令、`make` 命令、smoke/并发/端到端
+  测试结果，以及仍未实现的接口。
+
+### 第四优先级：阶段 II 增强
+
+- 将同步数据库操作移出 Socket 事件循环，采用明确所有权和有界并发策略。
+- 完善营收/利用率统计、Dashboard 数据链路和 ML 预测、推荐、预警接口。
+- 所有跨模块变更继续同步 `current.md`、协议文档、数据库文档和 API 样例。
