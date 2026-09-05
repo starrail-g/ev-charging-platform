@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import struct
+from datetime import datetime, timedelta
 
 
 HOST = os.getenv("EV_SERVER_HOST", "127.0.0.1")
@@ -44,7 +45,31 @@ assert_error(exchange(request("admin-bad-login", "admin.login", {
 
 statistics = exchange(request("admin-statistics", "admin.statistics.get", {"range": "30d"}))
 assert statistics["type"] == "admin.statistics.get.result", statistics
-assert statistics["payload"]["statistics"]["revenue_cents"] >= 0
+statistics_payload = statistics["payload"]["statistics"]
+daily = statistics_payload["revenue_daily"]
+assert len(daily) == 30, daily
+today = datetime.fromisoformat(
+    statistics_payload["updated_at"].replace("Z", "+00:00")).date()
+expected_dates = [(today - timedelta(days=offset)).isoformat() for offset in range(29, -1, -1)]
+assert [row["date"] for row in daily] == expected_dates, daily
+assert all(set(("date", "revenue_cents", "completed_order_count", "energy_wh"))
+           <= set(row) for row in daily)
+assert statistics_payload["revenue_cents"] == sum(row["revenue_cents"] for row in daily)
+assert statistics_payload["completed_order_count"] == sum(
+    row["completed_order_count"] for row in daily)
+assert statistics_payload["energy_wh"] == sum(row["energy_wh"] for row in daily)
+
+statistics_7d = exchange(request("admin-statistics-7d", "admin.statistics.get", {"range": "7d"}))
+assert statistics_7d["type"] == "admin.statistics.get.result", statistics_7d
+statistics_7d_payload = statistics_7d["payload"]["statistics"]
+daily_7d = statistics_7d_payload["revenue_daily"]
+assert len(daily_7d) == 7, daily_7d
+today_7d = datetime.fromisoformat(
+    statistics_7d_payload["updated_at"].replace("Z", "+00:00")).date()
+expected_dates_7d = [(today_7d - timedelta(days=offset)).isoformat() for offset in range(6, -1, -1)]
+assert [row["date"] for row in daily_7d] == expected_dates_7d, daily_7d
+assert statistics_7d_payload["revenue_cents"] == sum(
+    row["revenue_cents"] for row in daily_7d)
 
 stations = exchange(request("admin-stations", "admin.station.list", {}))
 assert stations["type"] == "admin.station.list.result", stations

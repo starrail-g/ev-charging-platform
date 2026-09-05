@@ -33,7 +33,10 @@ the backend traceability matrix.
 and dashboard queries. They derive values from source tables and must not be
 written directly. `revenue_daily` groups completed orders by `settled_at`,
 because revenue becomes final when wallet settlement succeeds; `ended_at`
-remains the physical charging-end timestamp for operational metrics.
+remains the physical charging-end timestamp for operational metrics. The
+`admin.statistics.get` service fills missing UTC calendar days with zero rows
+and returns a fixed 7-day or 30-day series; its aggregate revenue/order/energy
+fields are calculated from that same series.
 
 ## Status transitions
 

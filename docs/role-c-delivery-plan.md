@@ -81,7 +81,7 @@
 
 | 节点 | 依赖 | C 侧动作 |
 |---|---|---|
-| 9/4 需求评审 | B 冻结 admin / statistics / pile / station / user 字段、金额单位、时间格式、错误码 | 按结论对齐 Mock 模型；未确认项记入 `docs/api/README.md` 风险表，不在仓库写"已与 A/B 确认" |
+| 9/4 需求评审 | B 冻结 admin / statistics / pile / station / user 字段、金额单位、时间格式、错误码 | 已完成；统计趋势使用 `statistics.revenue_daily[*].revenue_cents`，真实 Socket 适配仍待联调 |
 | 9/4 前 | B 修复 P0 迁移原子性（C-S1-001）、P1 坏帧（C-S1-002） | 复验脚本已就绪：迁移失败保持旧版本 / 同批好帧保留；通过后关闭缺陷条目 |
 | 9/7 18:00 | 接口闸门：登录 / 概览 / 桩状态可运行 | 预判 `statistics.get` 可能不可用；若未过闸门，按规则申请 A 书面批准 Mock 降级，材料不冒充真实联调 |
 | 阶段二 | Socket 真实联调 | 依 B 服务端进度推进；`statistics.get` 若排至 9/11 后，概览先按 Mock + 风险标注 |

@@ -114,7 +114,7 @@ The following names and payloads are reserved for v1. Result types append
 | `charging.stop` | `user_id`, `order_id`, optional `ended_at` | `charging.stop.result`: `order`, `estimated_amount_cents` |
 | `charging.settle` | `user_id`, `order_id` | `charging.settle.result`: `order`, `balance_cents` |
 | `admin.login` | `username`, `password` | `admin.login.result`: `admin` |
-| `admin.statistics.get` | `range` (`7d` or `30d`) | `admin.statistics.get.result`: `statistics` |
+| `admin.statistics.get` | `range` (`7d` or `30d`) | `admin.statistics.get.result`: `statistics`（含固定长度 `revenue_daily`） |
 | `admin.station.list` | optional `query` | `admin.station.list.result`: `stations` |
 | `admin.station.create` | `administrator_id`, `name`, `address`, `latitude`, `longitude`, `pile_count` | `admin.station.create.result`: `station` |
 | `admin.pile.restart` | `administrator_id`, `pile_id` | `admin.pile.restart.result`: `pile` |
@@ -133,6 +133,16 @@ one of `pending_reservation`, `reserved`, `charging`, `pending_settlement`,
 or JSON `null`. The `station`, `pile`, `order`, `admin`, and `statistics`
 fields follow the database schema and the response examples in the API
 reference.
+
+`admin.statistics.get` returns a UTC calendar-day revenue series in
+`statistics.revenue_daily`. The array contains exactly 7 or 30 entries for
+the requested range, ordered from the oldest day to the current UTC day;
+days without completed orders are included with zero values. Each entry has
+`date` (`YYYY-MM-DD`), `revenue_cents`, `completed_order_count`, and
+`energy_wh`. The top-level `revenue_cents`, `completed_order_count`, and
+`energy_wh` fields are the sums of that same array, so a client can map
+`revenue_daily[*].revenue_cents` to the 7-day or 30-day trend series without
+reconstructing or merging rolling windows.
 
 Pile status values are `idle`, `reserved`, `charging`, `fault`, and `offline`.
 Order status values are `pending_reservation`, `reserved`, `charging`,

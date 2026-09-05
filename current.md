@@ -40,16 +40,19 @@ formal project artifacts.
 - C admin client now has the restored unified day/night UI, qmake build, async
   Repository boundary, Mock data source, overview/pile/station/user pages and
   UI tests. It still has no real Socket repository.
+- `admin.statistics.get` now returns `revenue_daily` with exactly 7 or 30 UTC
+  calendar-day rows (zero-filled), and aggregate revenue/order/energy values
+  are sums of that returned series. The real Socket adapter still needs to map
+  this series into C/Dashboard models.
 - Cross-team gate: A retains Mock/offline fallback until a real Socket adapter
-  is verified; C's administrator login, statistics, pile, station and user
-  management APIs remain dependent on B-side endpoint implementation.
+  is verified; B's administrator endpoints now exist, while C's real Socket
+  repository and end-to-end management integration remain pending.
 - The clean-database server path can load `EV_DATABASE_SEED_PATH` once during
   initial creation; existing databases are not reseeded.
-- Current checkout is `feature/admin-api` based on `origin/main` at `994e5ff`,
-  with uncommitted administrator API work. The previous feature branch remains
-  at `3189e24`; new work should branch from the latest `main` rather than reuse
-  completed feature branches.
-- Local verification on 2026-09-04 used qmake6/Qt 6.2.4 and external `/tmp`
+- Current checkout is `feature/admin-api` based on `origin/main` at `994e5ff`.
+  Administrator API and daily statistics work are local branch changes; the
+  previous feature branch remains at `3189e24`.
+- Local verification on 2026-09-04/05 used qmake6/Qt 6.2.4 and external `/tmp`
   build directories: protocol tests passed; user-client app and QtTest passed
   (6); admin app build, launch smoke (6), and login-flow tests (7) passed;
   database Python tests passed (10); and server smoke plus concurrency passed
@@ -77,9 +80,9 @@ owns Socket dispatch and error mapping.
 
 ## Next Development Plan
 
-1. **B administrator APIs**: implement `admin.login`, statistics, station/pile
-   queries and mutation endpoints, user list/status changes, and the
-   `active_order_status` field required by C.
+1. **B administrator APIs**: maintain `admin.login`, statistics with daily
+   revenue series, station/pile queries and mutation endpoints, and user
+   list/status changes while resolving the remaining auth/session contract.
 2. **A real Socket adapter**: implement `SocketUserService` against Protocol
    v1 for login, profile, wallet, station/pile, order history, reservation,
    charging and settlement; retain Mock/offline fallback.
@@ -109,9 +112,10 @@ owns Socket dispatch and error mapping.
   mid-transaction SQL failure paths.
 - [ ] Move slow database work off the Socket event-loop thread or define a
   bounded worker/lock strategy.
-- [x] Implement server-side administrator login, statistics, station list/create,
-  pile restart, user list and user status APIs on `feature/admin-api`; real Qt
-  Socket adapters and end-to-end client integration remain open.
+- [x] Implement server-side administrator login, statistics (including 7/30-day
+  zero-filled daily revenue series), station list/create, pile restart, user
+  list and user status APIs on `feature/admin-api`; real Qt Socket adapters and
+  end-to-end client integration remain open.
 - [ ] Implement Socket adapters, dashboard live data integration and intelligent-
   analysis pipeline.
 - [ ] Complete A-S1-03 real Socket adapter and C's management/data integration
@@ -188,3 +192,8 @@ owns Socket dispatch and error mapping.
 - Added server-side administrator login, statistics, station/pile management,
   user listing/status APIs, request replay handling, and administrator API smoke
   coverage; aligned `admin.user.list` with the admin UI's `created_at` field.
+- Confirmed the 9/4 statistics gap: aggregate-only responses could not render
+  trends. Added fixed-length zero-filled UTC daily revenue rows for `7d`/`30d`,
+  aggregate consistency assertions, and updated protocol/API/database docs.
+- Rebuilt the server and reran administrator smoke on 2026-09-05: both daily
+  series lengths and date ordering passed, with aggregates matching row sums.

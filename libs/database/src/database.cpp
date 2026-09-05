@@ -1,10 +1,12 @@
 #include "ev_database/database.h"
 
+#include <QDate>
 #include <QDateTime>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRegularExpression>
@@ -1017,20 +1019,60 @@ bool Database::getStatistics(const QString &range, QJsonObject *statistics,
     if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
 
     const int days = range == QStringLiteral("7d") ? 7 : 30;
+    const QString updatedAt = utcNow();
+    const QDate endDate = QDateTime::fromString(updatedAt, Qt::ISODate).date();
+    const QDate startDate = endDate.addDays(1 - days);
+    if (!startDate.isValid() || !endDate.isValid()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("build statistics date range failed"));
+        return false;
+    }
+
+    // Build a complete calendar series, including zero-value days. The wire
+    // response is consumed by trend charts, so the aggregate and daily rows
+    // must come from the same UTC calendar window and cannot use a rolling
+    // 7*24-hour predicate that would produce a different sum.
+    QHash<QString, QJsonObject> dailyByDate;
     QSqlQuery query(connection_);
     query.prepare(QStringLiteral(
-        "SELECT COALESCE(SUM(total_amount_cents), 0), COUNT(*), "
+        "SELECT substr(settled_at, 1, 10) AS revenue_date, "
+        "COALESCE(SUM(total_amount_cents), 0), COUNT(*), "
         "COALESCE(SUM(energy_wh), 0) FROM charging_orders "
-        "WHERE status = 'completed' AND settled_at >= datetime('now', :offset)"));
-    query.bindValue(QStringLiteral(":offset"), QStringLiteral("-%1 days").arg(days));
-    if (!query.exec() || !query.next()) {
+        "WHERE status = 'completed' AND settled_at IS NOT NULL "
+        "AND substr(settled_at, 1, 10) BETWEEN :start_date AND :end_date "
+        "GROUP BY revenue_date ORDER BY revenue_date"));
+    query.bindValue(QStringLiteral(":start_date"), startDate.toString(Qt::ISODate));
+    query.bindValue(QStringLiteral(":end_date"), endDate.toString(Qt::ISODate));
+    if (!query.exec()) {
         setFailure(error, kind, ErrorKind::Database,
                    QStringLiteral("read revenue statistics failed: %1").arg(queryError(query)));
         return false;
     }
-    const qint64 revenue = query.value(0).toLongLong();
-    const qint64 completedOrders = query.value(1).toLongLong();
-    const qint64 energyWh = query.value(2).toLongLong();
+    while (query.next()) {
+        const QString date = query.value(0).toString();
+        dailyByDate.insert(date, QJsonObject{
+            {QStringLiteral("date"), date},
+            {QStringLiteral("revenue_cents"), query.value(1).toLongLong()},
+            {QStringLiteral("completed_order_count"), query.value(2).toLongLong()},
+            {QStringLiteral("energy_wh"), query.value(3).toLongLong()}});
+    }
+
+    QJsonArray revenueDaily;
+    qint64 revenue = 0;
+    qint64 completedOrders = 0;
+    qint64 energyWh = 0;
+    for (QDate date = startDate; date <= endDate; date = date.addDays(1)) {
+        const QString dateText = date.toString(Qt::ISODate);
+        const QJsonObject row = dailyByDate.value(dateText, QJsonObject{
+            {QStringLiteral("date"), dateText},
+            {QStringLiteral("revenue_cents"), 0},
+            {QStringLiteral("completed_order_count"), 0},
+            {QStringLiteral("energy_wh"), 0}});
+        revenueDaily.append(row);
+        revenue += row.value(QStringLiteral("revenue_cents")).toInteger();
+        completedOrders += row.value(QStringLiteral("completed_order_count")).toInteger();
+        energyWh += row.value(QStringLiteral("energy_wh")).toInteger();
+    }
 
     query.prepare(QStringLiteral(
         "SELECT "
@@ -1057,6 +1099,7 @@ bool Database::getStatistics(const QString &range, QJsonObject *statistics,
     *statistics = QJsonObject{
         {QStringLiteral("range"), range},
         {QStringLiteral("revenue_cents"), revenue},
+        {QStringLiteral("revenue_daily"), revenueDaily},
         {QStringLiteral("completed_order_count"), completedOrders},
         {QStringLiteral("energy_wh"), energyWh},
         {QStringLiteral("pile_idle"), idle},
@@ -1065,7 +1108,7 @@ bool Database::getStatistics(const QString &range, QJsonObject *statistics,
         {QStringLiteral("pile_fault"), fault},
         {QStringLiteral("pile_offline"), offline},
         {QStringLiteral("avg_station_utilization"), utilization},
-        {QStringLiteral("updated_at"), utcNow()},
+        {QStringLiteral("updated_at"), updatedAt},
         {QStringLiteral("has_data"), completedOrders > 0 || totalPiles > 0}};
     return true;
 }

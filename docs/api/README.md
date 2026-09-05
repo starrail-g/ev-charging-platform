@@ -153,7 +153,7 @@ JSON `null`；历史接口只返回 `completed` 订单，按 `settled_at` 倒序
 | 接口 | 用途 | 状态 |
 |---|---|---|
 | `admin.login` | 管理员认证，错误码 1100 | 服务端已实现；无状态 token，后续请求携带 `administrator_id` |
-| `admin.statistics.get` | 营收、桩状态、利用率摘要 | 服务端已实现，支持 `7d` / `30d` |
+| `admin.statistics.get` | 营收、桩状态、利用率摘要和逐日营收序列 | 服务端已实现，支持 `7d` / `30d`，返回固定长度 `revenue_daily` |
 | `admin.pile.restart` | 桩重启和审计 | 服务端已实现；故障/离线桩恢复为空闲，其它状态返回冲突并保留审计记录 |
 | `admin.station.list/create` | 站点查询/创建 | 服务端已实现；创建为超级管理员操作并按请求 ID 幂等 |
 | `admin.user.list/status.set` | 用户查询、冻结/解冻 | 服务端已实现；状态修改为超级管理员操作并按请求 ID 幂等 |
@@ -167,7 +167,7 @@ Socket 任务落地）：
 
 | AdminRepository 方法 | 业务视图语义 | wire 映射策略 |
 |---|---|---|
-| `fetchOverview` | 概览指标（7 日/30 日营收、桩五态、利用率、快照时间） | 分别请求 `admin.statistics.get` 的 `7d` 与 `30d`，再合并两份统计结果 |
+| `fetchOverview` | 概览指标（7 日/30 日营收、桩五态、利用率、快照时间） | 分别请求 `admin.statistics.get` 的 `7d` 与 `30d`；聚合卡片读取 `revenue_cents`，趋势图读取 `statistics.revenue_daily[*].revenue_cents` |
 | `fetchStations` | 管理端全量站点（含桩数/在线率聚合视图） | `admin.station.list` |
 | `fetchUsers` | 管理端全量用户（含注册时间和活动订单状态） | `admin.user.list` |
 | `fetchPiles` | 管理端**全量**桩列表（跨站，桩页过滤/搜索在本端完成） | 逐站 fan-out：`admin.station.list` → 每站 `pile.list(station_id)` → 合并（默认，D5） |
@@ -190,3 +190,34 @@ breaking-change 风险窗口在后续 Socket 实现（新实现类）接入时�
 实现类并保持本契约不变。
 
 接口闸门通过前，管理端 Mock 数据不得冒充真实 Socket 联调结果。
+
+### 管理端统计响应
+
+`admin.statistics.get` 的 `range` 决定逐日序列长度。日期按 UTC 日历日计算，
+从最早日升序排列到当前 UTC 日；没有已完成订单的日期也会返回 0，避免客户端
+因缺失日期错位绘图。`revenue_cents`、`completed_order_count` 和 `energy_wh`
+分别等于 `revenue_daily` 对应字段之和：
+
+```json
+{
+  "v": 1,
+  "id": "admin-statistics-7d",
+  "type": "admin.statistics.get.result",
+  "payload": {
+    "statistics": {
+      "range": "7d",
+      "revenue_cents": 3050,
+      "revenue_daily": [
+        {"date": "2026-08-30", "revenue_cents": 0, "completed_order_count": 0, "energy_wh": 0},
+        {"date": "2026-08-31", "revenue_cents": 3050, "completed_order_count": 1, "energy_wh": 25000},
+        {"date": "2026-09-01", "revenue_cents": 0, "completed_order_count": 0, "energy_wh": 0}
+      ],
+      "completed_order_count": 1,
+      "energy_wh": 25000,
+      "updated_at": "2026-09-05T03:20:00Z"
+    }
+  }
+}
+```
+
+示例仅展示序列中间字段；实际 `7d` 响应包含 7 条、`30d` 响应包含 30 条。

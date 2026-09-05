@@ -111,7 +111,7 @@
 | 事项 | 等待对象 | 最晚时间 | 影响 |
 |---|---|---|---|
 | 三接口（登录/概览/桩状态）草案交付 | B | 9/7 18:00 闸门 | C 先行 Mock 口径，不阻塞（admin.login 契约已冻结，B PR #1 已合） |
-| statistics/admin/pile/station/user 字段冻结 | B | 9/4 需求评审 | C Mock 字段对齐（当前按 schema.sql 自拟） |
+| statistics/admin/pile/station/user 字段冻结 | B | 9/4 需求评审 | 已冻结；`admin.statistics.get` 的 `revenue_daily` 为 7/30 条 UTC 日序列，C/Dashboard 适配器按协议映射 |
 | 第一阶段唯一演示链路与答辩顺序 | A | 9/1 内确认 | 影响页面范围冻结 |
 | 课堂派五份材料模板 | 课堂派 | 发布即适配 | 不影响骨架建立 |
 | 构建系统二选一 | A/B | 9/1 15:30 | 已确认 qmake；见 `apps/admin-client/README.md` |
