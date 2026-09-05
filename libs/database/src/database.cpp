@@ -1276,7 +1276,10 @@ bool Database::listAdminStations(const QString &queryText, QJsonArray *stations,
     }
     if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
 
-    const QDateTime periodEnd = QDateTime::currentDateTimeUtc();
+    // Keep the list snapshot precision aligned with getStatistics()'s
+    // updated_at/period cutoff (whole UTC seconds), avoiding artificial
+    // millisecond differences when the two read endpoints are polled together.
+    const QDateTime periodEnd = QDateTime::fromString(utcNow(), Qt::ISODate);
     const QDateTime periodStart(periodEnd.date().addDays(-6), QTime(0, 0), Qt::UTC);
     QHash<qint64, double> stationUtilizations;
     if (!getStationUtilizations(periodStart, periodEnd, &stationUtilizations, error, kind)) {
