@@ -69,3 +69,8 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 - `docs/role-a-delivery-plan.md` records A's phase-I/II dependencies, acceptance gates and delivery list.
 - `A-S1-01`、`A-S1-02`、`A-S1-03` 已完成；A-S1-04 待进行跨模块最终回归和交付验证。
 - 后续 A 任务包括联调测试、腾讯地图导航优化、智能分析结果展示和最终 qmake6 交付；不得将 Mock 或适配器构建通过误记为真实闭环完成。
+
+## Async callback validity (PR #9 follow-up)
+
+- `runService()` captures `SessionManager::generation()` and the active user ID; callbacks are discarded after logout or any session replacement, preventing stale responses from reading or restoring cleared session state.
+- Station queries use a monotonically increasing request generation. Pile queries additionally require both the latest generation and the station ID captured when the request started. Socket mode hides the standalone registration entry because v1 supports phone-only login with first-login auto-creation.

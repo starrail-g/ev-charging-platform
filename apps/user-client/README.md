@@ -56,3 +56,7 @@ After selecting an idle pile, the confirmation row provides both `确认创建�
 - [x] 08 qmake6 build, QtTest and user-client startup evidence
 
 Dependency flow: A-S1-01 → A-S1-02-01 → (02,03) → (04,05) → 08; 06 feeds 02–05; 07 feeds 08. B-S1-01/B-S1-02 provide the future real data/Socket replacement contracts; C-S1-03 provides clean-environment build evidence.
+
+## Async request safety
+
+Socket callbacks are accepted only while their captured session generation and user ID remain current. Station searches discard older request generations; pile results also must match the currently selected station. After logout, pending callbacks are ignored. The Socket login page hides standalone registration because protocol v1 creates a user automatically on first phone-only login.

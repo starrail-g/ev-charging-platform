@@ -96,11 +96,13 @@ class SessionManager {
 public:
   bool isLoggedIn() const { return user_.has_value(); }
   const User &user() const { return *user_; }
-  void setUser(const User &user) { user_ = user; }
-  void clear() { user_.reset(); }
-  void setAvatarPath(const QString &path) { if (user_) user_->avatarPath = path; }
+  quint64 generation() const { return generation_; }
+  void setUser(const User &user) { user_ = user; ++generation_; }
+  void clear() { user_.reset(); ++generation_; }
+  void setAvatarPath(const QString &path) { if (user_) { user_->avatarPath = path; ++generation_; } }
 private:
   std::optional<User> user_;
+  quint64 generation_{0};
 };
 
 } // namespace ev

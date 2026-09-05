@@ -80,6 +80,8 @@ private:
   bool orderConfirmationMode_{false};
   QVector<Station> stationCache_;
   QVector<Pile> pileCache_;
+  quint64 stationRequestGeneration_{0};
+  quint64 pileRequestGeneration_{0};
   QList<QFutureWatcherBase *> activeWatchers_;
 
   QWidget *passwordRow(QLineEdit *&edit) {
@@ -122,13 +124,25 @@ private:
 
   template <typename T, typename Fn, typename Done>
   void runService(Fn fn, Done done) {
-    if (service_ == &mockService_) { done(fn()); return; }
+    const quint64 requestGeneration = session_.generation();
+    const QString requestUserId = session_.isLoggedIn() ? session_.user().id : QString();
+    const auto requestStillValid = [this, requestGeneration, requestUserId] {
+      if (session_.generation() != requestGeneration) return false;
+      if (!requestUserId.isEmpty()) return session_.isLoggedIn() && session_.user().id == requestUserId;
+      return true;
+    };
+    if (service_ == &mockService_) {
+      const auto result = fn();
+      if (requestStillValid()) done(result);
+      return;
+    }
     auto *watcher = new QFutureWatcher<Result<T>>(this);
     activeWatchers_.push_back(watcher);
-    connect(watcher, &QFutureWatcher<Result<T>>::finished, this, [this, watcher, done]() mutable {
+    connect(watcher, &QFutureWatcher<Result<T>>::finished, this, [this, watcher, done, requestStillValid]() mutable {
       const auto result = watcher->result();
       activeWatchers_.removeOne(watcher);
       watcher->deleteLater();
+      if (!requestStillValid()) return;
       done(result);
     });
     watcher->setFuture(QtConcurrent::run(fn));
@@ -155,6 +169,7 @@ private:
     loginButton_->setMinimumHeight(42);
     layout->addWidget(loginButton_);
     registerButton_ = new QPushButton(QStringLiteral("注册新账号"), login_);
+    registerButton_->setVisible(service_ != &socketService_);
     layout->addWidget(registerButton_);
     loginStatus_ = new QLabel(login_);
     loginStatus_->setWordWrap(true);
@@ -440,6 +455,11 @@ private:
   }
 
   void showRegister() {
+    if (service_ == &socketService_) {
+      loginStatus_->setText(QStringLiteral("当前为 Socket 模式：手机号免密登录，首次登录自动注册。"));
+      showLogin();
+      return;
+    }
     regPhone_->clear();
     regPassword_->clear();
     regConfirmPassword_->clear();
@@ -487,7 +507,9 @@ private:
     pileList_->clear();
     pileStatus_->setText(QStringLiteral("正在加载充电桩…"));
     const QString stationId = selectedStation_.id;
-    runService<QVector<Pile>>([this, stationId] { return service_->piles(stationId); }, [this](const Result<QVector<Pile>> &result) {
+    const quint64 requestGeneration = ++pileRequestGeneration_;
+    runService<QVector<Pile>>([this, stationId] { return service_->piles(stationId); }, [this, stationId, requestGeneration](const Result<QVector<Pile>> &result) {
+      if (requestGeneration != pileRequestGeneration_ || selectedStation_.id != stationId) return;
       if (!result.ok) { pileStatus_->setText(result.error); stack_->setCurrentWidget(detail_); return; }
       pileCache_ = result.value;
       if (result.value.isEmpty()) { pileStatus_->setText(QStringLiteral("该站点暂无充电桩")); stack_->setCurrentWidget(detail_); return; }
@@ -521,7 +543,9 @@ private:
     stack_->setCurrentWidget(map_);
     mapStationList_->clear();
     mapStatus_->setText(QStringLiteral("正在加载站点…"));
-    runService<QVector<Station>>([this] { return service_->stations(QString()); }, [this](const Result<QVector<Station>> &result) {
+    const quint64 requestGeneration = ++stationRequestGeneration_;
+    runService<QVector<Station>>([this] { return service_->stations(QString()); }, [this, requestGeneration](const Result<QVector<Station>> &result) {
+      if (requestGeneration != stationRequestGeneration_) return;
       if (!result.ok) { mapStatus_->setText(result.error); return; }
       stationCache_ = result.value;
       for (const auto &station : result.value) {
@@ -551,6 +575,8 @@ private:
   }
 
   void logout() {
+    ++stationRequestGeneration_;
+    ++pileRequestGeneration_;
     session_.clear();
     order_ = Order{};
     selectedStation_ = Station{};
@@ -615,7 +641,9 @@ private:
     stationList_->clear();
     homeStatus_->setText(QStringLiteral("正在查询站点…"));
     const QString query = query_->text().trimmed();
-    runService<QVector<Station>>([this, query] { return service_->stations(query); }, [this](const Result<QVector<Station>> &result) {
+    const quint64 requestGeneration = ++stationRequestGeneration_;
+    runService<QVector<Station>>([this, query] { return service_->stations(query); }, [this, requestGeneration](const Result<QVector<Station>> &result) {
+      if (requestGeneration != stationRequestGeneration_) return;
       if (!result.ok) { homeStatus_->setText(result.error); return; }
       stationCache_ = result.value;
       if (result.value.isEmpty()) { homeStatus_->setText(QStringLiteral("没有匹配站点")); return; }
