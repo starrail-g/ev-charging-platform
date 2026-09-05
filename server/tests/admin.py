@@ -30,6 +30,12 @@ def request(identifier, operation, payload):
     return {"v": 1, "id": identifier, "type": operation, "payload": payload}
 
 
+def admin_request(identifier, operation, payload):
+    payload = dict(payload)
+    payload["token"] = admin_token
+    return request(identifier, operation, payload)
+
+
 def assert_error(response, code):
     assert response["type"] == "error", response
     assert response["payload"]["code"] == code, response
@@ -67,11 +73,35 @@ assert login["type"] == "admin.login.result", login
 administrator = login["payload"]["admin"]
 assert administrator["role"] == "super_admin", administrator
 admin_id = administrator["id"]
+admin_token = login["payload"]["token"]
+assert isinstance(admin_token, str) and len(admin_token) == 64
+assert login["payload"]["expires_in_seconds"] > 0
 
 assert_error(exchange(request("admin-bad-login", "admin.login", {
     "username": "admin", "password": "wrong"})), 1100)
 
-statistics = exchange(request("admin-statistics", "admin.statistics.get", {"range": "30d"}))
+# All management operations, including sensitive read endpoints, require a
+# login-issued token.  administrator_id alone is not an authentication factor.
+for operation, payload in (
+    ("admin.statistics.get", {"range": "7d"}),
+    ("admin.station.list", {}),
+    ("admin.user.list", {}),
+    ("admin.station.create", {
+        "administrator_id": admin_id, "name": "未授权站点", "address": "不可达",
+        "latitude": 41.7, "longitude": 123.4, "pile_count": 1}),
+):
+    assert_error(exchange(request(f"admin-unauthorized-{operation}", operation, payload)), 1100)
+assert_error(exchange(request("admin-invalid-token", "admin.station.list", {"token": "invalid"})), 1100)
+assert_error(exchange(admin_request("admin-mismatched-id", "admin.station.create", {
+    "administrator_id": admin_id + 1, "name": "伪造站点", "address": "不可达",
+    "latitude": 41.7, "longitude": 123.4, "pile_count": 1})), 1100)
+# Token validation also re-checks the administrator's current active status;
+# disabling an account revokes its existing process-local token immediately.
+execute_database("UPDATE administrators SET status = 'disabled' WHERE id = ?", (admin_id,))
+assert_error(exchange(admin_request("admin-disabled-token", "admin.station.list", {})), 1100)
+execute_database("UPDATE administrators SET status = 'active' WHERE id = ?", (admin_id,))
+
+statistics = exchange(admin_request("admin-statistics", "admin.statistics.get", {"range": "30d"}))
 assert statistics["type"] == "admin.statistics.get.result", statistics
 statistics_payload = statistics["payload"]["statistics"]
 daily = statistics_payload["revenue_daily"]
@@ -87,7 +117,7 @@ assert statistics_payload["completed_order_count"] == sum(
     row["completed_order_count"] for row in daily)
 assert statistics_payload["energy_wh"] == sum(row["energy_wh"] for row in daily)
 
-statistics_7d = exchange(request("admin-statistics-7d", "admin.statistics.get", {"range": "7d"}))
+statistics_7d = exchange(admin_request("admin-statistics-7d", "admin.statistics.get", {"range": "7d"}))
 assert statistics_7d["type"] == "admin.statistics.get.result", statistics_7d
 statistics_7d_payload = statistics_7d["payload"]["statistics"]
 daily_7d = statistics_7d_payload["revenue_daily"]
@@ -101,7 +131,7 @@ assert statistics_7d_payload["revenue_cents"] == sum(
 assert abs(statistics_payload["avg_station_utilization"]
            - statistics_7d_payload["avg_station_utilization"]) < 1e-4
 
-stations = exchange(request("admin-stations", "admin.station.list", {}))
+stations = exchange(admin_request("admin-stations", "admin.station.list", {}))
 assert stations["type"] == "admin.station.list.result", stations
 station_rows = stations["payload"]["stations"]
 assert len(station_rows) >= 2
@@ -136,12 +166,12 @@ assert station_by_id[2]["utilization"] == 0
 # snapshots are taken in separate requests, so allow the open charging order
 # to advance by a few seconds between calls.
 statistics_for_stations = exchange(
-    request("admin-statistics-stations", "admin.statistics.get", {"range": "7d"}))
+    admin_request("admin-statistics-stations", "admin.statistics.get", {"range": "7d"}))
 average_from_stations = sum(row["utilization"] for row in station_rows) / len(station_rows)
 assert abs(statistics_for_stations["payload"]["statistics"]["avg_station_utilization"]
            - average_from_stations) < 1e-4
 
-created_request = request("admin-create-station", "admin.station.create", {
+created_request = admin_request("admin-create-station", "admin.station.create", {
     "administrator_id": admin_id, "name": "API 验证站", "address": "测试路 1 号",
     "latitude": 41.7, "longitude": 123.4, "pile_count": 2})
 created = exchange(created_request)
@@ -165,7 +195,7 @@ for label, pile_id, station_id, user_id in restart_rejected_cases:
     if user_id:
         assert order_before["pile_id"] == pile_id, order_before
 
-    rejected_request = request(f"admin-restart-reject-{label}", "admin.pile.restart", {
+    rejected_request = admin_request(f"admin-restart-reject-{label}", "admin.pile.restart", {
         "administrator_id": admin_id, "pile_id": pile_id})
     rejected = exchange(rejected_request)
     assert_error(rejected, 1201)
@@ -186,7 +216,7 @@ for label, pile_id, station_id, user_id in restart_rejected_cases:
 for label, pile_id, station_id in (("fault", 103, 1), ("offline", 202, 2)):
     pile_before = pile_from_station(station_id, pile_id)
     assert pile_before["status"] == label, pile_before
-    restart_request = request(f"admin-restart-{label}", "admin.pile.restart", {
+    restart_request = admin_request(f"admin-restart-{label}", "admin.pile.restart", {
         "administrator_id": admin_id, "pile_id": pile_id})
     restarted = exchange(restart_request)
     assert restarted["type"] == "admin.pile.restart.result", restarted
@@ -201,7 +231,7 @@ for label, pile_id, station_id in (("fault", 103, 1), ("offline", 202, 2)):
 
 # A failed request is not persisted: after the rejected idle pile is repaired
 # to fault, the same request ID can be retried and then becomes idempotent.
-failed_retry_request = request("admin-restart-failed-retry", "admin.pile.restart", {
+failed_retry_request = admin_request("admin-restart-failed-retry", "admin.pile.restart", {
     "administrator_id": admin_id, "pile_id": 101})
 idle_before_retry = pile_from_station(1, 101)
 assert idle_before_retry["status"] == "idle", idle_before_retry
@@ -215,12 +245,12 @@ assert retried["payload"]["pile"]["status"] == "idle", retried
 assert retried["payload"]["pile"]["restart_count"] == idle_before_retry["restart_count"] + 1
 assert exchange(failed_retry_request) == retried
 
-users = exchange(request("admin-users", "admin.user.list", {"phone_query": "1390013"}))
+users = exchange(admin_request("admin-users", "admin.user.list", {"phone_query": "1390013"}))
 assert users["type"] == "admin.user.list.result", users
 assert users["payload"]["users"][0]["active_order_status"] == "charging"
 assert users["payload"]["users"][0]["created_at"] == "2026-08-21T03:00:00Z"
 
-frozen_request = request("admin-freeze-user", "admin.user.status.set", {
+frozen_request = admin_request("admin-freeze-user", "admin.user.status.set", {
     "administrator_id": admin_id, "user_id": 2, "status": "frozen"})
 frozen = exchange(frozen_request)
 assert frozen["type"] == "admin.user.status.set.result", frozen

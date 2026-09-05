@@ -113,13 +113,13 @@ The following names and payloads are reserved for v1. Result types append
 | `charging.start` | `user_id`, `order_id` for a reservation, or `pile_id` for direct start | `charging.start.result`: `order`, `pile` (`charging`) |
 | `charging.stop` | `user_id`, `order_id`, optional `ended_at` | `charging.stop.result`: `order`, `estimated_amount_cents` |
 | `charging.settle` | `user_id`, `order_id` | `charging.settle.result`: `order`, `balance_cents` |
-| `admin.login` | `username`, `password` | `admin.login.result`: `admin` |
-| `admin.statistics.get` | `range` (`7d` or `30d`) | `admin.statistics.get.result`: `statistics`（含固定长度 `revenue_daily`） |
-| `admin.station.list` | optional `query` | `admin.station.list.result`: `stations` |
-| `admin.station.create` | `administrator_id`, `name`, `address`, `latitude`, `longitude`, `pile_count` | `admin.station.create.result`: `station` |
-| `admin.pile.restart` | `administrator_id`, `pile_id` | `admin.pile.restart.result`: `pile` |
-| `admin.user.list` | optional `phone_query` | `admin.user.list.result`: `users` (each user includes `active_order_status`) |
-| `admin.user.status.set` | `administrator_id`, `user_id`, `status` (`active` or `frozen`) | `admin.user.status.set.result`: `user` |
+| `admin.login` | `username`, `password` | `admin.login.result`: `admin`, short-lived `token`, `expires_in_seconds` |
+| `admin.statistics.get` | `token`, `range` (`7d` or `30d`) | `admin.statistics.get.result`: `statistics`（含固定长度 `revenue_daily`） |
+| `admin.station.list` | `token`, optional `query` | `admin.station.list.result`: `stations` |
+| `admin.station.create` | `token`, `administrator_id`, `name`, `address`, `latitude`, `longitude`, `pile_count` | `admin.station.create.result`: `station` |
+| `admin.pile.restart` | `token`, `administrator_id`, `pile_id` | `admin.pile.restart.result`: `pile` |
+| `admin.user.list` | `token`, optional `phone_query` | `admin.user.list.result`: `users` (each user includes `active_order_status`) |
+| `admin.user.status.set` | `token`, `administrator_id`, `user_id`, `status` (`active` or `frozen`) | `admin.user.status.set.result`: `user` |
 
 Unless an operation says otherwise, object IDs are integers. Money is always
 an integer number of Chinese fen (`*_cents`), never a floating-point yuan
@@ -180,7 +180,7 @@ Order status values are `pending_reservation`, `reserved`, `charging`,
   `reservation.confirm`, `reservation.cancel`, `charging.start`,
   `charging.stop`, `charging.settle`, `user.profile.update`,
   `wallet.recharge`, `admin.station.create`, `admin.pile.restart`, and
-  `admin.user.status.set`. Read operations and `admin.login` do not require
+  `admin.user.status.set`. Read operations and `admin.login` do not create
   persistence records.
 - Request IDs are currently globally unique in the server database across
   users and operations; clients must not reuse an ID for another request.
@@ -210,10 +210,13 @@ Order status values are `pending_reservation`, `reserved`, `charging`,
   `idle`, `reserved`, and `charging` piles return `CONFLICT`; the rejected
   request only records the audit attempt and does not interrupt a reservation
   or an active charging session.
-- A client connection is not an authentication session in v1. Until a
-  token/session design is explicitly added, handlers verify the IDs and
-  credentials supplied by their payloads. Administrative requests supply an
-  `administrator_id`; the server verifies its active account and required role.
+- `admin.login` verifies username/password and returns a cryptographically
+  random, process-local token valid for 8 hours. Every other `admin.*` request
+  must carry that token; missing, unknown, expired, or mismatched tokens return
+  `UNAUTHORIZED` (1100). Mutation requests continue to carry
+  `administrator_id`, which must match the token subject and is checked for
+  active status and required role. Tokens are invalidated when the server
+  restarts; v1 does not persist sessions.
 
 ## Current Implementation
 

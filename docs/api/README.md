@@ -26,6 +26,11 @@ wire 映射契约完成客户端联调。
 `user.profile.update`、`wallet.recharge`、`admin.station.create`、
 `admin.pile.restart`、`admin.user.status.set`。
 
+`admin.login` 成功响应包含 `token` 和 `expires_in_seconds`（当前为 8 小时）。除
+`admin.login` 外，所有 `admin.*` 请求都必须在 payload 中携带该 token；只读接口也不例外。
+token 在服务端进程内保存，服务重启后失效。建站、重启桩、冻结/解冻请求仍需携带
+`administrator_id`，且必须与 token 对应的管理员一致。
+
 ## 登录与查询
 
 ```json
@@ -153,11 +158,11 @@ JSON `null`；历史接口只返回 `completed` 订单，按 `settled_at` 倒序
 
 | 接口 | 用途 | 状态 |
 |---|---|---|
-| `admin.login` | 管理员认证，错误码 1100 | 服务端已实现；无状态 token，后续请求携带 `administrator_id` |
-| `admin.statistics.get` | 营收、桩状态、利用率摘要和逐日营收序列 | 服务端已实现，支持 `7d` / `30d`，返回固定长度 `revenue_daily` |
+| `admin.login` | 管理员认证，错误码 1100 | 服务端已实现；成功返回 8 小时有效的随机 `token`，后续所有 `admin.*` 请求携带该 token |
+| `admin.statistics.get` | 营收、桩状态、利用率摘要和逐日营收序列 | 服务端已实现，支持 `7d` / `30d`，返回固定长度 `revenue_daily`，必须携带 token |
 | `admin.pile.restart` | 桩重启和审计 | 服务端已实现；仅故障/离线桩恢复为空闲并按请求 ID 幂等，idle/reserved/charging 返回冲突且不打断会话 |
-| `admin.station.list/create` | 站点查询/创建 | 服务端已实现；创建为超级管理员操作并按请求 ID 幂等 |
-| `admin.user.list/status.set` | 用户查询、冻结/解冻 | 服务端已实现；状态修改为超级管理员操作并按请求 ID 幂等 |
+| `admin.station.list/create` | 站点查询/创建 | 服务端已实现；必须携带 token，创建为超级管理员操作并按请求 ID 幂等 |
+| `admin.user.list/status.set` | 用户查询、冻结/解冻 | 服务端已实现；必须携带 token，状态修改为超级管理员操作并按请求 ID 幂等 |
 
 ## 管理端 AdminRepository 契约与 wire 映射
 
@@ -220,6 +225,9 @@ breaking-change 风险窗口在后续 Socket 实现（新实现类）接入时�
   }
 }
 ```
+
+上例省略了请求帧；实际请求 payload 至少为
+`{"token":"<admin.login 返回的 token>","range":"7d"}`。
 
 示例仅展示序列中间字段；实际 `7d` 响应包含 7 条、`30d` 响应包含 30 条。
 

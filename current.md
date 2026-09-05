@@ -54,6 +54,10 @@ formal project artifacts.
   only `fault`/`offline` piles recover to `idle`; `idle`/`reserved`/`charging`
   are rejected without mutating the pile or active order. Successful restart
   replay and failed-request retry are verified against a clean seeded database.
+- Administrator authentication is now enforced in the Socket server: successful
+  `admin.login` issues an 8-hour process-local random token; every other
+  `admin.*` request (including statistics/station/user reads) requires it, and
+  mutation `administrator_id` values must match the token subject.
 - Cross-team gate: A retains Mock/offline fallback until a real Socket adapter
   is verified; B's administrator endpoints now exist, while C's real Socket
   repository and end-to-end management integration remain pending.
@@ -90,9 +94,9 @@ owns Socket dispatch and error mapping.
 
 ## Next Development Plan
 
-1. **B administrator APIs**: maintain `admin.login`, statistics with daily
-   revenue series, station/pile queries and mutation endpoints, and user
-   list/status changes while resolving the remaining auth/session contract.
+1. **B administrator APIs**: maintain the authenticated `admin.login` session
+   contract, daily statistics series, station/pile queries and mutation
+   endpoints; next align C's Socket adapter with the token-bearing requests.
 2. **A real Socket adapter**: implement `SocketUserService` against Protocol
    v1 for login, profile, wallet, station/pile, order history, reservation,
    charging and settlement; retain Mock/offline fallback.
@@ -145,13 +149,12 @@ owns Socket dispatch and error mapping.
 - Database calls are synchronous in the Qt Socket thread.
 - Real A/C Socket/SQLite integration is not implemented; the current admin API
   implementation is server-side and still needs a production client adapter.
-- `admin.statistics.get`, `admin.station.list`, and `admin.user.list` are
-  currently read-only endpoints without an `administrator_id`; this is a
-  temporary v1 exposure and must be resolved before production Socket
-  integration (either authenticated session context or an explicit admin ID).
+- Administrator tokens are process-local and expire after 8 hours; server
+  restart invalidates all sessions. A persistent token/session store is not
+  part of v1.
 - Administrator API smoke coverage exists in `server/tests/admin.py`; full
-  end-to-end management-client tests and a persisted administrator session/token
-  design remain open.
+  end-to-end management-client tests remain open. The v1 session token is
+  process-local and intentionally not persisted.
 - Utilization snapshots are read-only and can advance by seconds between the
   separate station-list and statistics requests; both use the same formula and
   seven-day UTC window.
@@ -219,3 +222,6 @@ owns Socket dispatch and error mapping.
   interval/intersection and created-pile denominator rules.
 - Clarified restart as fault recovery only, added four restart/idempotency test
   groups, and corrected administrator idempotency lists in the protocol/API docs.
+- Closed the administrator authentication P1: added token issuance/validation,
+  protected all `admin.*` operations, and added bypass/mismatch checks to the
+  clean-database admin smoke test.

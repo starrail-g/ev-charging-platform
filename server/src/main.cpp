@@ -8,7 +8,10 @@
 #include <QHostAddress>
 #include <QJsonObject>
 #include <QLoggingCategory>
+#include <QHash>
+#include <QRandomGenerator>
 #include <QRegularExpression>
+#include <QDateTime>
 #include <QTcpServer>
 #include <QTcpSocket>
 
@@ -18,13 +21,55 @@
 using namespace ev::protocol;
 using ev::database::ErrorKind;
 
+class AdminSessionStore final {
+public:
+    struct Session {
+        qint64 administratorId = 0;
+        QDateTime expiresAt;
+    };
+
+    QString issue(qint64 administratorId)
+    {
+        QByteArray bytes;
+        bytes.reserve(32);
+        for (int i = 0; i < 4; ++i) {
+            const quint64 value = QRandomGenerator::system()->generate64();
+            for (int shift = 0; shift < 64; shift += 8)
+                bytes.append(static_cast<char>((value >> shift) & 0xff));
+        }
+        const QString token = QString::fromLatin1(bytes.toHex());
+        sessions_.insert(token, Session{administratorId,
+                                        QDateTime::currentDateTimeUtc().addSecs(kLifetimeSeconds)});
+        return token;
+    }
+
+    bool resolve(const QString &token, qint64 *administratorId)
+    {
+        if (!administratorId || token.isEmpty()) return false;
+        const auto iterator = sessions_.constFind(token);
+        if (iterator == sessions_.constEnd()) return false;
+        if (iterator->expiresAt <= QDateTime::currentDateTimeUtc()) {
+            sessions_.remove(token);
+            return false;
+        }
+        *administratorId = iterator->administratorId;
+        return true;
+    }
+
+    static constexpr qint64 kLifetimeSeconds = 8 * 60 * 60;
+
+private:
+    QHash<QString, Session> sessions_;
+};
+
 class ClientConnection final : public QObject {
 public:
     explicit ClientConnection(QTcpSocket *socket, QString databasePath, QString schemaPath,
-                              QString seedPath,
+                              QString seedPath, AdminSessionStore *adminSessions,
                               QObject *parent = nullptr)
         : QObject(parent), socket_(socket),
-          database_(std::move(databasePath), std::move(schemaPath), std::move(seedPath))
+          database_(std::move(databasePath), std::move(schemaPath), std::move(seedPath)),
+          adminSessions_(adminSessions)
     {
         socket_->setParent(this);
         connect(socket_, &QTcpSocket::readyRead, this, [this] { readAvailable(); });
@@ -74,6 +119,9 @@ private:
             handleOrderHistory(request);
         } else if (request.type == QStringLiteral("admin.login")) {
             handleAdministratorLogin(request);
+        } else if (request.type.startsWith(QStringLiteral("admin."))
+                   && !authorizeAdministrator(request)) {
+            return;
         } else if (request.type == QStringLiteral("admin.statistics.get")) {
             handleAdministratorStatistics(request);
         } else if (request.type == QStringLiteral("admin.station.list")) {
@@ -102,6 +150,36 @@ private:
             sendError(request.id, ErrorCode::InvalidRequest,
                       QStringLiteral("unsupported request type: %1").arg(request.type));
         }
+    }
+
+    bool authorizeAdministrator(const Message &request)
+    {
+        const QJsonValue tokenValue = request.payload.value(QStringLiteral("token"));
+        qint64 administratorId = 0;
+        if (!tokenValue.isString() || !adminSessions_
+            || !adminSessions_->resolve(tokenValue.toString(), &administratorId)) {
+            sendError(request.id, ErrorCode::Unauthorized,
+                      QStringLiteral("administrator token is missing or expired"));
+            return false;
+        }
+        QJsonObject administrator;
+        QString error;
+        ErrorKind kind = ErrorKind::None;
+        if (!database_.getAdministrator(administratorId, &administrator, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error,
+                              QStringLiteral("administrator authentication failed"));
+            return false;
+        }
+        if (request.payload.contains(QStringLiteral("administrator_id"))) {
+            qint64 suppliedId = 0;
+            if (!positiveId(request.payload.value(QStringLiteral("administrator_id")), &suppliedId)
+                || suppliedId != administratorId) {
+                sendError(request.id, ErrorCode::Unauthorized,
+                          QStringLiteral("administrator token does not match administrator_id"));
+                return false;
+            }
+        }
+        return true;
     }
 
     void handleUserLogin(const Message &request)
@@ -316,19 +394,29 @@ private:
         QJsonObject administrator;
         QString error; ErrorKind kind = ErrorKind::None;
         if (!database_.loginAdministrator(username.toString(), password.toString(),
-                                          &administrator, &error, &kind)) {
+                                           &administrator, &error, &kind)) {
             sendDatabaseError(request.id, kind, error,
                               QStringLiteral("administrator login failed"));
             return;
         }
+        const QString token = adminSessions_ ? adminSessions_->issue(
+            administrator.value(QStringLiteral("id")).toInteger()) : QString();
+        if (token.isEmpty()) {
+            sendError(request.id, ErrorCode::InternalError,
+                      QStringLiteral("administrator session could not be created"));
+            return;
+        }
         sendResponse(request, QStringLiteral("admin.login.result"),
-                     QJsonObject{{QStringLiteral("admin"), administrator}});
+                     QJsonObject{{QStringLiteral("admin"), administrator},
+                                 {QStringLiteral("token"), token},
+                                 {QStringLiteral("expires_in_seconds"),
+                                  AdminSessionStore::kLifetimeSeconds}});
     }
 
     void handleAdministratorStatistics(const Message &request)
     {
         const QJsonValue range = request.payload.value(QStringLiteral("range"));
-        if (!hasOnlyFields(request.payload, {QStringLiteral("range")})
+        if (!hasOnlyFields(request.payload, {QStringLiteral("range"), QStringLiteral("token")})
             || !range.isString()
             || (range.toString() != QStringLiteral("7d")
                 && range.toString() != QStringLiteral("30d"))) {
@@ -349,7 +437,7 @@ private:
     void handleAdministratorStationList(const Message &request)
     {
         const QJsonValue queryValue = request.payload.value(QStringLiteral("query"));
-        if (!hasOnlyFields(request.payload, {QStringLiteral("query")})
+        if (!hasOnlyFields(request.payload, {QStringLiteral("query"), QStringLiteral("token")})
             || (!queryValue.isUndefined() && !queryValue.isString())) {
             sendError(request.id, ErrorCode::InvalidRequest,
                       QStringLiteral("query must be a string"));
@@ -373,7 +461,7 @@ private:
         const QJsonValue address = request.payload.value(QStringLiteral("address"));
         const QJsonValue latitude = request.payload.value(QStringLiteral("latitude"));
         const QJsonValue longitude = request.payload.value(QStringLiteral("longitude"));
-        if (!hasOnlyFields(request.payload, {QStringLiteral("administrator_id"), QStringLiteral("name"),
+        if (!hasOnlyFields(request.payload, {QStringLiteral("administrator_id"), QStringLiteral("token"), QStringLiteral("name"),
                                              QStringLiteral("address"), QStringLiteral("latitude"),
                                              QStringLiteral("longitude"), QStringLiteral("pile_count")})
             || !positiveId(request.payload.value(QStringLiteral("administrator_id")), &administratorId)
@@ -400,7 +488,7 @@ private:
     {
         qint64 administratorId = 0;
         qint64 pileId = 0;
-        if (!hasOnlyFields(request.payload, {QStringLiteral("administrator_id"), QStringLiteral("pile_id")})
+        if (!hasOnlyFields(request.payload, {QStringLiteral("administrator_id"), QStringLiteral("token"), QStringLiteral("pile_id")})
             || !positiveId(request.payload.value(QStringLiteral("administrator_id")), &administratorId)
             || !positiveId(request.payload.value(QStringLiteral("pile_id")), &pileId)) {
             sendError(request.id, ErrorCode::InvalidRequest,
@@ -420,7 +508,7 @@ private:
     void handleAdministratorUserList(const Message &request)
     {
         const QJsonValue phoneQuery = request.payload.value(QStringLiteral("phone_query"));
-        if (!hasOnlyFields(request.payload, {QStringLiteral("phone_query")})
+        if (!hasOnlyFields(request.payload, {QStringLiteral("phone_query"), QStringLiteral("token")})
             || (!phoneQuery.isUndefined() && !phoneQuery.isString())) {
             sendError(request.id, ErrorCode::InvalidRequest,
                       QStringLiteral("phone_query must be a string"));
@@ -441,7 +529,7 @@ private:
         qint64 administratorId = 0;
         qint64 userId = 0;
         const QJsonValue status = request.payload.value(QStringLiteral("status"));
-        if (!hasOnlyFields(request.payload, {QStringLiteral("administrator_id"), QStringLiteral("user_id"),
+        if (!hasOnlyFields(request.payload, {QStringLiteral("administrator_id"), QStringLiteral("token"), QStringLiteral("user_id"),
                                              QStringLiteral("status")})
             || !positiveId(request.payload.value(QStringLiteral("administrator_id")), &administratorId)
             || !positiveId(request.payload.value(QStringLiteral("user_id")), &userId)
@@ -542,6 +630,7 @@ private:
     QTcpSocket *socket_;
     FrameDecoder decoder_;
     ev::database::Database database_;
+    AdminSessionStore *adminSessions_;
 };
 
 int main(int argc, char **argv)
@@ -549,6 +638,7 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("ev-server"));
     QTcpServer server;
+    AdminSessionStore adminSessions;
     const QString databasePath = qEnvironmentVariable("EV_DATABASE_PATH",
                                                        QStringLiteral("var/ev-charging.db"));
     const QString seedPath = qEnvironmentVariable("EV_DATABASE_SEED_PATH");
@@ -592,9 +682,10 @@ int main(int argc, char **argv)
     }
     qInfo() << "ev-server listening on" << host.toString() << listenPort;
     QObject::connect(&server, &QTcpServer::newConnection, &server,
-                     [&server, databasePath, schemaPath, seedPath] {
+                     [&server, databasePath, schemaPath, seedPath, &adminSessions] {
         while (server.hasPendingConnections())
-            new ClientConnection(server.nextPendingConnection(), databasePath, schemaPath, seedPath, &server);
+            new ClientConnection(server.nextPendingConnection(), databasePath, schemaPath, seedPath,
+                                 &adminSessions, &server);
     });
     return app.exec();
 }
