@@ -57,10 +57,8 @@ After selecting an idle pile, the confirmation row provides both `确认创建�
 
 Dependency flow: A-S1-01 → A-S1-02-01 → (02,03) → (04,05) → 08; 06 feeds 02–05; 07 feeds 08. B-S1-01/B-S1-02 provide the future real data/Socket replacement contracts; C-S1-03 provides clean-environment build evidence.
 
-## Async request safety
+## Async request and permission safety
 
-Socket callbacks are accepted only while their captured session generation and user ID remain current. Station searches discard older request generations; pile results also must match the currently selected station. After logout, pending callbacks are ignored. Both Mock and Socket modes use the same phone-only login flow.
+Socket callbacks are accepted only while their captured authentication generation and user ID remain current. The generation changes on login identity changes and logout, not on profile, avatar or wallet refreshes. Station searches discard older request generations; pile results must also match the selected station. A discard cleanup callback restores transient controls such as recharge after logout invalidates a request.
 
-## Request cleanup
-
-UI operations may provide a discard cleanup callback to `runService()`. Recharge uses this path to restore its button after logout invalidates an in-flight response, preventing a permanently disabled control during the same process.
+Frozen users retain read and cleanup actions (cancel reservation, stop, settle), while reservation creation/confirmation, charging start/direct start and recharge controls are disabled to match the server contract.

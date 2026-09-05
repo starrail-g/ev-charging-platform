@@ -503,6 +503,7 @@ private:
       return;
     }
     stack_->setCurrentWidget(profile_);
+    rechargeButton_->setEnabled(session_.user().status == UserStatus::Active);
     profileLabel_->setText(QStringLiteral("手机号：%1\n余额：¥ %2")
                                .arg(session_.user().phone)
                                .arg(session_.user().walletBalanceCents / 100.0, 0, 'f', 2));
@@ -535,7 +536,8 @@ private:
     runService<User>([this, phone] { return service_->login(phone); }, [this](const Result<User> &result) {
       loginButton_->setEnabled(true);
       if (!result.ok) { loginStatus_->setText(result.error); return; }
-      session_.setUser(result.value);
+      session_.beginSession(result.value);
+      updateOrderButtons();
       showHome();
       if (result.value.status == UserStatus::Frozen) homeStatus_->setText(QStringLiteral("账号已冻结：可查看资料和订单并完成收尾，预约、开始充电和充值不可用。"));
       else loginStatus_->clear();
@@ -696,18 +698,19 @@ private:
   void updateOrderButtons() {
     const bool hasOrder = !order_.id.isEmpty();
     const bool pending = hasOrder && order_.status == OrderStatus::PendingReservation;
+    const bool activeUser = session_.isLoggedIn() && session_.user().status == UserStatus::Active;
     confirmationControls_->setVisible(orderConfirmationMode_ || pending);
     confirmOrderButton_->setVisible(orderConfirmationMode_ || pending);
     reserveButton_->setVisible(orderConfirmationMode_ && !hasOrder);
     confirmOrderButton_->setText(pending ? QStringLiteral("确认预约") : QStringLiteral("确认创建订单"));
-    confirmOrderButton_->setEnabled((orderConfirmationMode_ && !hasOrder && !selectedPile_.id.isEmpty() && selectedPile_.status == PileStatus::Idle) || pending);
-    reserveButton_->setEnabled(orderConfirmationMode_ && !hasOrder && !selectedPile_.id.isEmpty() && selectedPile_.status == PileStatus::Idle);
+    confirmOrderButton_->setEnabled(activeUser && ((orderConfirmationMode_ && !hasOrder && !selectedPile_.id.isEmpty() && selectedPile_.status == PileStatus::Idle) || pending));
+    reserveButton_->setEnabled(activeUser && orderConfirmationMode_ && !hasOrder && !selectedPile_.id.isEmpty() && selectedPile_.status == PileStatus::Idle);
     returnPileButton_->setVisible(orderConfirmationMode_ && !hasOrder && !selectedPile_.id.isEmpty());
     cancelReservationButton_->setVisible(!orderConfirmationMode_ && hasOrder && (order_.status == OrderStatus::Reserved || pending));
     cancelReservationButton_->setEnabled(!orderConfirmationMode_ && hasOrder && (order_.status == OrderStatus::Reserved || pending));
-    startButton_->setEnabled(order_.status == OrderStatus::Reserved);
+    startButton_->setEnabled(activeUser && order_.status == OrderStatus::Reserved);
     directStartButton_->setVisible(orderConfirmationMode_ && !hasOrder);
-    directStartButton_->setEnabled(orderConfirmationMode_ && !hasOrder && !selectedPile_.id.isEmpty() && selectedPile_.status == PileStatus::Idle);
+    directStartButton_->setEnabled(activeUser && orderConfirmationMode_ && !hasOrder && !selectedPile_.id.isEmpty() && selectedPile_.status == PileStatus::Idle);
     stopButton_->setEnabled(order_.status == OrderStatus::Charging);
     settleButton_->setEnabled(order_.status == OrderStatus::PendingSettlement);
     if (hasOrder) orderStatus_->setText(QStringLiteral("订单 %1 · %2\n站点：%3\n充电桩：%4\n金额：¥ %5").arg(order_.id, orderStatusText(order_.status), order_.stationName, order_.pileNumber).arg(order_.amountCents / 100.0));
@@ -760,7 +763,7 @@ private:
     runService<Order>([this, userId, orderId] { return service_->settle(userId, orderId); }, [this, userId](const Result<Order> &result) {
       if (!result.ok) { orderStatus_->setText(result.error); updateOrderButtons(); return; }
       order_ = result.value; updateOrderButtons(); refreshCurrentOrder();
-      runService<User>([this, userId] { return service_->profile(userId); }, [this](const Result<User> &profileResult) { if (profileResult.ok) session_.setUser(profileResult.value); });
+      runService<User>([this, userId] { return service_->profile(userId); }, [this](const Result<User> &profileResult) { if (profileResult.ok) session_.updateUser(profileResult.value); });
       QMessageBox::information(this, QStringLiteral("结算完成"), QStringLiteral("订单已完成，结算成功。"));
     });
   }
@@ -769,7 +772,7 @@ private:
     const QString userId = session_.user().id; const QString name = nickname_->text(); const QString avatar = session_.user().avatarPath;
     runService<User>([this, userId, name, avatar] { return service_->updateProfile(userId, name, avatar); }, [this](const Result<User> &result) {
       if (!result.ok) { profileLabel_->setText(result.error); return; }
-      session_.setUser(result.value); showProfile();
+      session_.updateUser(result.value); showProfile();
     });
   }
 
@@ -782,14 +785,19 @@ private:
   }
 
   void recharge() {
+    if (!session_.isLoggedIn() || session_.user().status != UserStatus::Active) {
+      profileLabel_->setText(QStringLiteral("账号已冻结，当前不可充值。"));
+      rechargeButton_->setEnabled(false);
+      return;
+    }
     const qint64 amountCents = qRound64(rechargeAmount_->value() * 100.0);
     rechargeButton_->setEnabled(false);
     const QString userId = session_.user().id;
     runService<qint64>([this, userId, amountCents] { return service_->recharge(userId, amountCents); }, [this](const Result<qint64> &result) {
-      rechargeButton_->setEnabled(true);
+      rechargeButton_->setEnabled(session_.isLoggedIn() && session_.user().status == UserStatus::Active);
       if (!result.ok) { profileLabel_->setText(result.error); return; }
-      auto user = session_.user(); user.walletBalanceCents = result.value; session_.setUser(user); showProfile();
-    }, [this] { rechargeButton_->setEnabled(true); });
+      auto user = session_.user(); user.walletBalanceCents = result.value; session_.updateUser(user); showProfile();
+    }, [this] { rechargeButton_->setEnabled(session_.isLoggedIn() && session_.user().status == UserStatus::Active); });
   }
 };
 

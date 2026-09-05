@@ -94,9 +94,14 @@ public:
   bool isLoggedIn() const { return user_.has_value(); }
   const User &user() const { return *user_; }
   quint64 generation() const { return generation_; }
-  void setUser(const User &user) { user_ = user; ++generation_; }
-  void clear() { user_.reset(); ++generation_; }
-  void setAvatarPath(const QString &path) { if (user_) { user_->avatarPath = path; ++generation_; } }
+  void beginSession(const User &user) {
+    const bool identityChanged = !user_.has_value() || user_->id != user.id;
+    user_ = user;
+    if (identityChanged) ++generation_;
+  }
+  void updateUser(const User &user) { user_ = user; }
+  void clear() { if (user_) ++generation_; user_.reset(); }
+  void setAvatarPath(const QString &path) { if (user_) user_->avatarPath = path; }
 private:
   std::optional<User> user_;
   quint64 generation_{0};
