@@ -41,7 +41,7 @@
 - `A-S1-02` 用户端 Qt Widgets Mock 闭环：已完成。
 - 当前用户端已覆盖登录/注册、站点和电桩查询、预约、取消预约、开始/停止充电、结算、历史记录、个人资料、余额和 Mock 导航。
 - 用户端工程和 QtTest 工程已经采用 qmake6；不得恢复 CMake 构建入口。
-- 用户端尚未完成真实 Socket/SQLite 联调，Mock 完成不等于后端联调完成。
+- 用户端已完成 PR #4 快照下的真实 Socket 联调；Mock 完成不等于后端联调完成，最终跨模块回归仍归入 A-S1-04。
 - 腾讯地图 API Key 已获取，但只能通过本地配置读取，禁止进入源码、文档、截图、日志或 Git。
 
 ## 4. 阶段 I：最小业务闭环
@@ -76,7 +76,7 @@
 
 验收标准：qmake6 可独立构建应用和测试；QtTest 通过；无网络、无服务端时 Mock 主流程仍可演示。
 
-### A-S1-03：Socket Protocol v1 适配与真实联调（待完成）
+### A-S1-03：Socket Protocol v1 适配与真实联调（已完成）
 
 任务要求：
 
@@ -196,7 +196,7 @@ flowchart TD
 |---|---|---|---|---|
 | A-S1-01 | 需求基线与任务追踪 | 已完成 | 需求矩阵、`current.md`、用户端需求文档 | 已完成 |
 | A-S1-02 | 用户端 Mock 基线 | 已完成 | `apps/user-client`、README、QtTest | 不代表真实联调完成 |
-| A-S1-03 | Socket Protocol v1 适配与真实联调 | 待开始 | 待补充 | 依赖 B-S1-01/B-S1-02/B-S1-03 |
+| A-S1-03 | Socket Protocol v1 适配与真实联调 | 已完成 | VM qmake6：应用构建、QtTest 11/11、B smoke 与 concurrency PASS；profile/recharge、冻结策略、stop 释放和余额不足均覆盖 | A-S1-04 继续做跨模块最终回归和交付证据 |
 | A-S1-04 | 联调测试与阶段 I 交付 | 待开始 | 待补充 | 依赖 A-S1-03 和 B 服务端 |
 | A-S2-01 | 腾讯地图导航优化 | 待开始 | 待补充 | 不得阻塞阶段 I |
 | A-S2-02 | 智能分析结果用户端展示 | 待开始 | 待补充 | 依赖 B-S2-01/B-S2-02 |
@@ -207,3 +207,5 @@ flowchart TD
 | 日期 | 变更 | 依据 |
 |---|---|---|
 | 2026-09-02 | 新增同学 A 独立任务计划，明确阶段任务、依赖、验收和交付规则 | 项目开发计划、C 角色计划、Protocol v1、qmake6 构建协议 |
+| 2026-09-02 | A-S1-03 首轮 Socket 适配与真实订单生命周期联调完成，任务保持进行中 | B PR #4 提交 3600c3de81c252e3a8a37a8f8eff3e58a1a8ac13、VM qmake6、QtTest 9 passed、B smoke |
+| 2026-09-04 | 按当前 main 上的 PR#4 Schema v0.3 合同完成用户端真实 Socket 适配与回归；应用构建、QtTest、B smoke/concurrency 均通过，预约和直充启动路径均已覆盖，A-S1-03 完成 | current main 994e5ff（PR #4 merged，PR #8 UI baseline included）、隔离数据库服务端、Ubuntu qmake6 |
