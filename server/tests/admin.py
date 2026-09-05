@@ -4,7 +4,7 @@ import json
 import os
 import socket
 import struct
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta, timezone
 
 
 HOST = os.getenv("EV_SERVER_HOST", "127.0.0.1")
@@ -70,10 +70,48 @@ expected_dates_7d = [(today_7d - timedelta(days=offset)).isoformat() for offset 
 assert [row["date"] for row in daily_7d] == expected_dates_7d, daily_7d
 assert statistics_7d_payload["revenue_cents"] == sum(
     row["revenue_cents"] for row in daily_7d)
+assert abs(statistics_payload["avg_station_utilization"]
+           - statistics_7d_payload["avg_station_utilization"]) < 1e-4
 
 stations = exchange(request("admin-stations", "admin.station.list", {}))
 assert stations["type"] == "admin.station.list.result", stations
-assert len(stations["payload"]["stations"]) >= 2
+station_rows = stations["payload"]["stations"]
+assert len(station_rows) >= 2
+assert all(row["utilization_range"] == "7d" for row in station_rows), station_rows
+assert all(0 <= row["utilization"] <= 1 for row in station_rows), station_rows
+
+# The deterministic seed has one completed one-hour order on station 1 and
+# one still-open charging order. Verify the interval intersection and the
+# open-order cutoff are reflected in the reported seven-day ratio.
+station_by_id = {row["id"]: row for row in station_rows}
+updated_at_dt = datetime.fromisoformat(
+    statistics_7d_payload["updated_at"].replace("Z", "+00:00"))
+period_start_dt = datetime.combine(
+    updated_at_dt.date() - timedelta(days=6), time.min, tzinfo=timezone.utc)
+
+def overlap_seconds(start, end):
+    return max(0, (min(end, updated_at_dt)
+                   - max(start, period_start_dt)).total_seconds())
+
+expected_numerator_seconds = overlap_seconds(
+    datetime(2026, 8, 31, 5, 2, tzinfo=timezone.utc),
+    datetime(2026, 8, 31, 6, 2, tzinfo=timezone.utc))
+expected_numerator_seconds += overlap_seconds(
+    datetime(2026, 9, 1, 0, 32, tzinfo=timezone.utc), updated_at_dt)
+expected_denominator_seconds = 3 * (
+    updated_at_dt - period_start_dt).total_seconds()
+assert abs(station_by_id[1]["utilization"]
+           - expected_numerator_seconds / expected_denominator_seconds) < 1e-5
+assert station_by_id[2]["utilization"] == 0
+
+# Both endpoints use the same seven-day station utilization definition. The
+# snapshots are taken in separate requests, so allow the open charging order
+# to advance by a few seconds between calls.
+statistics_for_stations = exchange(
+    request("admin-statistics-stations", "admin.statistics.get", {"range": "7d"}))
+average_from_stations = sum(row["utilization"] for row in station_rows) / len(station_rows)
+assert abs(statistics_for_stations["payload"]["statistics"]["avg_station_utilization"]
+           - average_from_stations) < 1e-4
 
 created_request = request("admin-create-station", "admin.station.create", {
     "administrator_id": admin_id, "name": "API 验证站", "address": "测试路 1 号",
@@ -81,6 +119,8 @@ created_request = request("admin-create-station", "admin.station.create", {
 created = exchange(created_request)
 assert created["type"] == "admin.station.create.result", created
 assert created["payload"]["station"]["pile_total"] == 2
+assert created["payload"]["station"]["utilization"] == 0
+assert created["payload"]["station"]["utilization_range"] == "7d"
 assert exchange(created_request) == created
 
 restarted_request = request("admin-restart-pile", "admin.pile.restart", {

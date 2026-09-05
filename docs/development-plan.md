@@ -178,6 +178,9 @@ PR #4 已合并到 `main`（merge commit `20a3815`）。后续开发必须从最
 - `admin.statistics.get` 的 `7d`/`30d` 响应必须同时返回固定长度、按 UTC
   日升序且缺失日补零的 `revenue_daily`；聚合营收、订单数和能耗必须与序列求和一致，
   供 C/Dashboard 绘制趋势图。
+- 站点利用率统一按最近 7 个 UTC 自然日的订单时长交集/桩可提供时长计算；
+  `admin.station.list` 与 `admin.statistics.get.avg_station_utilization` 复用同一口径，
+  后者为各站点利用率的算术平均。
 - `admin.user.list` 的用户对象必须返回 `active_order_status`，并继续遵守
   v1 错误码、整数金额、UTC 时间和数据库事务约束。
 - 为 C 提供请求/响应样例、种子数据、启动命令和稳定错误场景。

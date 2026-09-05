@@ -12,6 +12,7 @@
 #include <QRegularExpression>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QTime>
 #include <QVariant>
 #include <QUuid>
 
@@ -1007,6 +1008,133 @@ bool Database::checkAdministrator(qint64 administratorId, bool superAdminOnly,
     return true;
 }
 
+bool Database::getStationUtilizations(const QDateTime &periodStart,
+                                      const QDateTime &periodEnd,
+                                      QHash<qint64, double> *utilizations,
+                                      QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!utilizations || !periodStart.isValid() || !periodEnd.isValid()
+        || periodStart >= periodEnd) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("utilization period is invalid"));
+        return false;
+    }
+    if (!open(error)) {
+        if (kind) *kind = ErrorKind::Database;
+        return false;
+    }
+
+    const QDateTime startUtc = periodStart.toUTC();
+    const QDateTime endUtc = periodEnd.toUTC();
+    const qint64 periodStartMs = startUtc.toMSecsSinceEpoch();
+    const qint64 periodEndMs = endUtc.toMSecsSinceEpoch();
+
+    QHash<qint64, qint64> numeratorMsByStation;
+    QHash<qint64, qint64> denominatorMsByStation;
+    QHash<qint64, qint64> stationByPile;
+    utilizations->clear();
+
+    QSqlQuery query(connection_);
+    if (!query.exec(QStringLiteral("SELECT id FROM stations ORDER BY id"))) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("read stations for utilization failed: %1")
+                       .arg(queryError(query)));
+        return false;
+    }
+    while (query.next()) {
+        const qint64 stationId = query.value(0).toLongLong();
+        numeratorMsByStation.insert(stationId, 0);
+        denominatorMsByStation.insert(stationId, 0);
+        utilizations->insert(stationId, 0.0);
+    }
+
+    query.prepare(QStringLiteral(
+        "SELECT id, station_id, created_at FROM charging_piles ORDER BY id"));
+    if (!query.exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("read piles for utilization failed: %1")
+                       .arg(queryError(query)));
+        return false;
+    }
+    while (query.next()) {
+        const qint64 pileId = query.value(0).toLongLong();
+        const qint64 stationId = query.value(1).toLongLong();
+        const QString createdAtText = query.value(2).toString();
+        const QDateTime createdAt = QDateTime::fromString(createdAtText, Qt::ISODate);
+        if (!createdAt.isValid()) {
+            setFailure(error, kind, ErrorKind::Database,
+                       QStringLiteral("invalid charging pile created_at for pile %1")
+                           .arg(pileId));
+            return false;
+        }
+
+        stationByPile.insert(pileId, stationId);
+        const qint64 availableStartMs = qMax(periodStartMs,
+                                             createdAt.toUTC().toMSecsSinceEpoch());
+        const qint64 availableMs = qMax<qint64>(0, periodEndMs - availableStartMs);
+        denominatorMsByStation[stationId] += availableMs;
+    }
+
+    query.prepare(QStringLiteral(
+        "SELECT pile_id, status, started_at, ended_at FROM charging_orders "
+        "WHERE status IN ('charging', 'pending_settlement', 'completed') "
+        "AND started_at IS NOT NULL"));
+    if (!query.exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("read orders for utilization failed: %1")
+                       .arg(queryError(query)));
+        return false;
+    }
+    while (query.next()) {
+        const qint64 pileId = query.value(0).toLongLong();
+        const auto pileIterator = stationByPile.constFind(pileId);
+        if (pileIterator == stationByPile.constEnd()) continue;
+
+        const QString status = query.value(1).toString();
+        const QString startedAtText = query.value(2).toString();
+        const QDateTime startedAt = QDateTime::fromString(startedAtText, Qt::ISODate);
+        if (!startedAt.isValid()) {
+            setFailure(error, kind, ErrorKind::Database,
+                       QStringLiteral("invalid charging order started_at for pile %1")
+                           .arg(pileId));
+            return false;
+        }
+
+        qint64 endedAtMs = periodEndMs;
+        if (!query.value(3).isNull() && !query.value(3).toString().isEmpty()) {
+            const QDateTime endedAt = QDateTime::fromString(query.value(3).toString(),
+                                                             Qt::ISODate);
+            if (!endedAt.isValid()) {
+                setFailure(error, kind, ErrorKind::Database,
+                           QStringLiteral("invalid charging order ended_at for pile %1")
+                               .arg(pileId));
+                return false;
+            }
+            endedAtMs = endedAt.toUTC().toMSecsSinceEpoch();
+        } else if (status != QStringLiteral("charging")) {
+            // v0.3 requires ended_at for pending_settlement/completed. Ignore
+            // malformed legacy rows instead of attributing an open interval.
+            continue;
+        }
+
+        const qint64 startedAtMs = startedAt.toUTC().toMSecsSinceEpoch();
+        const qint64 actualStartMs = qMax(periodStartMs, startedAtMs);
+        const qint64 actualEndMs = qMin(periodEndMs, endedAtMs);
+        if (actualEndMs <= actualStartMs) continue;
+        numeratorMsByStation[*pileIterator] += actualEndMs - actualStartMs;
+    }
+
+    for (auto iterator = utilizations->begin(); iterator != utilizations->end(); ++iterator) {
+        const qint64 denominatorMs = denominatorMsByStation.value(iterator.key());
+        const qint64 numeratorMs = numeratorMsByStation.value(iterator.key());
+        iterator.value() = denominatorMs > 0
+            ? static_cast<double>(numeratorMs) / static_cast<double>(denominatorMs)
+            : 0.0;
+    }
+    return true;
+}
+
 bool Database::getStatistics(const QString &range, QJsonObject *statistics,
                              QString *error, ErrorKind *kind)
 {
@@ -1020,7 +1148,13 @@ bool Database::getStatistics(const QString &range, QJsonObject *statistics,
 
     const int days = range == QStringLiteral("7d") ? 7 : 30;
     const QString updatedAt = utcNow();
-    const QDate endDate = QDateTime::fromString(updatedAt, Qt::ISODate).date();
+    const QDateTime statisticsEnd = QDateTime::fromString(updatedAt, Qt::ISODate);
+    if (!statisticsEnd.isValid()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("build statistics timestamp failed"));
+        return false;
+    }
+    const QDate endDate = statisticsEnd.toUTC().date();
     const QDate startDate = endDate.addDays(1 - days);
     if (!startDate.isValid() || !endDate.isValid()) {
         setFailure(error, kind, ErrorKind::Database,
@@ -1093,8 +1227,26 @@ bool Database::getStatistics(const QString &range, QJsonObject *statistics,
     const qint64 fault = query.value(3).toLongLong();
     const qint64 offline = query.value(4).toLongLong();
     const qint64 totalPiles = query.value(5).toLongLong();
-    const double utilization = totalPiles > 0
-        ? static_cast<double>(charging) / static_cast<double>(totalPiles) : 0.0;
+
+    // Station utilization always uses the most recent seven UTC calendar days,
+    // independently of the revenue range selected by the caller. Keep the
+    // period end tied to the same snapshot used by updated_at so an open
+    // charging order is measured consistently for this response.
+    const QDate utilizationStartDate = endDate.addDays(-6);
+    const QDateTime utilizationStart(utilizationStartDate, QTime(0, 0), Qt::UTC);
+    QHash<qint64, double> stationUtilizations;
+    if (!getStationUtilizations(utilizationStart, statisticsEnd,
+                                &stationUtilizations, error, kind)) {
+        return false;
+    }
+    double averageStationUtilization = 0.0;
+    if (!stationUtilizations.isEmpty()) {
+        for (auto iterator = stationUtilizations.constBegin();
+             iterator != stationUtilizations.constEnd(); ++iterator) {
+            averageStationUtilization += iterator.value();
+        }
+        averageStationUtilization /= static_cast<double>(stationUtilizations.size());
+    }
 
     *statistics = QJsonObject{
         {QStringLiteral("range"), range},
@@ -1107,7 +1259,7 @@ bool Database::getStatistics(const QString &range, QJsonObject *statistics,
         {QStringLiteral("pile_charging"), charging},
         {QStringLiteral("pile_fault"), fault},
         {QStringLiteral("pile_offline"), offline},
-        {QStringLiteral("avg_station_utilization"), utilization},
+        {QStringLiteral("avg_station_utilization"), averageStationUtilization},
         {QStringLiteral("updated_at"), updatedAt},
         {QStringLiteral("has_data"), completedOrders > 0 || totalPiles > 0}};
     return true;
@@ -1123,6 +1275,14 @@ bool Database::listAdminStations(const QString &queryText, QJsonArray *stations,
         return false;
     }
     if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+
+    const QDateTime periodEnd = QDateTime::currentDateTimeUtc();
+    const QDateTime periodStart(periodEnd.date().addDays(-6), QTime(0, 0), Qt::UTC);
+    QHash<qint64, double> stationUtilizations;
+    if (!getStationUtilizations(periodStart, periodEnd, &stationUtilizations, error, kind)) {
+        return false;
+    }
+
     QSqlQuery query(connection_);
     query.prepare(QStringLiteral(
         "SELECT s.id, s.name, s.address, s.latitude, s.longitude, s.status, "
@@ -1156,7 +1316,9 @@ bool Database::listAdminStations(const QString &queryText, QJsonArray *stations,
             {QStringLiteral("pile_reserved"), query.value(8).toLongLong()},
             {QStringLiteral("pile_charging"), query.value(9).toLongLong()},
             {QStringLiteral("pile_fault"), query.value(10).toLongLong()},
-            {QStringLiteral("pile_offline"), query.value(11).toLongLong()}});
+            {QStringLiteral("pile_offline"), query.value(11).toLongLong()},
+            {QStringLiteral("utilization"), stationUtilizations.value(query.value(0).toLongLong(), 0.0)},
+            {QStringLiteral("utilization_range"), QStringLiteral("7d")}});
     }
     return true;
 }
@@ -1187,6 +1349,11 @@ bool Database::createStation(const QString &requestId, qint64 administratorId,
                      &replay, &found, error, kind)) { rollback(); return false; }
     if (found) {
         *station = replay.value(QStringLiteral("station")).toObject();
+        // Requests persisted by an older server may predate the utilization
+        // fields. Keep idempotent replay responses on the current contract.
+        station->insert(QStringLiteral("utilization"),
+                        station->value(QStringLiteral("utilization")).toDouble());
+        station->insert(QStringLiteral("utilization_range"), QStringLiteral("7d"));
         return commit(error, kind);
     }
     const QString timestamp = utcNow();
@@ -1235,7 +1402,9 @@ bool Database::createStation(const QString &requestId, qint64 administratorId,
                            {QStringLiteral("pile_reserved"), 0},
                            {QStringLiteral("pile_charging"), 0},
                            {QStringLiteral("pile_fault"), 0},
-                           {QStringLiteral("pile_offline"), 0}};
+                           {QStringLiteral("pile_offline"), 0},
+                           {QStringLiteral("utilization"), 0.0},
+                           {QStringLiteral("utilization_range"), QStringLiteral("7d")}};
     if (!saveRequest(requestId, QStringLiteral("admin.station.create"), fingerprint,
                      QJsonObject{{QStringLiteral("station"), *station}}, error, kind)) {
         rollback();

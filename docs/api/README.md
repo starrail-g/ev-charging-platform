@@ -168,7 +168,7 @@ Socket 任务落地）：
 | AdminRepository 方法 | 业务视图语义 | wire 映射策略 |
 |---|---|---|
 | `fetchOverview` | 概览指标（7 日/30 日营收、桩五态、利用率、快照时间） | 分别请求 `admin.statistics.get` 的 `7d` 与 `30d`；聚合卡片读取 `revenue_cents`，趋势图读取 `statistics.revenue_daily[*].revenue_cents` |
-| `fetchStations` | 管理端全量站点（含桩数/在线率聚合视图） | `admin.station.list` |
+| `fetchStations` | 管理端全量站点（含桩数/在线率/7 日利用率聚合视图） | `admin.station.list` |
 | `fetchUsers` | 管理端全量用户（含注册时间和活动订单状态） | `admin.user.list` |
 | `fetchPiles` | 管理端**全量**桩列表（跨站，桩页过滤/搜索在本端完成） | 逐站 fan-out：`admin.station.list` → 每站 `pile.list(station_id)` → 合并（默认，D5） |
 
@@ -221,3 +221,20 @@ breaking-change 风险窗口在后续 Socket 实现（新实现类）接入时�
 ```
 
 示例仅展示序列中间字段；实际 `7d` 响应包含 7 条、`30d` 响应包含 30 条。
+
+### 管理端站点利用率
+
+`admin.station.list` 返回的每个站点对象包含 `utilization` 和
+`utilization_range: "7d"`，可直接用于站点利用率排行。该值统一定义为最近 7 个
+UTC 自然日内该站实际充电总时长除以该站所有充电桩在统计周期内的可提供总时长：
+
+- 分子只累计 `charging`、`pending_settlement`、`completed` 订单的
+  `started_at` 至 `ended_at` 与 `[period_start, period_end)` 的交集；`charging`
+  且 `ended_at` 为空时，以统计截止时间作为结束时间。
+- 分母按桩累加 `period_end - max(period_start, pile.created_at)`；故新建桩只从
+  `created_at` 开始计入。`fault`、`offline` 不从分母扣除。
+- `admin.statistics.get.statistics.avg_station_utilization` 是所有站点
+  `utilization` 的算术平均，不按充电桩数量加权；统计接口和站点列表复用同一计算方法。
+
+`admin.station.create` 返回的新站点对象同样包含 `utilization: 0.0` 和
+`utilization_range: "7d"`。

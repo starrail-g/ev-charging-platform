@@ -144,6 +144,19 @@ days without completed orders are included with zero values. Each entry has
 `revenue_daily[*].revenue_cents` to the 7-day or 30-day trend series without
 reconstructing or merging rolling windows.
 
+Admin station responses include `utilization` and `utilization_range` (`"7d"`).
+The utilization range is always the most recent seven UTC calendar days. For
+each station, utilization is the total intersection of `started_at`–`ended_at`
+charging intervals for orders in `charging`, `pending_settlement`, or
+`completed` status divided by the sum, over every pile, of
+`period_end - max(period_start, pile.created_at)`. An open `charging` order
+uses `period_end` when `ended_at` is null; `reserved`, `pending_reservation`,
+and `cancelled` orders do not contribute, and `fault`/`offline` time remains in
+the denominator. `admin.statistics.get.statistics.avg_station_utilization`
+is the unweighted arithmetic mean of the same per-station values. A newly
+created station response includes `utilization: 0.0` and
+`utilization_range: "7d"`.
+
 Pile status values are `idle`, `reserved`, `charging`, `fault`, and `offline`.
 Order status values are `pending_reservation`, `reserved`, `charging`,
 `pending_settlement`, `completed`, `cancelled`, and `exception`.

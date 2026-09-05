@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QDateTime>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSqlDatabase>
@@ -105,6 +107,9 @@ private:
     bool saveRequest(const QString &requestId, const QString &operation,
                      const QString &fingerprint, const QJsonObject &response,
                      QString *error, ErrorKind *kind);
+    bool getStationUtilizations(const QDateTime &periodStart, const QDateTime &periodEnd,
+                                QHash<qint64, double> *utilizations,
+                                QString *error = nullptr, ErrorKind *kind = nullptr);
     bool checkAdministrator(qint64 administratorId, bool superAdminOnly,
                             QString *error, ErrorKind *kind);
     void setFailure(QString *error, ErrorKind *kind, ErrorKind value,

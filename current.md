@@ -44,6 +44,12 @@ formal project artifacts.
   calendar-day rows (zero-filled), and aggregate revenue/order/energy values
   are sums of that returned series. The real Socket adapter still needs to map
   this series into C/Dashboard models.
+- Station utilization is now calculated by one shared seven-day UTC method:
+  charging interval intersections over every pile's available period from
+  `created_at`; `fault`/`offline` time remains in the denominator. The method
+  is reused by `admin.station.list` and `admin.statistics.get`; station rows
+  expose `utilization`/`utilization_range`, and the global average is the
+  unweighted mean of station values.
 - Cross-team gate: A retains Mock/offline fallback until a real Socket adapter
   is verified; B's administrator endpoints now exist, while C's real Socket
   repository and end-to-end management integration remain pending.
@@ -142,6 +148,9 @@ owns Socket dispatch and error mapping.
 - Administrator API smoke coverage exists in `server/tests/admin.py`; full
   end-to-end management-client tests and a persisted administrator session/token
   design remain open.
+- Utilization snapshots are read-only and can advance by seconds between the
+  separate station-list and statistics requests; both use the same formula and
+  seven-day UTC window.
 - Dashboard and ML remain extension/integration work and must not redefine the
   v1 protocol or SQLite state rules.
 - Tencent Maps credentials remain local-only; user-client navigation must keep
@@ -171,6 +180,10 @@ owns Socket dispatch and error mapping.
 - Main's collaboration gate remains applicable: before real A/C integration,
   preserve the Mock/offline fallback and record qmake6, smoke, and end-to-end
   evidence from a clean environment.
+- Station utilization uses order `started_at`/`ended_at` intersections for
+  `charging`, `pending_settlement`, and `completed`; an open charging order is
+  closed at the snapshot cutoff. The statistics average is station-weighted
+  equally, not pile-weighted.
 - Build output and local process material stay outside the repository. Real
   credentials and runtime databases are never committed.
 
@@ -197,3 +210,6 @@ owns Socket dispatch and error mapping.
   aggregate consistency assertions, and updated protocol/API/database docs.
 - Rebuilt the server and reran administrator smoke on 2026-09-05: both daily
   series lengths and date ordering passed, with aggregates matching row sums.
+- Unified seven-day station utilization across the admin station list and
+  statistics average; added response-field assertions and documented the
+  interval/intersection and created-pile denominator rules.

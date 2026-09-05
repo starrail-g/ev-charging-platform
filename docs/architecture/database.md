@@ -38,6 +38,16 @@ remains the physical charging-end timestamp for operational metrics. The
 and returns a fixed 7-day or 30-day series; its aggregate revenue/order/energy
 fields are calculated from that same series.
 
+Station utilization is calculated by the shared `getStationUtilizations` service
+method for both `admin.station.list` and `admin.statistics.get`. Its seven-day
+UTC window is `[period_start, period_end)`. The numerator sums the interval
+intersection for `charging`, `pending_settlement`, and `completed` orders;
+an open `charging` order ends at `period_end`. The denominator sums
+`period_end - max(period_start, charging_piles.created_at)` for every pile at
+the station, without excluding `fault` or `offline` time. The statistics
+average is the arithmetic mean of station values, so stations—not piles—are
+the weighting unit.
+
 ## Status transitions
 
 The service is the only component that changes lifecycle states. It validates
