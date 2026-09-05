@@ -60,3 +60,7 @@ Dependency flow: A-S1-01 → A-S1-02-01 → (02,03) → (04,05) → 08; 06 feeds
 ## Async request safety
 
 Socket callbacks are accepted only while their captured session generation and user ID remain current. Station searches discard older request generations; pile results also must match the currently selected station. After logout, pending callbacks are ignored. The Socket login page hides standalone registration because protocol v1 creates a user automatically on first phone-only login.
+
+## Request cleanup
+
+UI operations may provide a discard cleanup callback to `runService()`. Recharge uses this path to restore its button after logout invalidates an in-flight response, preventing a permanently disabled control during the same process.

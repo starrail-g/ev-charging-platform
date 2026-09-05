@@ -122,8 +122,8 @@ private:
     return button;
   }
 
-  template <typename T, typename Fn, typename Done>
-  void runService(Fn fn, Done done) {
+  template <typename T, typename Fn, typename Done, typename Discard>
+  void runService(Fn fn, Done done, Discard discard) {
     const quint64 requestGeneration = session_.generation();
     const QString requestUserId = session_.isLoggedIn() ? session_.user().id : QString();
     const auto requestStillValid = [this, requestGeneration, requestUserId] {
@@ -134,18 +134,24 @@ private:
     if (service_ == &mockService_) {
       const auto result = fn();
       if (requestStillValid()) done(result);
+      else discard();
       return;
     }
     auto *watcher = new QFutureWatcher<Result<T>>(this);
     activeWatchers_.push_back(watcher);
-    connect(watcher, &QFutureWatcher<Result<T>>::finished, this, [this, watcher, done, requestStillValid]() mutable {
+    connect(watcher, &QFutureWatcher<Result<T>>::finished, this, [this, watcher, done, discard, requestStillValid]() mutable {
       const auto result = watcher->result();
       activeWatchers_.removeOne(watcher);
       watcher->deleteLater();
-      if (!requestStillValid()) return;
+      if (!requestStillValid()) { discard(); return; }
       done(result);
     });
     watcher->setFuture(QtConcurrent::run(fn));
+  }
+
+  template <typename T, typename Fn, typename Done>
+  void runService(Fn fn, Done done) {
+    runService<T>(fn, done, [] {});
   }
 
   void buildLogin() {
@@ -883,7 +889,7 @@ private:
       rechargeButton_->setEnabled(true);
       if (!result.ok) { profileLabel_->setText(result.error); return; }
       auto user = session_.user(); user.walletBalanceCents = result.value; session_.setUser(user); showProfile();
-    });
+    }, [this] { rechargeButton_->setEnabled(true); });
   }
 };
 

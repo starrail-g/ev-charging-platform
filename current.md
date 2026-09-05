@@ -74,3 +74,7 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 
 - `runService()` captures `SessionManager::generation()` and the active user ID; callbacks are discarded after logout or any session replacement, preventing stale responses from reading or restoring cleared session state.
 - Station queries use a monotonically increasing request generation. Pile queries additionally require both the latest generation and the station ID captured when the request started. Socket mode hides the standalone registration entry because v1 supports phone-only login with first-login auto-creation.
+
+## Recharge discard cleanup (PR #9 follow-up)
+
+- `runService()` accepts an optional discard callback for UI cleanup. The recharge operation uses it to re-enable the button when a logout/session-generation change causes the response to be discarded.
