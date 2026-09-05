@@ -178,8 +178,10 @@ Order status values are `pending_reservation`, `reserved`, `charging`,
   not retry the same action with a new ID.
 - Idempotency currently covers `reservation.create`,
   `reservation.confirm`, `reservation.cancel`, `charging.start`,
-  `charging.stop`, `charging.settle`, `user.profile.update`, and
-  `wallet.recharge`. Read operations do not require persistence records.
+  `charging.stop`, `charging.settle`, `user.profile.update`,
+  `wallet.recharge`, `admin.station.create`, `admin.pile.restart`, and
+  `admin.user.status.set`. Read operations and `admin.login` do not require
+  persistence records.
 - Request IDs are currently globally unique in the server database across
   users and operations; clients must not reuse an ID for another request.
 - Login always succeeds for an existing frozen account and returns
@@ -203,6 +205,11 @@ Order status values are `pending_reservation`, `reserved`, `charging`,
 - `charging.start` accepts either a confirmed reservation `order_id` or an
   idle `pile_id` for direct start. The direct path creates the charging order
   and changes the pile from `idle` to `charging` in one transaction.
+- `admin.pile.restart` is a fault-recovery action. Only `fault` and `offline`
+  piles may transition to `idle` (with `restart_count` and audit log updated).
+  `idle`, `reserved`, and `charging` piles return `CONFLICT`; the rejected
+  request only records the audit attempt and does not interrupt a reservation
+  or an active charging session.
 - A client connection is not an authentication session in v1. Until a
   token/session design is explicitly added, handlers verify the IDs and
   credentials supplied by their payloads. Administrative requests supply an

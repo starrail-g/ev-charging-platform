@@ -143,8 +143,9 @@ result unless an explicitly supported free-charge policy is introduced.
    does not cancel an existing order, but blocks new starts.
 6. **Remote restart**: begin transaction, verify administrator role and pile
    status, insert `pile_restart_logs`, update restart counters/timestamp and
-   optionally clear a recoverable fault. Rejected states still get an audit
-   row and no pile mutation.
+   clear only a recoverable `fault`/`offline` state. `idle`, `reserved`, and
+   `charging` are rejected with no pile or active-session mutation; rejected
+   states still get an audit row and no successful request replay record.
 
 Use `BEGIN IMMEDIATE` for write transactions so concurrent clients cannot
 both claim the same idle pile. Set a busy timeout and map lock/constraint

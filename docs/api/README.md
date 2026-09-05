@@ -23,7 +23,8 @@ wire 映射契约完成客户端联调。
 用于不同操作或参数会返回 `CONFLICT`（1201）。当前支持幂等的操作为
 `reservation.create`、`reservation.confirm`、`reservation.cancel`、
 `charging.start`、`charging.stop`、`charging.settle`、
-`user.profile.update`、`wallet.recharge`。
+`user.profile.update`、`wallet.recharge`、`admin.station.create`、
+`admin.pile.restart`、`admin.user.status.set`。
 
 ## 登录与查询
 
@@ -154,7 +155,7 @@ JSON `null`；历史接口只返回 `completed` 订单，按 `settled_at` 倒序
 |---|---|---|
 | `admin.login` | 管理员认证，错误码 1100 | 服务端已实现；无状态 token，后续请求携带 `administrator_id` |
 | `admin.statistics.get` | 营收、桩状态、利用率摘要和逐日营收序列 | 服务端已实现，支持 `7d` / `30d`，返回固定长度 `revenue_daily` |
-| `admin.pile.restart` | 桩重启和审计 | 服务端已实现；故障/离线桩恢复为空闲，其它状态返回冲突并保留审计记录 |
+| `admin.pile.restart` | 桩重启和审计 | 服务端已实现；仅故障/离线桩恢复为空闲并按请求 ID 幂等，idle/reserved/charging 返回冲突且不打断会话 |
 | `admin.station.list/create` | 站点查询/创建 | 服务端已实现；创建为超级管理员操作并按请求 ID 幂等 |
 | `admin.user.list/status.set` | 用户查询、冻结/解冻 | 服务端已实现；状态修改为超级管理员操作并按请求 ID 幂等 |
 

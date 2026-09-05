@@ -2,6 +2,7 @@
 """Administrator API smoke test against a seeded v0.3 server."""
 import json
 import os
+import sqlite3
 import socket
 import struct
 from datetime import datetime, time, timedelta, timezone
@@ -9,6 +10,7 @@ from datetime import datetime, time, timedelta, timezone
 
 HOST = os.getenv("EV_SERVER_HOST", "127.0.0.1")
 PORT = int(os.getenv("EV_SERVER_PORT", "45454"))
+DATABASE_PATH = os.getenv("EV_DATABASE_PATH", "var/ev-charging.db")
 
 
 def exchange(message):
@@ -31,6 +33,32 @@ def request(identifier, operation, payload):
 def assert_error(response, code):
     assert response["type"] == "error", response
     assert response["payload"]["code"] == code, response
+
+
+def database_row(query, parameters=()):
+    with sqlite3.connect(DATABASE_PATH, timeout=5) as connection:
+        return connection.execute(query, parameters).fetchone()
+
+
+def execute_database(statement, parameters=()):
+    with sqlite3.connect(DATABASE_PATH, timeout=5) as connection:
+        connection.execute(statement, parameters)
+
+
+def pile_from_station(station_id, pile_id):
+    response = exchange(request(
+        f"admin-pile-state-{station_id}-{pile_id}", "pile.list", {"station_id": station_id}))
+    assert response["type"] == "pile.list.result", response
+    matches = [pile for pile in response["payload"]["piles"] if pile["id"] == pile_id]
+    assert len(matches) == 1, response
+    return matches[0]
+
+
+def active_order_for_user(user_id):
+    response = exchange(request(
+        f"admin-active-order-{user_id}", "order.active.get", {"user_id": user_id}))
+    assert response["type"] == "order.active.get.result", response
+    return response["payload"]["order"]
 
 
 login = exchange(request("admin-login", "admin.login", {
@@ -123,11 +151,69 @@ assert created["payload"]["station"]["utilization"] == 0
 assert created["payload"]["station"]["utilization_range"] == "7d"
 assert exchange(created_request) == created
 
-restarted_request = request("admin-restart-pile", "admin.pile.restart", {
-    "administrator_id": admin_id, "pile_id": 103})
-restarted = exchange(restarted_request)
-assert restarted["type"] == "admin.pile.restart.result", restarted
-assert restarted["payload"]["pile"]["status"] == "idle"
+# Restart is a fault-recovery action.  It must reject idle/reserved/charging
+# without changing either the pile or the reservation/charging session.
+restart_rejected_cases = (
+    ("idle", 101, 1, None),
+    ("reserved", 203, 2, 4),
+    ("charging", 102, 1, 2),
+)
+for label, pile_id, station_id, user_id in restart_rejected_cases:
+    pile_before = pile_from_station(station_id, pile_id)
+    assert pile_before["status"] == label, pile_before
+    order_before = active_order_for_user(user_id) if user_id else None
+    if user_id:
+        assert order_before["pile_id"] == pile_id, order_before
+
+    rejected_request = request(f"admin-restart-reject-{label}", "admin.pile.restart", {
+        "administrator_id": admin_id, "pile_id": pile_id})
+    rejected = exchange(rejected_request)
+    assert_error(rejected, 1201)
+    assert pile_from_station(station_id, pile_id) == pile_before
+    if user_id:
+        assert active_order_for_user(user_id) == order_before
+    # Business rejections are audited but do not create a replay record.
+    assert database_row(
+        "SELECT result, reason FROM pile_restart_logs WHERE pile_id = ? "
+        "ORDER BY id DESC LIMIT 1", (pile_id,)
+    ) == ("rejected", "pile is not recoverable")
+    assert database_row("SELECT COUNT(*) FROM request_records WHERE request_id = ?",
+                        (rejected_request["id"],))[0] == 0
+
+# Fault and offline piles are the only successful restart paths.  A successful
+# request is persisted and an identical request ID returns the original result
+# without incrementing restart_count again.
+for label, pile_id, station_id in (("fault", 103, 1), ("offline", 202, 2)):
+    pile_before = pile_from_station(station_id, pile_id)
+    assert pile_before["status"] == label, pile_before
+    restart_request = request(f"admin-restart-{label}", "admin.pile.restart", {
+        "administrator_id": admin_id, "pile_id": pile_id})
+    restarted = exchange(restart_request)
+    assert restarted["type"] == "admin.pile.restart.result", restarted
+    restarted_pile = restarted["payload"]["pile"]
+    assert restarted_pile["status"] == "idle", restarted
+    assert restarted_pile["restart_count"] == pile_before["restart_count"] + 1, restarted
+    assert restarted_pile["last_restart_at"], restarted
+    assert database_row("SELECT COUNT(*) FROM request_records WHERE request_id = ?",
+                        (restart_request["id"],))[0] == 1
+    assert exchange(restart_request) == restarted
+    assert pile_from_station(station_id, pile_id)["restart_count"] == restarted_pile["restart_count"]
+
+# A failed request is not persisted: after the rejected idle pile is repaired
+# to fault, the same request ID can be retried and then becomes idempotent.
+failed_retry_request = request("admin-restart-failed-retry", "admin.pile.restart", {
+    "administrator_id": admin_id, "pile_id": 101})
+idle_before_retry = pile_from_station(1, 101)
+assert idle_before_retry["status"] == "idle", idle_before_retry
+assert_error(exchange(failed_retry_request), 1201)
+assert database_row("SELECT COUNT(*) FROM request_records WHERE request_id = ?",
+                    (failed_retry_request["id"],))[0] == 0
+execute_database("UPDATE charging_piles SET status = 'fault' WHERE id = ?", (101,))
+retried = exchange(failed_retry_request)
+assert retried["type"] == "admin.pile.restart.result", retried
+assert retried["payload"]["pile"]["status"] == "idle", retried
+assert retried["payload"]["pile"]["restart_count"] == idle_before_retry["restart_count"] + 1
+assert exchange(failed_retry_request) == retried
 
 users = exchange(request("admin-users", "admin.user.list", {"phone_query": "1390013"}))
 assert users["type"] == "admin.user.list.result", users

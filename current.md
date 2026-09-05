@@ -50,6 +50,10 @@ formal project artifacts.
   is reused by `admin.station.list` and `admin.statistics.get`; station rows
   expose `utilization`/`utilization_range`, and the global average is the
   unweighted mean of station values.
+- Administrator restart semantics are now covered by the server smoke suite:
+  only `fault`/`offline` piles recover to `idle`; `idle`/`reserved`/`charging`
+  are rejected without mutating the pile or active order. Successful restart
+  replay and failed-request retry are verified against a clean seeded database.
 - Cross-team gate: A retains Mock/offline fallback until a real Socket adapter
   is verified; B's administrator endpoints now exist, while C's real Socket
   repository and end-to-end management integration remain pending.
@@ -213,3 +217,5 @@ owns Socket dispatch and error mapping.
 - Unified seven-day station utilization across the admin station list and
   statistics average; added response-field assertions and documented the
   interval/intersection and created-pile denominator rules.
+- Clarified restart as fault recovery only, added four restart/idempotency test
+  groups, and corrected administrator idempotency lists in the protocol/API docs.
