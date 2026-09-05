@@ -26,11 +26,11 @@ make -j"$(nproc)"
 QT_QPA_PLATFORM=offscreen ./ev-user-client-tests -txt
 ```
 
-The client starts in deterministic Mock mode. Set `EV_USER_CLIENT_TRANSPORT=socket` to select `SocketUserService`; the adapter sends protocol v1 envelopes with UUID request IDs to `EV_SERVER_HOST`/`EV_SERVER_PORT` (defaults `127.0.0.1:45454`). Against the B PR #4 Schema v0.3 contract as present on current `main` (`994e5ff`, including the merged PR #8 UI baseline), login, profile update, wallet recharge, station/pile queries, active/history orders, reservation transitions, and both reservation and direct charging start (`order_id` or `pile_id`) plus stop/settlement are available. Frozen accounts return status=frozen; the adapter maps 1101 ACCOUNT_FROZEN, 1202 INSUFFICIENT_BALANCE, timeout and connection failures to user-readable messages. Login is phone-only per protocol v1 and accepts exactly 11 ASCII digits; the registration page remains a Mock-only convenience flow until a server registration operation is defined.
+The client starts in deterministic Mock mode. Set `EV_USER_CLIENT_TRANSPORT=socket` to select `SocketUserService`; the adapter sends protocol v1 envelopes with UUID request IDs to `EV_SERVER_HOST`/`EV_SERVER_PORT` (defaults `127.0.0.1:45454`). Against the B PR #4 Schema v0.3 contract as present on current `main` (`994e5ff`, including the merged PR #8 UI baseline), login, profile update, wallet recharge, station/pile queries, active/history orders, reservation transitions, and both reservation and direct charging start (`order_id` or `pile_id`) plus stop/settlement are available. Frozen accounts return status=frozen; the adapter maps 1101 ACCOUNT_FROZEN, 1202 INSUFFICIENT_BALANCE, timeout and connection failures to user-readable messages. Login is phone-only in both Mock and Socket modes and accepts exactly 11 ASCII digits; there is no standalone registration UI or service operation. A legal phone number logs in directly, and the first login can auto-create the account according to the active service contract.
 
 In Socket mode, network work runs outside the GUI thread and completion is returned to widgets through `QFutureWatcher`; login and subsequent station/order queries therefore do not block the window event loop. State-changing operations retain their generated request ID after a connection failure, timeout, protocol failure, or server error, and a retry of the same operation/payload reuses that ID. The ID is retired only after a successful response. A created `pending_reservation` remains visible in the charging page and can be confirmed again or cancelled, including after a lost confirmation response.
 
-Demo credentials are `13800000000`. Registration is two-step: valid phone, password and matching confirmation first; nickname is entered on the second step. Password fields have show/hide eye buttons. `timeout`, `error`, and `server-error` inputs expose failure states without leaking internals.
+Demo phone is `13800000000`; any legal 11-digit ASCII phone can log in directly. The login page has no password or registration fields. `timeout`, `error`, and `server-error` inputs expose failure states without leaking internals.
 
 The home page uses separated dark station cards with light-blue rounded borders and white text, and displays idle-pile count over total-pile count; price is shown only in the station/pile detail and order confirmation. The top-right shortcut buttons were removed in favor of the bottom navigation. The charging page is the single current-status entry and includes a deterministic completed-charge history plus a summary; opening it from the bottom bar does not show the unfinished-order dialog. That dialog appears only when selecting another pile while an order is charging or awaiting settlement. Cancelling an unconfirmed pile selection returns to the pile detail page. Station and pile cards share the same dark/light-blue/white visual treatment.
 
@@ -47,7 +47,7 @@ After selecting an idle pile, the confirmation row provides both `确认创建�
 ## A-S1-02 checklist
 
 - [x] 01 baseline/window/navigation/session
-- [x] 02 login/register/validation and Mock failures
+- [x] 02 phone-only login validation and Mock failures
 - [x] 03 station, detail and pile status/empty/error states
 - [x] 04 Tencent Maps URL path and labeled offline route fallback
 - [x] 05 reserve → start → stop → settle Mock order flow with duplicate guards
@@ -59,7 +59,7 @@ Dependency flow: A-S1-01 → A-S1-02-01 → (02,03) → (04,05) → 08; 06 feeds
 
 ## Async request safety
 
-Socket callbacks are accepted only while their captured session generation and user ID remain current. Station searches discard older request generations; pile results also must match the currently selected station. After logout, pending callbacks are ignored. The Socket login page hides standalone registration because protocol v1 creates a user automatically on first phone-only login.
+Socket callbacks are accepted only while their captured session generation and user ID remain current. Station searches discard older request generations; pile results also must match the currently selected station. After logout, pending callbacks are ignored. Both Mock and Socket modes use the same phone-only login flow.
 
 ## Request cleanup
 

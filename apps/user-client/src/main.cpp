@@ -50,7 +50,6 @@ public:
     stack_ = new QStackedWidget(this);
     setCentralWidget(stack_);
     buildLogin();
-    buildRegister();
     buildHome();
     buildStationDetail();
     buildMap();
@@ -65,15 +64,15 @@ private:
   IUserService *service_{&mockService_};
   SessionManager session_;
   QStackedWidget *stack_{};
-  QWidget *login_{}, *registerPage_{}, *home_{}, *detail_{}, *map_{}, *orderPage_{}, *profile_{};
-  QStackedWidget *registerSteps_{};
-  QLineEdit *phone_{}, *password_{}, *regPhone_{}, *regPassword_{}, *regConfirmPassword_{}, *regName_{}, *query_{}, *address_{}, *fromLocation_{}, *nickname_{};
+  QWidget *login_{}, *home_{}, *detail_{}, *map_{}, *orderPage_{}, *profile_{};
+
+  QLineEdit *phone_{}, *query_{}, *address_{}, *fromLocation_{}, *nickname_{};
   QComboBox *region_{}, *routeMode_{};
   QDoubleSpinBox *rechargeAmount_{};
-  QLabel *loginStatus_{}, *registerStatus_{}, *homeStatus_{}, *locationStatus_{}, *orderSummary_{}, *detailTitle_{}, *pileStatus_{}, *mapStatus_{}, *orderStatus_{}, *historySummary_{}, *profileLabel_{}, *avatarLabel_{};
+  QLabel *loginStatus_{}, *homeStatus_{}, *locationStatus_{}, *orderSummary_{}, *detailTitle_{}, *pileStatus_{}, *mapStatus_{}, *orderStatus_{}, *historySummary_{}, *profileLabel_{}, *avatarLabel_{};
   QWidget *confirmationControls_{};
   QListWidget *stationList_{}, *pileList_{}, *mapStationList_{}, *historyList_{};
-  QPushButton *loginButton_{}, *registerButton_{}, *registerNextButton_{}, *registerFinishButton_{}, *confirmOrderButton_{}, *reserveButton_{}, *returnPileButton_{}, *cancelReservationButton_{}, *directStartButton_{}, *startButton_{}, *stopButton_{}, *settleButton_{}, *rechargeButton_{};
+  QPushButton *loginButton_{}, *confirmOrderButton_{}, *reserveButton_{}, *returnPileButton_{}, *cancelReservationButton_{}, *directStartButton_{}, *startButton_{}, *stopButton_{}, *settleButton_{}, *rechargeButton_{};
   Station selectedStation_{};
   Pile selectedPile_{};
   Order order_{};
@@ -174,61 +173,13 @@ private:
     loginButton_ = new QPushButton(QStringLiteral("登录"), login_);
     loginButton_->setMinimumHeight(42);
     layout->addWidget(loginButton_);
-    registerButton_ = new QPushButton(QStringLiteral("注册新账号"), login_);
-    registerButton_->setVisible(service_ != &socketService_);
-    layout->addWidget(registerButton_);
     loginStatus_ = new QLabel(login_);
     loginStatus_->setWordWrap(true);
     layout->addWidget(loginStatus_);
     layout->addStretch();
     layout->addWidget(new QLabel(QStringLiteral("演示：13800000000；新手机号会自动创建用户"), login_));
     connect(loginButton_, &QPushButton::clicked, this, &UserWindow::login);
-    connect(registerButton_, &QPushButton::clicked, this, &UserWindow::showRegister);
     stack_->addWidget(login_);
-  }
-
-  void buildRegister() {
-    registerPage_ = new QWidget;
-    auto *layout = new QVBoxLayout(registerPage_);
-    layout->setContentsMargins(24, 28, 24, 18);
-    layout->addWidget(new QLabel(QStringLiteral("注册 / 完善账号"), registerPage_));
-    registerSteps_ = new QStackedWidget(registerPage_);
-
-    auto *credentials = new QWidget;
-    auto *credentialForm = new QFormLayout(credentials);
-    regPhone_ = new QLineEdit;
-    regPhone_->setPlaceholderText(QStringLiteral("请输入 11 位手机号"));
-    credentialForm->addRow(QStringLiteral("手机号"), regPhone_);
-    credentialForm->addRow(QStringLiteral("密码"), passwordRow(regPassword_));
-    credentialForm->addRow(QStringLiteral("确认密码"), passwordRow(regConfirmPassword_));
-    registerNextButton_ = new QPushButton(QStringLiteral("下一步"), credentials);
-    credentialForm->addRow(registerNextButton_);
-
-    auto *profile = new QWidget;
-    auto *profileLayout = new QFormLayout(profile);
-    regName_ = new QLineEdit;
-    regName_->setPlaceholderText(QStringLiteral("请输入昵称"));
-    profileLayout->addRow(QStringLiteral("昵称"), regName_);
-    registerFinishButton_ = new QPushButton(QStringLiteral("注册并登录"), profile);
-    auto *back = new QPushButton(QStringLiteral("返回修改"), profile);
-    profileLayout->addRow(registerFinishButton_);
-    profileLayout->addRow(back);
-
-    registerSteps_->addWidget(credentials);
-    registerSteps_->addWidget(profile);
-    layout->addWidget(registerSteps_);
-    registerStatus_ = new QLabel(registerPage_);
-    registerStatus_->setWordWrap(true);
-    layout->addWidget(registerStatus_);
-    layout->addStretch();
-    layout->addWidget(nav(QStringLiteral("返回登录"), registerPage_, &UserWindow::showLogin));
-    connect(registerNextButton_, &QPushButton::clicked, this, &UserWindow::registerNextStep);
-    connect(registerFinishButton_, &QPushButton::clicked, this, &UserWindow::registerUser);
-    connect(back, &QPushButton::clicked, this, [this] {
-      registerSteps_->setCurrentIndex(0);
-      registerStatus_->clear();
-    });
-    stack_->addWidget(registerPage_);
   }
 
   void buildHome() {
@@ -460,21 +411,6 @@ private:
     stack_->setCurrentWidget(login_);
   }
 
-  void showRegister() {
-    if (service_ == &socketService_) {
-      loginStatus_->setText(QStringLiteral("当前为 Socket 模式：手机号免密登录，首次登录自动注册。"));
-      showLogin();
-      return;
-    }
-    regPhone_->clear();
-    regPassword_->clear();
-    regConfirmPassword_->clear();
-    regName_->clear();
-    registerStatus_->clear();
-    registerSteps_->setCurrentIndex(0);
-    stack_->setCurrentWidget(registerPage_);
-  }
-
   void showHome() {
     if (!session_.isLoggedIn()) {
       showLogin();
@@ -604,42 +540,6 @@ private:
       if (result.value.status == UserStatus::Frozen) homeStatus_->setText(QStringLiteral("账号已冻结：可查看资料和订单并完成收尾，预约、开始充电和充值不可用。"));
       else loginStatus_->clear();
     });
-  }
-
-  void registerNextStep() {
-    const QString phone = regPhone_->text().trimmed();
-    const QString password = regPassword_->text();
-    const QString confirmation = regConfirmPassword_->text();
-    if (phone.isEmpty()) {
-      registerStatus_->setText(QStringLiteral("请输入手机号"));
-    } else if (!isValidPhone(phone)) {
-      registerStatus_->setText(QStringLiteral("手机号格式错误"));
-    } else if (password.isEmpty()) {
-      registerStatus_->setText(QStringLiteral("请输入密码"));
-    } else if (password.size() < 6) {
-      registerStatus_->setText(QStringLiteral("密码长度不能少于 6 位"));
-    } else if (confirmation.isEmpty()) {
-      registerStatus_->setText(QStringLiteral("请输入确认密码"));
-    } else if (password != confirmation) {
-      registerStatus_->setText(QStringLiteral("密码和确认密码必须相同"));
-    } else {
-      registerStatus_->clear();
-      registerSteps_->setCurrentIndex(1);
-      regName_->setFocus();
-    }
-  }
-
-  void registerUser() {
-    auto result = service_->registerUser(regPhone_->text().trimmed(), regPassword_->text(), regName_->text());
-    if (!result.ok) {
-      registerStatus_->setText(result.error);
-      return;
-    }
-    session_.setUser(result.value);
-    order_ = Order{};
-    selectedStation_ = Station{};
-    selectedPile_ = Pile{};
-    showHome();
   }
 
   void searchStations() {

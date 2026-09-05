@@ -13,7 +13,6 @@ public:
   explicit SocketUserService(QString host = {}, quint16 port = 0, int timeoutMs = 3000);
   Result<User> login(const QString &) override;
   Result<User> login(const QString &, const QString &) override;
-  Result<User> registerUser(const QString &, const QString &, const QString &) override;
   Result<User> profile(const QString &) override;
   Result<User> updateProfile(const QString &, const QString &, const QString &) override;
   Result<qint64> recharge(const QString &, qint64) override;

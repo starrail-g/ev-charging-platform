@@ -27,13 +27,13 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 
 ## A-S1-02 delivered scope
 
-- User-window navigation with a 420×760 mobile-style layout, centralized `SessionManager`, login/logout and two-step registration validation.
+- User-window navigation with a 420×760 mobile-style layout, centralized `SessionManager`, phone-only login/logout and 11-digit ASCII phone validation.
 - Deterministic Mock station/pile query with loading, empty, unavailable, timeout and service-error feedback; station cards show dynamic idle/total counts and pile details show type, power, status and price.
 - Adapter-only order flow: create/reserve, start charging, stop charging, settle, cancel reservation, current-order status and newest-first completed history with completion time, station address and amount.
 - Mock/offline navigation route with explicit Mock labeling and local-only `TENCENT_MAP_KEY` configuration placeholder. No real key is stored in source, documentation or Git.
 - Profile nickname/avatar and wallet Mock operations; no UI code contains SQL or direct SQLite access.
 - Regression fix for early `orderSummary_` access; the label is constructed before login refresh can run.
-- Review fixes applied: all business methods reject empty user IDs; profile/avatar changes persist in Mock; registration is reachable from login; route mode is passed to the Mock service and coordinates are range/finite checked. Login behavior follows the documented phone-only Mock flow.
+- Review fixes applied: all business methods reject empty user IDs; profile/avatar changes persist in Mock; route mode is passed to the Mock service and coordinates are range/finite checked. Login behavior follows the documented phone-only Mock flow.
 - Monetary DTOs use integer cents (`walletBalanceCents`, `priceCentsPerKwh`, `amountCents`). Mock reservation now returns `PendingReservation` and requires `confirmReservation`; settlement checks balance, deducts cents atomically on success, and leaves the order pending on insufficient balance.
 - DTO uses protocol-aligned `UserStatus` (`active`/`frozen`) and `Offline` pile state. Mock external IDs remain strings in the UI model; `SocketUserService` converts numeric-looking IDs at the wire boundary and maps B's canonical station/pile/order fields and status values in one adapter.
 - Socket/Protocol status: v1 length-prefix framing, UTF-8 JSON envelopes, timeout/connection handling, numeric error propagation, phone-only `user.login`, station/pile, active/history order, reservation, charging and settlement operations are implemented. Socket calls run through QtConcurrent and return through `QFutureWatcher`, so network waits do not block the GUI event loop. State-changing operations retain their UUID after timeout/disconnect/error and reuse it for the same operation/payload until a successful response; `pending_reservation` can be retried or cancelled from the charging page. `user.profile.get/update` and `wallet.recharge` map to integer-cent DTOs; frozen status 1101, stop-release and insufficient-balance responses are translated at the adapter boundary.
@@ -73,7 +73,7 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 ## Async callback validity (PR #9 follow-up)
 
 - `runService()` captures `SessionManager::generation()` and the active user ID; callbacks are discarded after logout or any session replacement, preventing stale responses from reading or restoring cleared session state.
-- Station queries use a monotonically increasing request generation. Pile queries additionally require both the latest generation and the station ID captured when the request started. Socket mode hides the standalone registration entry because v1 supports phone-only login with first-login auto-creation.
+- Station queries use a monotonically increasing request generation. Pile queries additionally require both the latest generation and the station ID captured when the request started. Both Mock and Socket modes use phone-only login; a legal phone number enters directly and first login may auto-create the account.
 
 ## Recharge discard cleanup (PR #9 follow-up)
 

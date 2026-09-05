@@ -54,16 +54,6 @@ Result<User> MockUserService::login(const QString &phone) {
   return Result<User>::success({activeUserId_, registeredPhone_, registeredDisplayName_, walletBalanceCents_, registeredAvatarPath_});
 }
 Result<User> MockUserService::login(const QString &phone, const QString &password) { Q_UNUSED(password); return login(phone); }
-Result<User> MockUserService::registerUser(const QString &phone, const QString &password, const QString &name) {
-  if (phone.trimmed().isEmpty()) return Result<User>::failure(QStringLiteral("请输入手机号"));
-  if (!isValidPhone(phone)) return Result<User>::failure(QStringLiteral("手机号格式错误"));
-  if (password.isEmpty()) return Result<User>::failure(QStringLiteral("请输入密码"));
-  if (password.size() < 6) return Result<User>::failure(QStringLiteral("密码长度不能少于 6 位"));
-  if (name.trimmed().isEmpty()) return Result<User>::failure(QStringLiteral("请输入昵称"));
-  if (phone == registeredPhone_) return Result<User>::failure(QStringLiteral("账号已存在，请直接登录"));
-  registeredPhone_ = phone; registeredPassword_ = password; registeredDisplayName_ = name.trimmed(); registeredAvatarPath_.clear(); walletBalanceCents_ = 0; activeUserId_ = QStringLiteral("U001"); activeOrder_ = Order{}; orderHistory_.clear();
-  return Result<User>::success({activeUserId_, phone, registeredDisplayName_, walletBalanceCents_, {}});
-}
 Result<User> MockUserService::profile(const QString &userId) { if (userId.isEmpty() || userId != activeUserId_) return Result<User>::failure(QStringLiteral("会话已失效，请重新登录")); return Result<User>::success({userId, registeredPhone_, registeredDisplayName_, walletBalanceCents_, registeredAvatarPath_}); }
 Result<User> MockUserService::updateProfile(const QString &userId, const QString &displayName, const QString &avatarPath) { if (userId.isEmpty() || userId != activeUserId_) return Result<User>::failure(QStringLiteral("会话已失效，请重新登录")); if (displayName.trimmed().isEmpty()) return Result<User>::failure(QStringLiteral("昵称不能为空")); registeredDisplayName_ = displayName.trimmed(); registeredAvatarPath_ = avatarPath; return Result<User>::success({userId, registeredPhone_, registeredDisplayName_, walletBalanceCents_, registeredAvatarPath_}); }
 Result<qint64> MockUserService::recharge(const QString &userId, qint64 amountCents) { if (userId.isEmpty() || userId != activeUserId_) return Result<qint64>::failure(QStringLiteral("会话已失效，请重新登录")); if (amountCents <= 0 || amountCents > 1000000) return Result<qint64>::failure(QStringLiteral("充值金额应在 0 到 10000 元之间")); walletBalanceCents_ += amountCents; return Result<qint64>::success(walletBalanceCents_); }

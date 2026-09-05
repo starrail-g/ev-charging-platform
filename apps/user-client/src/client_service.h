@@ -39,7 +39,6 @@ public:
   virtual ~IUserService() = default;
   virtual Result<User> login(const QString &phone) = 0;
   virtual Result<User> login(const QString &phone, const QString &password) { Q_UNUSED(password); return login(phone); }
-  virtual Result<User> registerUser(const QString &phone, const QString &password, const QString &name) = 0;
   virtual Result<User> profile(const QString &userId) = 0;
   virtual Result<User> updateProfile(const QString &userId, const QString &displayName, const QString &avatarPath) = 0;
   virtual Result<qint64> recharge(const QString &userId, qint64 amountCents) = 0;
@@ -62,7 +61,6 @@ public:
   MockUserService();
   Result<User> login(const QString &) override;
   Result<User> login(const QString &, const QString &) override;
-  Result<User> registerUser(const QString &, const QString &, const QString &) override;
   Result<User> profile(const QString &) override;
   Result<User> updateProfile(const QString &, const QString &, const QString &) override;
   Result<qint64> recharge(const QString &, qint64) override;
@@ -82,7 +80,6 @@ private:
   QVector<Station> stationData_;
   QVector<Pile> pileData_;
   QString registeredPhone_ = QStringLiteral("13800000000");
-  QString registeredPassword_ = QStringLiteral("123456");
   QString registeredDisplayName_ = QStringLiteral("??0000");
   QString registeredAvatarPath_;
   QString activeUserId_;

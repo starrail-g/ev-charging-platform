@@ -143,7 +143,6 @@ Result<User> SocketUserService::login(const QString &phone) {
   return response.ok ? userFrom(response.value) : Result<User>::failure(response.code, response.error);
 }
 Result<User> SocketUserService::login(const QString &phone, const QString &password) { Q_UNUSED(password); return login(phone); }
-Result<User> SocketUserService::registerUser(const QString &, const QString &, const QString &) { return Result<User>::failure(1002, QStringLiteral("协议 v1 使用手机号免密登录，不提供独立注册请求")); }
 Result<User> SocketUserService::profile(const QString &id) {
   const QString wire = wireId(id);
   if (id.trimmed().isEmpty()) return Result<User>::failure(1100, QStringLiteral("请先登录"));
