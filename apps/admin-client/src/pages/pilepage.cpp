@@ -4,7 +4,9 @@
 #include <QHash>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QItemSelectionModel>
 #include <QLabel>
+#include <QPushButton>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -67,6 +69,12 @@ PilePage::PilePage(ev::AdminRepository *repository, QWidget *parent)
     toolbar->setContentsMargins(0, 0, 0, 0);
     toolbar->addWidget(filterLabel);
     toolbar->addWidget(m_filterCombo);
+    // C-S1-005：远程重启（第一阶段 Mock 模拟；无选中行时不可用）
+    m_restartButton = new QPushButton(QStringLiteral("重启选中桩"), this);
+    m_restartButton->setObjectName(QStringLiteral("pileRestartButton"));
+    m_restartButton->setEnabled(false);
+    toolbar->addSpacing(12);
+    toolbar->addWidget(m_restartButton);
     toolbar->addStretch();
 
     // ---- 桩列表（A-04：编号/站点/类型/功率/单价/状态/累计次数/累计时长）----
@@ -103,6 +111,13 @@ PilePage::PilePage(ev::AdminRepository *repository, QWidget *parent)
 
     connect(m_filterCombo, &QComboBox::currentIndexChanged,
             this, &PilePage::onFilterIndexChanged);
+    // QTableWidget 无 currentRowChanged 信号：走 selectionModel 的 currentRowChanged
+    connect(m_table->selectionModel(), &QItemSelectionModel::currentRowChanged,
+            this, [this](const QModelIndex &current, const QModelIndex &) {
+                onPileSelectionChanged(current.row());
+            });
+    connect(m_restartButton, &QPushButton::clicked,
+            this, &PilePage::onRestartClicked);
 }
 
 void PilePage::refresh(ev::mockdata::DataMode mode)
@@ -148,6 +163,7 @@ void PilePage::rebuildRows()
     if (!m_pilesOk || !m_stationsOk) {
         const QString detail = m_pilesOk ? m_stationsError : m_pilesError;
         m_table->setRowCount(0);
+        m_actionPendingHint.clear();
         showHint(QStringLiteral("接口错误：%1").arg(detail));
         return;
     }
@@ -188,6 +204,11 @@ void PilePage::rebuildRows()
 
     if (m_piles.isEmpty()) {
         showHint(QStringLiteral("暂无充电桩数据"));
+    } else if (!m_actionPendingHint.isEmpty()) {
+        // 动作成功提示展示一次（如"桩 P-101-C 已重启…"），随后清除，
+        // 下一次普通刷新/切页回到无提示状态
+        showHint(m_actionPendingHint);
+        m_actionPendingHint.clear();
     } else {
         clearHint();
     }
@@ -280,6 +301,32 @@ QString PilePage::currentPileCode() const
         return QString();
     QTableWidgetItem *codeItem = m_table->item(row, 0);
     return codeItem ? codeItem->text() : QString();
+}
+
+void PilePage::onPileSelectionChanged(int currentRow)
+{
+    m_restartButton->setEnabled(currentRow >= 0);
+}
+
+void PilePage::onRestartClicked()
+{
+    const QString pileCode = currentPileCode();
+    if (pileCode.isEmpty())
+        return;
+
+    // 动作在途：禁用按钮防连点；结果经回调恢复（成功 → 提示 + 重新拉取，
+    // 失败/冲突 → 数据层 message 直接展示，列表保持现状可重试）
+    m_restartButton->setEnabled(false);
+    m_repository->restartPile(pileCode, this,
+                              [this](const ev::ActionResult &result) {
+                                  m_restartButton->setEnabled(true);
+                                  if (result.ok) {
+                                      m_actionPendingHint = result.message;
+                                      refresh();
+                                  } else {
+                                      showHint(result.message);
+                                  }
+                              });
 }
 
 void PilePage::showHint(const QString &text)
