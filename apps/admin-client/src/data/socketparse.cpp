@@ -298,8 +298,18 @@ bool parseAdminLoginPayload(const QJsonObject &payload, LoginResult *out,
             *reason = QStringLiteral("响应 payload.admin 缺失或非对象");
         return false;
     }
+    // Q6 冻结(2026-09-06, PR #12 = main 3d015f7): admin.login.result 必须携带
+    // 非空字符串 token; 缺失/类型错 = 响应结构错(客户端无 token 无法发起后续
+    // admin.* 请求, 早失败比登录后全部 1100 更可诊断)。
+    const QJsonValue tokenValue = payload.value(QLatin1String("token"));
+    if (!tokenValue.isString() || tokenValue.toString().isEmpty()) {
+        if (reason)
+            *reason = QStringLiteral("响应 payload.token 缺失或非字符串(服务端会话契约不符)");
+        return false;
+    }
     if (out) {
         parseAdmin(value.toObject(), &out->admin, issues);
+        out->token = tokenValue.toString();
         out->ok = true;
         out->errorCode = 0;
         out->networkError = false;

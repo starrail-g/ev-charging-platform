@@ -205,14 +205,17 @@ void TestSocketParse::payloadListsSkipBadItemsButFailOnStructure()
 
 void TestSocketParse::adminLoginPayloadAndErrorCode()
 {
-    // payload.admin 对象 → LoginResult.admin（admin.login.result 专用）
+    // payload = admin 对象 + 会话 token（Q6 冻结 2026-09-06 契约）→ LoginResult
     const QJsonObject payload = QJsonObject{
         {QStringLiteral("admin"), QJsonObject{
              {QStringLiteral("id"), 1},
              {QStringLiteral("username"), QStringLiteral("admin")},
              {QStringLiteral("role"), QStringLiteral("super_admin")},
              {QStringLiteral("status"), QStringLiteral("active")},
-         }}};
+         }},
+        {QStringLiteral("token"), QStringLiteral("session-token-abc")},
+        {QStringLiteral("expires_in_seconds"), 28800},
+    };
     ev::LoginResult login;
     QString reason;
     QStringList issues;
@@ -221,10 +224,24 @@ void TestSocketParse::adminLoginPayloadAndErrorCode()
     QCOMPARE(login.errorCode, 0);
     QCOMPARE(login.admin.username, QStringLiteral("admin"));
     QCOMPARE(login.admin.role, QStringLiteral("super_admin"));
+    QCOMPARE(login.token, QStringLiteral("session-token-abc")); // token 提取
 
     // 结构错（无 admin 对象）→ false
     QVERIFY(!ev::socketparse::parseAdminLoginPayload(
-        QJsonObject{{QStringLiteral("admin"), QJsonValue(1)}}, &login, &issues, &reason));
+        QJsonObject{{QStringLiteral("admin"), QJsonValue(1)},
+                    {QStringLiteral("token"), QStringLiteral("t")}},
+        &login, &issues, &reason));
+
+    // Q6: token 缺失/非字符串 = 响应结构错（客户端无法发起后续 admin.* 请求，
+    // 早失败优于登录后全部 1100）
+    QVERIFY(!ev::socketparse::parseAdminLoginPayload(
+        QJsonObject{{QStringLiteral("admin"), QJsonObject{{QStringLiteral("id"), 1}}}},
+        &login, &issues, &reason));
+    QVERIFY(!ev::socketparse::parseAdminLoginPayload(
+        QJsonObject{{QStringLiteral("admin"), QJsonObject{{QStringLiteral("id"), 1}}},
+                    {QStringLiteral("token"), QJsonValue(42)}},
+        &login, &issues, &reason));
+    QVERIFY(reason.contains(QStringLiteral("token")));
 
     // error 信封 code 解析；缺失/类型错 → 1002（不冒充传输层错误）
     QCOMPARE(ev::socketparse::parseErrorCode(

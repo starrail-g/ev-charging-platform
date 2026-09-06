@@ -27,8 +27,12 @@ struct LoginResult {
     bool ok = false;
     AdminInfo admin;
     int errorCode = 0;         // 协议码：0=OK，1100=UNAUTHORIZED
-    bool networkError = false; // 传输层错误（服务不可用），协议码不覆盖，单独标记
+    bool networkError = false; // 传输层错误（服务不可达），协议码不覆盖，单独标记
     QString message;           // 仅用于日志/兜底展示，不作为分支依据
+    // 管理员会话 token（admin.login.result 契约字段，Q6 冻结 2026-09-06：
+    // 服务端进程内 8h 会话，PR #12 = main 3d015f7）；除 admin.login 外所有
+    // admin.* 请求携带；收到 1100 即失效需重登。Mock 实现不产生（空串）。
+    QString token;
 };
 
 // 管理动作结果（login 同构：错误分支只按 errorCode 分支，message 仅展示/日志）。

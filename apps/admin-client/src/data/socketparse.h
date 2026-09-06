@@ -76,8 +76,11 @@
 // │ admin: id/username/role/ │ AdminInfo 同名           │ loginAdministrator 构造点    │
 // │      status              │                          │ (role: operator|super_admin, │
 // │                          │                          │  status: active|disabled)    │
-// │ admin.* 请求(除 login)   │ payload.administrator_id │ Q6 冻结(2026-09-05): 无 token/│
-// │                          │ (= AdminInfo.id)         │ 连接级会话, 每请求携带;      │
+// │ admin.login.result:      │ LoginResult.token        │ Q6 冻结(2026-09-06): 8h 会话 │
+// │      token               │                          │ token, 非空字符串必需        │
+// │ admin.* 请求(除 login)   │ payload.token            │ Q6 冻结(2026-09-06): PR #12; │
+// │                          │ mutation 另带            │ 8h 进程内会话 token 每请求携带;│
+// │                          │ payload.administrator_id │ mutation 三类绑定 token 主体  │
 // │                          │                          │ buildPayload 单点附加         │
 // └──────────────────────────┴──────────────────────────┴──────────────────────────────┘
 namespace ev {

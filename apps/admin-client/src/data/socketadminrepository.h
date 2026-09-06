@@ -37,10 +37,12 @@ namespace ev {
 //      (连接失败/超时/断连/坏帧) → networkError=true + errorCode=0, 不冒充协议码;
 //   D5 fetchPiles 逐站聚合: admin.station.list → 每站 pile.list(station_id)(并行独立 id),
 //      任一站失败 → 整页 error(不一致的全量视图不可静默缺站);
-//   D6 鉴权(Q6 冻结 2026-09-05, PR #10 代码实证): v1 无 token/连接级会话; admin.* 请求
-//      (admin.login 除外)payload 携带 administrator_id, 服务端按请求校验+角色检查,
+//   D6 鉴权(Q6 冻结 2026-09-06, PR #12 = main 3d015f7): admin.login 响应发放
+//      进程内 8h 会话 token; 除 admin.login 外所有 admin.* 请求 payload 携带
+//      token; mutation(admin.station.create/admin.pile.restart/admin.user.status.set)
+//      额外携带 administrator_id 且须与 token 主体一致(不匹配 1100);
 //      hasOnlyFields 严格拒多余字段 → payload 组装收敛 buildPayload() 单点;
-//      login 成功缓存认证上下文(admin 对象), 1100/其他失败不缓存;
+//      login 成功缓存 token+admin, 收到 1100 即清空(会话失效需重登);
 //   D7 动作类请求超时**不自动重发、不换 id**(服务端按请求 id 幂等, 结果未知提示),
 //      查询类无此限制(由调用方按需重试)。
 class SocketAdminRepository : public QObject, public AdminRepository
@@ -118,8 +120,8 @@ private:
     void sendRequest(const QString &type, const QJsonObject &specific, bool isAction,
                      QObject *context, std::function<void(const ReplyEnvelope &)> callback);
 
-    // D6/Q6 冻结(2026-09-05): 无 token/连接级会话, 已认证的 admin.* 请求(admin.login
-    // 除外)附加 administrator_id; 服务端 hasOnlyFields 严格拒多余字段 → 只带契约字段
+    // D6/Q6 冻结(2026-09-06, PR #12): admin.*(除 admin.login)携带 token;
+    // mutation 额外携带 administrator_id(buildPayload 单点, 见 cpp 注释)
     QJsonObject buildPayload(const QString &type, const QJsonObject &specific) const;
 
     QString generateRequestId(); // 'c-admin-<全局递增>' (请求 id 全局唯一, 不跨请求复用)
@@ -138,7 +140,8 @@ private:
     void handleIncomingMessage(const ev::protocol::Message &message); // 按 id 查 pending 派发
 
     // 登录结果派发后的认证上下文维护(1100/结构错不缓存)
-    void applyLoginOutcome(bool ok, int errorCode, const AdminInfo &admin);
+    void applyLoginOutcome(bool ok, int errorCode, const AdminInfo &admin,
+                           const QString &token);
 
     // fetchPiles 逐站聚合内部状态(跨多次 sendRequest 闭包共享, shared_ptr 生命周期托管)
     struct PileFanOutState {
@@ -171,8 +174,10 @@ private:
     bool m_connectPhase = false; // 连接建立阶段标志: socket error 文案区分"无法连接"vs"中断"
 
     // D6/Q6 认证上下文(login 成功缓存; 1100/结构错不缓存):
-    // buildPayload 对 admin.*(除 admin.login)附加 administrator_id = m_admin.id
+    // 认证上下文(Q6 冻结 2026-09-06): login 成功缓存 token + admin;
+    // 1100/失败/响应结构错即清空(buildPayload 只对已认证会话附加凭据)
     bool m_authenticated = false;
+    QString m_token;
     AdminInfo m_admin;
 
     // pile_code → id 快照(restartPile 需要 wire pile_id; fetchPiles/restart 响应时刷新)

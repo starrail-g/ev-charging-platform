@@ -32,19 +32,26 @@
 - 布局断点 ≥1501 / 901–1500 / ≤900；ECharts 6.1.0 本地 vendor 离线可跑；金额/时间与 Qt 同口径；
 - `serve.py --check` 资产门禁通过；密钥只走 config/local.env / 环境变量。
 
-### 测试证据（9/4-9/5 本地与 VM，逐字）
+### 测试证据（9/4-9/6 本地与 VM，逐字）
 - Windows（构建目录 build/admin-client-socket）：tst_ui **24** / tst_launchsmoke **6** /
-  tst_loginflow **7** / tst_socketparse **9** / tst_socketadapter **13**，全 0 failed
+  tst_loginflow **7** / tst_socketparse **9** / tst_socketadapter **15**，全 0 failed
+  （9/6 token 适配后：+authenticatedRequestsCarrySessionToken +unauthorizedClearsSessionState）
 - Ubuntu VM（BitDev，qmake6 6.2.4）：同五套逐字一致（tst_socketadapter 曾现 Ubuntu-only
   SIGSEGV——fake server 析构对正在析构的 accepted socket 调 deleteLater 属 UB，已修：
-  断开只清 decoder，socket 生命周期交还 QTcpServer；修复后 13/13）
+  断开只清 decoder，socket 生命周期交还 QTcpServer；修复后全绿）
 - node：35 passed（Windows + VM）；serve --check / tokens --check 通过
+- **真实 main 服务端联调冒烟（2026-09-06，token 契约 PR #12）**：admin.login（拿 token）→
+  fetchOverview 双 range → fetchStations → fetchPiles 逐站 fan-out → setUserStatus
+  冻结/解冻 → restartPile，全链路 PASS（`build/repro/admin-real-smoke.cpp` +
+  `smoke-live-result.txt`；临时库由 dev.sql 初始化，重启语义持久化已实证）
 
 ## 3. 本阶段明确未实现项（答辩材料口径，不提前宣称）
 - 生产腾讯地图 Key 配置（保留本地联调；无 Key 自动拓扑降级）
 - 训练完成的预测/调度模型（`ml` 为第二阶段扩展）
-- 真实后端实时推送（管理端统计/桩状态真实 Socket 联调 = 9/7 18:00 闸门；闸门前 Mock 不冒充）
-- 冻结/重启动作的**服务端真实执行**（当前为 Mock 模拟，标注清楚）
+- 9/7 18:00 闸门**团队统一环境**的正式联调记录（本地真服务端冒烟已 PASS，闸门现场按
+  `docs/meetings/interface-gate-2026-09-07.md` 补录；闸门前 Mock 不冒充）
+- 冻结/重启动作在**演示默认路径（Mock）**下为模拟执行（数据源切 `EV_ADMIN_DATA_SOURCE=socket`
+  时动作由服务端真实执行并已联调验证）
 
 ## 4. 后续更新规则
 - 每次功能批合入后在本节登记：日期 + 命令 + 真实 Totals（逐字）；

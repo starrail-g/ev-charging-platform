@@ -19,6 +19,7 @@ namespace ev {
 
 namespace {
 constexpr int kCodeOk = 0;
+constexpr int kCodeUnauthorized = 1100; // 会话 token 缺失/过期/与 administrator_id 不匹配
 constexpr int kCodeInvalidRequest = 1002; // 坏信封/响应结构错误的兜底协议码
 constexpr int kCodeNotFound = 1200;
 
@@ -273,6 +274,14 @@ void SocketAdminRepository::handleIncomingMessage(const ev::protocol::Message &m
         QStringList issues;
         env.errorCode = socketparse::parseErrorCode(message.payload, &issues);
         env.message = message.payload.value(QLatin1String("message")).toString();
+        if (env.errorCode == kCodeUnauthorized) {
+            // Q6(2026-09-06): 会话 token 缺失/过期/与 administrator_id 不匹配 →
+            // 服务端 1100; 清除本地认证上下文(token+admin), 下次登录重新获取
+            // (页面级跳登录属 UI 策略, 数据层只负责失效即清, 见设计稿 D3)。
+            applyLoginOutcome(false, env.errorCode, AdminInfo(), QString());
+            qWarning().noquote()
+                << "SocketAdminRepository: 会话失效(1100), 已清除认证上下文";
+        }
     }
     pending.callback(env);
 }
@@ -283,28 +292,41 @@ QJsonObject SocketAdminRepository::buildPayload(const QString &type,
                                                 const QJsonObject &specific) const
 {
     QJsonObject payload = specific;
-    // D6/Q6 冻结(2026-09-05, PR #10 代码实证): v1 无 token/连接级会话, handler 按
-    // payload 校验 + 角色检查——已认证的 admin.* 请求(admin.login 除外)附加
-    // administrator_id; 服务端 hasOnlyFields 严格拒多余字段(曾误带 username/password
-    // 会被 1000 拒), 故只带契约字段(幂等/审计按 requestId, 与鉴权字段互不干扰)。
+    // D6/Q6 冻结(2026-09-06, PR #12 = main 3d015f7, 服务端 authorizeAdministrator):
+    //   - 除 admin.login 外所有 admin.* 请求携带会话 token(8h 进程内, 缺失/过期 1100);
+    //   - mutation(admin.station.create / admin.pile.restart / admin.user.status.set)
+    //     额外携带 administrator_id, 服务端校验与 token 主体一致(不匹配 1100);
+    //   - 读类(statistics/station.list/user.list)只带 token —— 多余字段会被
+    //     hasOnlyFields 拒(1002), 故不附加 administrator_id;
+    //   - 未认证(m_token 空)不附加任何凭据: 服务端按 1100 拒绝, 客户端清会话状态。
+    // payload 组装只收敛本函数, 服务端契约再变只改这里。
     if (m_authenticated && type.startsWith(QLatin1String("admin."))
         && type != QLatin1String("admin.login")) {
-        payload.insert(QLatin1String("administrator_id"), m_admin.id);
+        payload.insert(QLatin1String("token"), m_token);
+        if (type == QLatin1String("admin.station.create")
+            || type == QLatin1String("admin.pile.restart")
+            || type == QLatin1String("admin.user.status.set")) {
+            payload.insert(QLatin1String("administrator_id"), m_admin.id);
+        }
     }
     return payload;
 }
 
 void SocketAdminRepository::applyLoginOutcome(bool ok, int errorCode,
-                                              const AdminInfo &admin)
+                                              const AdminInfo &admin,
+                                              const QString &token)
 {
     Q_UNUSED(errorCode);
     if (ok) {
-        // D6/Q6: login 成功才缓存认证上下文(admin.id 供 buildPayload 附加)
+        // Q6: login 成功才缓存会话 token + admin 对象(buildPayload 凭据来源)
         m_authenticated = true;
+        m_token = token;
         m_admin = admin;
     } else {
-        // 失败(含 1100 UNAUTHORIZED)/响应结构错不缓存, 防止旧身份附到后续请求
+        // 失败(1100/凭据错)/响应结构错/会话失效: 清空认证上下文,
+        // 防止旧 token/身份附到后续请求(收到 1100 需重新登录)
         m_authenticated = false;
+        m_token.clear();
         m_admin = AdminInfo();
     }
 }
@@ -330,18 +352,19 @@ void SocketAdminRepository::login(
                         QString reason;
                         if (socketparse::parseAdminLoginPayload(env.payload, &result,
                                                                 &issues, &reason)) {
-                            // D6/Q6: 缓存 admin 对象(后续 admin.* 请求附 administrator_id)
-                            applyLoginOutcome(true, 0, result.admin);
+                            // Q6: 缓存会话 token + admin(后续 admin.* 凭据)
+                            applyLoginOutcome(true, 0, result.admin, result.token);
                         } else {
-                            // 成功信封但 admin 对象结构错: 按响应内容错误处理
+                            // 成功信封但 admin/token 结构错: 按响应内容错误处理
                             result.ok = false;
                             result.errorCode = kCodeInvalidRequest;
                             result.message = reason;
-                            applyLoginOutcome(false, kCodeInvalidRequest, AdminInfo());
+                            applyLoginOutcome(false, kCodeInvalidRequest, AdminInfo(),
+                                              QString());
                         }
                     } else {
                         // 1100 等协议错误/传输层失败: 不缓存认证上下文
-                        applyLoginOutcome(false, env.errorCode, AdminInfo());
+                        applyLoginOutcome(false, env.errorCode, AdminInfo(), QString());
                     }
                     if (callback)
                         callback(result);

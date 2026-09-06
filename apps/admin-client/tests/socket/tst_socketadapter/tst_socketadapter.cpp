@@ -116,6 +116,16 @@ const QJsonObject kAdmin = QJsonObject{
     {QStringLiteral("status"), QStringLiteral("active")},
 };
 
+// Q6 冻结(2026-09-06, PR #12 = main 3d015f7): admin.login.result = admin 对象 +
+// 非空会话 token(服务端 8h 进程内会话)。fake server 用固定 token 模拟。
+const QString kSessionToken = QStringLiteral("test-admin-session-token");
+
+QJsonObject loginResultPayload()
+{
+    return QJsonObject{{QStringLiteral("admin"), kAdmin},
+                       {QStringLiteral("token"), kSessionToken}};
+}
+
 } // namespace
 
 class TestSocketAdapter : public QObject
@@ -126,7 +136,8 @@ private slots:
     void loginSucceedsAndAuthenticates();
     void loginRejectedWith1100();
     void fetchOverviewMapsStatisticsPayload();
-    void authenticatedRequestCarriesAdministratorIdOnly(); // Q6 冻结契约
+    void authenticatedRequestsCarrySessionToken(); // Q6 冻结契约(2026-09-06)
+    void unauthorizedClearsSessionState();
     void fetchPilesFanOutAcrossStations();
     void fetchPilesFailsWholePageOnStationError();
     void restartPileUsesCachedIdAndMapsConflict();
@@ -144,7 +155,7 @@ void TestSocketAdapter::loginSucceedsAndAuthenticates()
     server.onRequest = [&server](const ev::protocol::Message &request, QTcpSocket *socket) {
         if (request.type == QStringLiteral("admin.login")) {
             reply(socket, request.id, QStringLiteral("admin.login.result"),
-                  QJsonObject{{QStringLiteral("admin"), kAdmin}});
+                  loginResultPayload());
         }
     };
 
@@ -160,6 +171,7 @@ void TestSocketAdapter::loginSucceedsAndAuthenticates()
     QVERIFY2(login.ok, qPrintable(login.message));
     QCOMPARE(login.errorCode, 0);
     QCOMPARE(login.admin.username, QStringLiteral("admin"));
+    QCOMPARE(login.token, kSessionToken); // Q6: 登录响应携带会话 token
     QVERIFY(repository.isAuthenticated());
     QVERIFY(repository.dataSourceName().contains(QStringLiteral("Socket")));
     QCOMPARE(server.m_requests.size(), 1);
@@ -246,20 +258,46 @@ void TestSocketAdapter::fetchOverviewMapsStatisticsPayload()
     QVERIFY(saw7d && saw30d);
 }
 
-void TestSocketAdapter::authenticatedRequestCarriesAdministratorIdOnly()
+void TestSocketAdapter::authenticatedRequestsCarrySessionToken()
 {
-    // Q6 冻结(2026-09-05, PR #10 代码实证): v1 无 token/连接级会话; 已认证的
-    // admin.* 请求(admin.login 除外)payload 携带 administrator_id(= login 响应
-    // admin.id), 不再附加 username/password——B hasOnlyFields 严格拒多余字段
+    // Q6 冻结(2026-09-06, PR #12 = main 3d015f7): 除 admin.login 外所有 admin.*
+    // 请求携带会话 token; mutation(admin.pile.restart / admin.user.status.set)
+    // 额外携带 administrator_id 且 = login 响应 admin.id; 读类(admin.station.list /
+    // admin.user.list)只带 token; 用户接口 pile.list 不附加任何管理凭据;
+    // username/password 绝不再现(hasOnlyFields 严格拒多余字段)。
     FakeAdminServer server;
     QVERIFY(server.listen());
     server.onRequest = [](const ev::protocol::Message &request, QTcpSocket *socket) {
-        if (request.type == QStringLiteral("admin.login"))
+        if (request.type == QStringLiteral("admin.login")) {
             reply(socket, request.id, QStringLiteral("admin.login.result"),
-                  QJsonObject{{QStringLiteral("admin"), kAdmin}});
-        else if (request.type == QStringLiteral("admin.station.list"))
+                  loginResultPayload());
+        } else if (request.type == QStringLiteral("admin.station.list")) {
             reply(socket, request.id, QStringLiteral("admin.station.list.result"),
-                  QJsonObject{{QStringLiteral("stations"), QJsonArray()}});
+                  QJsonObject{{QStringLiteral("stations"), QJsonArray{
+                      QJsonObject{{QStringLiteral("id"), 1},
+                                  {QStringLiteral("pile_total"), 1}}}}});
+        } else if (request.type == QStringLiteral("admin.user.list")) {
+            reply(socket, request.id, QStringLiteral("admin.user.list.result"),
+                  QJsonObject{{QStringLiteral("users"), QJsonArray{}}});
+        } else if (request.type == QStringLiteral("pile.list")) {
+            reply(socket, request.id, QStringLiteral("pile.list.result"),
+                  QJsonObject{{QStringLiteral("piles"), QJsonArray{
+                      QJsonObject{{QStringLiteral("id"), 3},
+                                  {QStringLiteral("station_id"), 1},
+                                  {QStringLiteral("pile_code"), QStringLiteral("P-101-C")},
+                                  {QStringLiteral("status"), QStringLiteral("fault")}}}}});
+        } else if (request.type == QStringLiteral("admin.pile.restart")) {
+            reply(socket, request.id, QStringLiteral("admin.pile.restart.result"),
+                  QJsonObject{{QStringLiteral("pile"), QJsonObject{
+                      {QStringLiteral("id"), 3},
+                      {QStringLiteral("pile_code"), QStringLiteral("P-101-C")},
+                      {QStringLiteral("status"), QStringLiteral("idle")}}}});
+        } else if (request.type == QStringLiteral("admin.user.status.set")) {
+            reply(socket, request.id, QStringLiteral("admin.user.status.set.result"),
+                  QJsonObject{{QStringLiteral("user"), QJsonObject{
+                      {QStringLiteral("id"), 1},
+                      {QStringLiteral("status"), QStringLiteral("frozen")}}}});
+        }
     };
 
     ev::SocketAdminRepository repository(QStringLiteral("127.0.0.1"), server.port());
@@ -274,29 +312,131 @@ void TestSocketAdapter::authenticatedRequestCarriesAdministratorIdOnly()
     QVERIFY2(login.ok, qPrintable(login.message));
     QVERIFY(repository.isAuthenticated());
 
-    bool done = false;
-    ev::ListResult<ev::StationInfo> stations;
-    repository.fetchStations(&repository, [&](const ev::ListResult<ev::StationInfo> &out) {
-        stations = out;
-        done = true;
+    // 读类：admin.station.list / admin.user.list
+    bool stationsDone = false;
+    repository.fetchStations(&repository,
+                             [&](const ev::ListResult<ev::StationInfo> &) {
+                                 stationsDone = true;
+                             });
+    QTRY_VERIFY_WITH_TIMEOUT(stationsDone, 3000);
+    bool usersDone = false;
+    repository.fetchUsers(&repository, [&](const ev::ListResult<ev::UserInfo> &) {
+        usersDone = true;
     });
-    QTRY_VERIFY_WITH_TIMEOUT(done, 3000);
-    QVERIFY2(stations.ok, qPrintable(stations.error));
+    QTRY_VERIFY_WITH_TIMEOUT(usersDone, 3000);
 
-    QCOMPARE(server.m_requests.size(), 2);
+    // fan-out 先拿桩缓存(restartPile 需要 pile_id)
+    bool pilesDone = false;
+    repository.fetchPiles(&repository, [&](const ev::ListResult<ev::PileInfo> &) {
+        pilesDone = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(pilesDone, 5000);
+
+    // mutation：restartPile / setUserStatus
+    bool restartDone = false;
+    repository.restartPile(QStringLiteral("P-101-C"), &repository,
+                           [&](const ev::ActionResult &) {
+                               restartDone = true;
+                           });
+    QTRY_VERIFY_WITH_TIMEOUT(restartDone, 3000);
+    bool statusDone = false;
+    repository.setUserStatus(1, QStringLiteral("frozen"), &repository,
+                             [&](const ev::ActionResult &) {
+                                 statusDone = true;
+                             });
+    QTRY_VERIFY_WITH_TIMEOUT(statusDone, 3000);
+
+    // 请求级断言（token/mutation administrator_id 附加规则）
     bool sawLogin = false;
-    bool sawList = false;
+    bool sawRead = false;
+    bool sawMutation = false;
+    bool sawUserPileList = false;
     for (const ev::protocol::Message &req : server.m_requests) {
-        sawLogin = sawLogin || req.type == QStringLiteral("admin.login");
-        sawList = sawList || req.type == QStringLiteral("admin.station.list");
-        if (req.type == QStringLiteral("admin.station.list")) {
-            // 已认证请求: administrator_id = login 响应 admin.id(kAdmin.id=1)
-            QCOMPARE(req.payload.value(QLatin1String("administrator_id")).toInt(), 1);
+        if (req.type == QStringLiteral("admin.login")) {
+            sawLogin = true;
+            QVERIFY(!req.payload.contains(QLatin1String("token"))); // login 本身不带 token
+            continue;
+        }
+        if (req.type == QStringLiteral("admin.station.list")
+            || req.type == QStringLiteral("admin.user.list")) {
+            sawRead = true;
+            // 读类：token 必须携带、不带 administrator_id/username/password
+            QCOMPARE(req.payload.value(QLatin1String("token")).toString(), kSessionToken);
+            QVERIFY(!req.payload.contains(QLatin1String("administrator_id")));
             QVERIFY(!req.payload.contains(QLatin1String("username")));
             QVERIFY(!req.payload.contains(QLatin1String("password")));
+            continue;
+        }
+        if (req.type == QStringLiteral("admin.pile.restart")
+            || req.type == QStringLiteral("admin.user.status.set")) {
+            sawMutation = true;
+            // mutation：token + administrator_id(= login admin.id=1)
+            QCOMPARE(req.payload.value(QLatin1String("token")).toString(), kSessionToken);
+            QCOMPARE(req.payload.value(QLatin1String("administrator_id")).toInt(), 1);
+            continue;
+        }
+        if (req.type == QStringLiteral("pile.list")) {
+            sawUserPileList = true;
+            // 用户侧接口：不附加任何管理凭据
+            QVERIFY(!req.payload.contains(QLatin1String("token")));
+            QVERIFY(!req.payload.contains(QLatin1String("administrator_id")));
         }
     }
-    QVERIFY(sawLogin && sawList);
+    QVERIFY(sawLogin && sawRead && sawMutation && sawUserPileList);
+}
+
+void TestSocketAdapter::unauthorizedClearsSessionState()
+{
+    // Q6(2026-09-06): 登录后的 admin.* 请求收到 1100(会话过期/不匹配) →
+    // 数据层立即清除 token 与认证状态; 后续请求不再携带 token(服务端会再次 1100,
+    // 页面应回登录, 数据层只保证不残留凭据)。
+    FakeAdminServer server;
+    QVERIFY(server.listen());
+    server.onRequest = [&server](const ev::protocol::Message &request, QTcpSocket *socket) {
+        if (request.type == QStringLiteral("admin.login")) {
+            reply(socket, request.id, QStringLiteral("admin.login.result"),
+                  loginResultPayload());
+        } else if (request.type == QStringLiteral("admin.statistics.get")) {
+            replyError(socket, request.id, 1100,
+                       QStringLiteral("administrator token is missing or expired"));
+        } else if (request.type == QStringLiteral("admin.user.list")) {
+            reply(socket, request.id, QStringLiteral("admin.user.list.result"),
+                  QJsonObject{{QStringLiteral("users"), QJsonArray{}}});
+        }
+    };
+
+    ev::SocketAdminRepository repository(QStringLiteral("127.0.0.1"), server.port());
+    bool loggedIn = false;
+    repository.login(QStringLiteral("admin"), QStringLiteral("123456"), &repository,
+                     [&](const ev::LoginResult &) {
+                         loggedIn = true;
+                     });
+    QTRY_VERIFY_WITH_TIMEOUT(loggedIn, 3000);
+    QVERIFY(repository.isAuthenticated());
+
+    // 概览请求被服务端 1100 拒绝 → 会话清除
+    bool overviewDone = false;
+    ev::OverviewResult overview;
+    repository.fetchOverview(&repository, [&](const ev::OverviewResult &out) {
+        overview = out;
+        overviewDone = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(overviewDone, 5000); // 双请求任一失败即整页 1100
+    QVERIFY(!overview.ok);
+    QCOMPARE(overview.errorCode, 1100);
+    QVERIFY(!repository.isAuthenticated()); // 1100 → 认证上下文已清
+
+    // 之后的 admin.* 请求不再携带 token(fake server 记录断言)
+    bool usersDone = false;
+    repository.fetchUsers(&repository, [&](const ev::ListResult<ev::UserInfo> &) {
+        usersDone = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(usersDone, 3000);
+    for (const ev::protocol::Message &req : server.m_requests) {
+        if (req.type == QStringLiteral("admin.user.list"))
+            QVERIFY2(!req.payload.contains(QLatin1String("token")),
+                     "会话失效后请求不得携带旧 token");
+    }
 }
 
 void TestSocketAdapter::fetchPilesFanOutAcrossStations()
@@ -576,7 +716,7 @@ void TestSocketAdapter::reconnectAfterConnectionFailure()
     server.onRequest = [](const ev::protocol::Message &request, QTcpSocket *socket) {
         if (request.type == QStringLiteral("admin.login"))
             reply(socket, request.id, QStringLiteral("admin.login.result"),
-                  QJsonObject{{QStringLiteral("admin"), kAdmin}});
+                  loginResultPayload());
     };
     ev::SocketAdminRepository repository(QStringLiteral("127.0.0.1"), server.port());
     bool done = false;
@@ -588,6 +728,7 @@ void TestSocketAdapter::reconnectAfterConnectionFailure()
                      });
     QTRY_VERIFY_WITH_TIMEOUT(done, 3000);
     QVERIFY2(second.ok, qPrintable(second.message));
+    QCOMPARE(second.token, kSessionToken);
 }
 
 QTEST_MAIN(TestSocketAdapter)
