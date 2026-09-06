@@ -25,6 +25,18 @@
 - Socket
 - Multithreading
 
+## Quick Start（第一阶段演示）
+
+- **Web 大屏**：`python dashboard/serve.py --port 61469`（Ubuntu：`python3`），浏览器开
+  `http://127.0.0.1:61469/`；答辩离线演练加 `?map=topology`。详见 `dashboard/README.md`。
+- **Qt 管理端**：`apps/admin-client`（qmake）；登录 `admin/123456`；闸门联调时
+  `EV_ADMIN_DATA_SOURCE=socket` 切换真实 Socket（默认 Mock 演示）。详见
+  `docs/ui/README.md` 与 `tests/integration/role-c-smoke-test.md`。
+- **服务端/数据库**：启动与迁移命令见 `server/README.md`、`database/README.md`；
+  v0.3 库迁移用 `scripts/migrate_db.py`（迁移失败自动回滚，原子）。
+- **密钥**：复制 `config/example.env` 为本地 `config/local.env` 再填写；真实密钥永不入库。
+- 阶段一交付清单与核对：`docs/release/stage1-checklist.md`；每日状态：`current.md`。
+
 ## Development
 
 详细开发约定参见 `CONTRIBUTING.md` 和 `AGENTS.md`。
