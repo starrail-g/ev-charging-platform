@@ -27,10 +27,14 @@ integration.
 - A user client is a deterministic Qt Widgets + Mock implementation. It has no
   `SocketUserService`; real DTO/protocol integration remains pending.
 - C admin client has a qmake shell, repository boundary, Mock data source,
-  login flow and overview states. Real management APIs remain pending.
+  login flow and overview states, plus the 9/4 management action batch
+  (C-S1-005 pile restart / C-S1-007 user freeze-unfreeze as Mock simulations)
+  and a local Socket adapter layer (`SocketAdminRepository` + `socketparse`,
+  built and tested on Windows and the Ubuntu VM; still Mock by default).
 - Cross-team gate: A retains Mock/offline fallback until a real Socket adapter
   is verified; C's administrator login, statistics, pile, station and user
-  management APIs remain dependent on B-side endpoint implementation.
+  management APIs remain dependent on B-side endpoint implementation
+  (admin.* handlers are not yet implemented by B).
 - The clean-database server path can load `EV_DATABASE_SEED_PATH` once during
   initial creation; existing databases are not reseeded.
 - Main-branch A/C documentation is retained as collaboration context: A's
@@ -44,9 +48,10 @@ Qt user/admin clients -> protocol v1 / Socket -> server -> database layer -> SQL
 dashboard and ML consume separately defined data interfaces
 ```
 - The unified day/night UI milestone `T-C1.1` (Qt admin + Web dashboard, PR #6) was
-  rolled back by PR #7 and is being restored on top of the current `main` via this
-  PR (`feature/ui-restore`), together with the 9/3 review fixes and the 9/3-late
-  admin gaps (A-04/A-07/A-06/A-02) and the P2-01 amount-format cleanup.
+  rolled back by PR #7 and restored by PR #8 (`feature/ui-restore`, merged 2026-09-04
+  as `994e5ff`), together with the 9/3 review fixes, the 9/3-late admin gaps
+  (A-04/A-07/A-06/A-02), the P2-01 amount-format cleanup and the
+  AdminRepository contract-to-wire mapping doc (`cfbb282`).
 
 Presentation code does not access SQLite directly. `libs/protocol` owns wire
 contracts, `libs/database` owns persistence and transactions, and `server`
@@ -68,8 +73,16 @@ owns Socket dispatch and error mapping.
   mid-transaction SQL failure paths.
 - [ ] Move slow database work off the Socket event-loop thread or define a
   bounded worker/lock strategy.
-- [ ] Implement administrator/statistics/management APIs, Socket adapters,
-  dashboard and intelligent-analysis pipeline.
+- [x] C management actions (C-S1-005 restart / C-S1-007 freeze-unfreeze) as
+  Mock simulations with visible result hints and conflict codes (local batch,
+  2026-09-04, uncommitted).
+- [x] C Socket adapter layer (`SocketAdminRepository`/`socketparse` + fake-server
+  tests) built and green on Windows and Ubuntu VM (local batch, 2026-09-05,
+  uncommitted; wired via `EV_ADMIN_DATA_SOURCE=socket`, default remains Mock).
+- [ ] Implement administrator/statistics/management APIs on the server
+  (B-owned), then flip the management client to real Socket at the 2026-09-07
+  18:00 gate; `statistics.get` fields stay open until the 9/4 review Q1-Q7
+  freeze lands (docs/api/README.md risk table).
 - [ ] Complete A-S1-03 real Socket adapter and C's management/data integration
   after endpoint fields and error behavior are frozen.
 - [ ] Meet the main-branch integration milestones: real A/C endpoint alignment
@@ -134,6 +147,13 @@ owns Socket dispatch and error mapping.
 - Earlier work added direct start, frozen-user guards, request replay,
   `order.history.list`, seed-on-empty startup and migration failure-path tests.
 - Restored the unified day/night UI (PR #6 content) after PR #7 rolled it back:
-  this PR (`feature/ui-restore`) reverts `ec1e2b7` on top of the current `main`
-  and also carries the 9/3 review fixes and the 9/3-late admin gaps
-  (A-04/A-07/A-06/A-02) with the P2-01 amount-format cleanup.
+  PR #8 (`feature/ui-restore`, merged as `994e5ff`) reverts `ec1e2b7` on top of
+  the current `main` and also carries the 9/3 review fixes and the 9/3-late
+  admin gaps (A-04/A-07/A-06/A-02) with the P2-01 amount-format cleanup and the
+  AdminRepository contract-to-wire mapping (`cfbb282`).
+- 2026-09-04/05 (local working tree, uncommitted): management action batch
+  (restart/freeze + snapshot-consistent Mock + tst_ui 24 cases), C-S1-001/002
+  re-verification closed, Q1-Q7 freeze risk table, Task-12 delivery docs,
+  Socket adapter layer with fake-server tests (Windows tst_ui 24 / smoke 6 /
+  loginflow 7 / socketparse 9 / socketadapter 13; Ubuntu VM identical).
+  Commit boundaries are pending C's review before push.
