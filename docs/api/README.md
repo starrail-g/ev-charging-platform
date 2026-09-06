@@ -9,21 +9,27 @@
 服务端当前可运行：`health`、`echo`、`user.login`、`user.profile.get`、
 `user.profile.update`、`wallet.recharge`、`station.list`、
 `pile.list`、`order.active.get`、`order.history.list`、预约生命周期和充电
-开始/停止/结算。管理端后续依赖的 `admin.login`、统计、管理员桩/站/用户操作
-仍为契约，尚未由服务端实现。管理端第一阶段使用 `AdminRepository` 的 Mock
-实现；接入真实 Socket 前必须冻结字段并完成接口闸门确认。
+开始/停止/结算，以及本分支新增的 `admin.login`、统计、管理员桩/站/用户操作。
+管理端 `AdminRepository` 仍使用 Mock；真实 Socket adapter 尚未接入，需按下方
+wire 映射契约完成客户端联调。
 
 主分支协作约定仍适用：C 端的管理员登录、概览统计和桩状态接口是第一阶段
-联调闸门，目标时间为 9 月 7 日 18:00；在闸门通过前，A/C 保留 Mock 或离线
-回退，不得把 Mock 结果当作真实 Socket 验收证据。B 端用户接口和充电生命周期
-已按下文 v1 契约提供，管理端接口仍需单独实现和评审。
+联调闸门，目标时间为 9 月 7 日 18:00；在真实 Socket adapter 验证前，A/C
+保留 Mock 或离线回退，不得把 Mock 结果当作真实 Socket 验收证据。B 端用户接口、
+充电生命周期和本分支管理员接口均按下文 v1 契约提供。
 
 每个状态修改请求都必须使用客户端生成的 `id`（1 至 64 字符）。相同操作和
 标识性 payload 重放同一 ID 会返回第一次成功响应，即使客户端已重连；同一 ID
 用于不同操作或参数会返回 `CONFLICT`（1201）。当前支持幂等的操作为
 `reservation.create`、`reservation.confirm`、`reservation.cancel`、
 `charging.start`、`charging.stop`、`charging.settle`、
-`user.profile.update`、`wallet.recharge`。
+`user.profile.update`、`wallet.recharge`、`admin.station.create`、
+`admin.pile.restart`、`admin.user.status.set`。
+
+`admin.login` 成功响应包含 `token` 和 `expires_in_seconds`（当前为 8 小时）。除
+`admin.login` 外，所有 `admin.*` 请求都必须在 payload 中携带该 token；只读接口也不例外。
+token 在服务端进程内保存，服务重启后失效。建站、重启桩、冻结/解冻请求仍需携带
+`administrator_id`，且必须与 token 对应的管理员一致。
 
 ## 登录与查询
 
@@ -148,15 +154,15 @@ JSON `null`；历史接口只返回 `completed` 订单，按 `settled_at` 倒序
 业务拒绝或数据库失败会回滚且不会固化记录，因此相同 ID 可在条件修复后重试，参数
 变化或操作变化则返回 `CONFLICT`。
 
-管理员接口（B 侧实现状态，2026-09-05 更新；位于 PR #10 分支，未合 main）：
+管理员接口当前实现（随 PR #12 合入 `main` `3d015f7`，2026-09-06；B 版文档同步）：
 
 | 接口 | 用途 | 状态 |
 |---|---|---|
-| `admin.login` | 管理员认证，错误码 1100 | B 已实现：无 token/连接级会话，响应 payload.admin{id,username,role,status} |
-| `admin.statistics.get` | 营收、桩状态、利用率摘要与逐日营收序列 | B 已实现：`7d`/`30d` 返回固定长度 `revenue_daily`（UTC 日历日补零），聚合=序列和（1f157de） |
-| `admin.pile.restart` | 桩重启和审计 | B 已实现：仅 fault/offline 恢复 idle、按请求 ID 幂等、其余状态 1201 不打断会话（45627d5） |
-| `admin.station.list/create` | 站点查询/创建 | B 已实现：站行含 pile 五态计数 + utilization/utilization_range="7d" |
-| `admin.user.list/status.set` | 用户查询、冻结/解冻 | B 已实现：冻结只拦 4 操作（1101），登录/只读放行 |
+| `admin.login` | 管理员认证，错误码 1100 | 服务端已实现；成功返回 8 小时有效的随机 `token`，后续所有 `admin.*` 请求携带该 token |
+| `admin.statistics.get` | 营收、桩状态、利用率摘要和逐日营收序列 | 服务端已实现，支持 `7d` / `30d`，返回固定长度 `revenue_daily`，必须携带 token |
+| `admin.pile.restart` | 桩重启和审计 | 服务端已实现；仅故障/离线桩恢复为空闲并按请求 ID 幂等，idle/reserved/charging 返回冲突且不打断会话 |
+| `admin.station.list/create` | 站点查询/创建 | 服务端已实现；必须携带 token，创建为超级管理员操作并按请求 ID 幂等 |
+| `admin.user.list/status.set` | 用户查询、冻结/解冻 | 服务端已实现；必须携带 token，状态修改为超级管理员操作并按请求 ID 幂等 |
 
 ## 管理端 AdminRepository 契约与 wire 映射
 
@@ -167,9 +173,9 @@ Socket 任务落地）：
 
 | AdminRepository 方法 | 业务视图语义 | wire 映射策略 |
 |---|---|---|
-| `fetchOverview` | 概览指标（7 日/30 日营收、桩五态、利用率、快照时间） | `admin.statistics.get` **双请求**：7d 为主体（五态/利用率/updated_at），30d 取聚合 `revenue_cents` 填 30d 副行（2026-09-05 Q3 冻结，无 30d 独立键） |
-| `fetchStations` | 管理端全量站点（含桩数/在线率聚合视图） | `admin.station.list` |
-| `fetchUsers` | 管理端全量用户 | `admin.user.list` |
+| `fetchOverview` | 概览指标（7 日/30 日营收、桩五态、利用率、快照时间） | 分别请求 `admin.statistics.get` 的 `7d` 与 `30d`；聚合卡片读取 `revenue_cents`（7d 主体 + 30d 取聚合填副行），趋势图读取 `statistics.revenue_daily[*].revenue_cents` |
+| `fetchStations` | 管理端全量站点（含桩数/在线率/7 日利用率聚合视图） | `admin.station.list` |
+| `fetchUsers` | 管理端全量用户（含注册时间和活动订单状态） | `admin.user.list` |
 | `fetchPiles` | 管理端**全量**桩列表（跨站，桩页过滤/搜索在本端完成） | 逐站 fan-out：`admin.station.list` → 每站 `pile.list(station_id)` → 合并（默认，D5） |
 
 `fetchPiles` 的已知权衡（对应 9/3 评审 Q2 协议缺口——wire 暂无 `admin.pile.list`）：
@@ -191,31 +197,83 @@ breaking-change 风险窗口在后续 Socket 实现（新实现类）接入时�
 
 接口闸门通过前，管理端 Mock 数据不得冒充真实 Socket 联调结果。
 
-## 管理端 Socket 对接层 Q1–Q7 冻结对账（2026-09-05）
+## 管理端 Socket 对接层 Q1–Q7 冻结对账（2026-09-05 冻结，2026-09-06 随 PR #12 更新）
 
 > 设计稿：`superpowers/plans/2026-09-03-socket-admin-repository-design.md`（D1–D8）。
-> Q1–Q7 待冻结输入于 9/4 需求评审提出，2026-09-05 B 在 PR #10 分支
-> （feature/admin-api，f04f428→45627d5 四个 commit：1f157de revenue_daily /
-> 11702ae+4eb0bad 利用率 / 45627d5 restart 语义）以代码、测试（server/tests/admin.py）
-> 与文档（B 版 docs/api/README.md「管理端统计响应」「管理端站点利用率」两节）冻结。
-> C 侧 Socket 适配层已按 B 实际构造点（loginAdministrator/readPile/listAdminUsers/
-> listAdminStations/getStatistics）逐字段核对并同步（2026-09-05，未提交工作树）。
+> Q1–Q7 待冻结输入于 9/4 需求评审提出，B 在 PR #10 分支以代码、测试（server/tests/admin.py）
+> 与文档冻结（1f157de revenue_daily / 11702ae+4eb0bad 利用率 / 45627d5 restart 语义），
+> 随后经 PR #12 合入 `main`（`3d015f7`，2026-09-06）并在合并中把鉴权升级为 token 会话
+> （600c657）。C 侧 Socket 适配层按 B 实际构造点（loginAdministrator/readPile/
+> listAdminUsers/listAdminStations/getStatistics）逐字段核对并同步。
 
 | # | 冻结输入 | 冻结结论 | 状态 |
 |---|---|---|---|
-| Q1 | login/statistics/station.list/user.list 响应字段清单（snake_case） | B 实现即样例：admin{id,username,role,status}；statistics 信封样例见 B 版文档；station/user 键与 schema 列直出 | 已冻结（构造点逐字段核对全命中） |
-| Q2 | 管理端全量桩列表：`admin.pile.list` 增补 or 逐站聚合 | B 未增补 `admin.pile.list` → D5 逐站 fan-out 为阶段一正式方案；adapter 已实现；B 若后续增补则切单请求、抽象不变 | 已定（B 未增补；2026-09-05 拍板按现状） |
+| Q1 | login/statistics/station.list/user.list 响应字段清单（snake_case） | B 实现即样例：admin{id,username,role,status}；statistics 信封样例见下方「管理端统计响应」节；station/user 键与 schema 列直出 | 已冻结（构造点逐字段核对全命中） |
+| Q2 | 管理端全量桩列表：`admin.pile.list` 增补 or 逐站聚合 | B 未增补 `admin.pile.list` → D5 逐站 fan-out 为阶段一正式方案；adapter 已实现；B 若后续增补则切单请求、抽象不变 | 已定（B 未增补；按现状） |
 | Q3 | statistics 对象覆盖 | `revenue_daily` 固定长度（7d→7/30d→30 条）、UTC 日历日升序补零、行内键 date/revenue_cents/completed_order_count/energy_wh、聚合=序列和、updated_at 同快照；**无独立 30d 合计键** → C fetchOverview 双请求（7d 主体 + 30d 取聚合值） | 已冻结（1f157de + B 文档样例） |
 | Q4 | 利用率口径 | 最近 7 个 UTC 自然日**时间加权占用率**：分子=charging/pending_settlement/completed 订单区间∩窗口（开放单截到 updated_at），分母=桩自 max(窗口起点, created_at) 可用时长（fault/offline 不扣）；站均=简单平均、与 range 无关；站行带 utilization+utilization_range="7d"。语义与演示 0.42 占位不同（socketparse 注释已同步） | 已冻结（11702ae/4eb0bad） |
-| Q5 | range 仅 `7d`/`30d`（A-02 裁剪） | B 仅实现 7d/30d、无 today/month/all；Web 大屏 2026-09-05 起搁置，A-02 收敛为 Qt 概览卡（7d 主卡 + 30d 副行） | 已确认（实现即口径） |
-| Q6 | admin.* 鉴权机制 | v1 无 token/连接级会话：admin.login 返回 admin 对象，后续 admin.* 请求 payload 携带 `administrator_id`（mutation 经 hasOnlyFields 严格校验，多余字段 1000 拒）；C buildPayload 单点已按此实现（原 username/password 附加方案废弃） | 已冻结（PR #10 代码实证） |
+| Q5 | range 仅 `7d`/`30d`（A-02 裁剪） | B 仅实现 7d/30d、无 today/month/all；Web 大屏搁置，A-02 收敛为 Qt 概览卡（7d 主卡 + 30d 副行） | 已确认（实现即口径） |
+| Q6 | admin.* 鉴权机制 | **PR #12 终稿（覆盖 9/5 v1 冻结）**：`admin.login` 发放进程内 8h 随机 `token`；除 login 外所有 `admin.*` 请求携带 token；mutation（station.create/pile.restart/user.status.set）额外携带 `administrator_id` 且必须与 token 主体一致；token 缺失/过期/不匹配 → 1100 UNAUTHORIZED，客户端收到 1100 清除本地认证状态 | 已冻结（PR #12/main `3d015f7` 代码实证） |
 | Q7 | 桩 total_charge_count/seconds、用户 created_at、站聚合字段 | readPile 11 列全含（含 restart_count/last_restart_at）、user.list 含 created_at/active_order_status、站行含 pile 五态计数+utilization | 已冻结（构造点核对） |
 
-C 侧代码落点（2026-09-05 校准，未提交工作树）：buildPayload 附加 `administrator_id`
-（登录缓存 admin.id）；fetchOverview 双请求合并（任一失败整页 error，同 D5 fan-out
-哲学）；socketparse 注释与映射表同步冻结口径。restart 语义（45627d5）与 C Mock/UI
-逐字一致（仅 fault/offline 可重启、其余 1201），无代码改动。
+C 侧代码落点（2026-09-06 token 适配，待推送）：login 响应校验并提取 token（LoginResult.token）；
+buildPayload 对 admin.*（除 login）附加 token、mutation 附加 administrator_id（登录缓存
+admin.id）；收到 1100 清除本地 token/认证状态；fetchOverview 双请求合并（任一失败整页
+error，同 D5 fan-out 哲学）。restart 语义（45627d5）与 C Mock/UI 逐字一致（仅 fault/offline
+可重启、其余 1201），无代码改动。
 
-9/7 18:00 闸门说明：B 的 admin.* handler 位于 PR #10 分支（尚未合 main），合入时间线
-由 B/A 协调（C 不推动）；闸门以登录/概览/桩状态/动作为准，若届时 main 未含 admin.*
-或联调未过，管理端按协作规则申请 Mock 降级批准，材料不冒充真实联调。
+9/7 18:00 闸门说明：B 的 admin.* handler 已随 PR #12 合入 `main`（2026-09-06），管理端
+token 适配已完成并**通过真实 main 服务端联调冒烟**（2026-09-06：login→overview 双 range→
+逐站 fan-out→冻结/解冻→重启全链路 PASS，见 `build/repro/admin-real-smoke.cpp` 与
+`smoke-live-result.txt`）；闸门以登录/概览/桩状态/动作为准，材料不冒充真实联调。
+
+### 管理端统计响应
+
+`admin.statistics.get` 的 `range` 决定逐日序列长度。日期按 UTC 日历日计算，
+从最早日升序排列到当前 UTC 日；没有已完成订单的日期也会返回 0，避免客户端
+因缺失日期错位绘图。`revenue_cents`、`completed_order_count` 和 `energy_wh`
+分别等于 `revenue_daily` 对应字段之和：
+
+```json
+{
+  "v": 1,
+  "id": "admin-statistics-7d",
+  "type": "admin.statistics.get.result",
+  "payload": {
+    "statistics": {
+      "range": "7d",
+      "revenue_cents": 3050,
+      "revenue_daily": [
+        {"date": "2026-08-30", "revenue_cents": 0, "completed_order_count": 0, "energy_wh": 0},
+        {"date": "2026-08-31", "revenue_cents": 3050, "completed_order_count": 1, "energy_wh": 25000},
+        {"date": "2026-09-01", "revenue_cents": 0, "completed_order_count": 0, "energy_wh": 0}
+      ],
+      "completed_order_count": 1,
+      "energy_wh": 25000,
+      "updated_at": "2026-09-05T03:20:00Z"
+    }
+  }
+}
+```
+
+上例省略了请求帧；实际请求 payload 至少为
+`{"token":"<admin.login 返回的 token>","range":"7d"}`。
+
+示例仅展示序列中间字段；实际 `7d` 响应包含 7 条、`30d` 响应包含 30 条。
+
+### 管理端站点利用率
+
+`admin.station.list` 返回的每个站点对象包含 `utilization` 和
+`utilization_range: "7d"`，可直接用于站点利用率排行。该值统一定义为最近 7 个
+UTC 自然日内该站实际充电总时长除以该站所有充电桩在统计周期内的可提供总时长：
+
+- 分子只累计 `charging`、`pending_settlement`、`completed` 订单的
+  `started_at` 至 `ended_at` 与 `[period_start, period_end)` 的交集；`charging`
+  且 `ended_at` 为空时，以统计截止时间作为结束时间。
+- 分母按桩累加 `period_end - max(period_start, pile.created_at)`；故新建桩只从
+  `created_at` 开始计入。`fault`、`offline` 不从分母扣除。
+- `admin.statistics.get.statistics.avg_station_utilization` 是所有站点
+  `utilization` 的算术平均，不按充电桩数量加权；统计接口和站点列表复用同一计算方法。
+
+`admin.station.create` 返回的新站点对象同样包含 `utilization: 0.0` 和
+`utilization_range: "7d"`。

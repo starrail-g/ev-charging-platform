@@ -1,15 +1,18 @@
 #include "ev_database/database.h"
 
+#include <QDate>
 #include <QDateTime>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRegularExpression>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QTime>
 #include <QVariant>
 #include <QUuid>
 
@@ -917,6 +920,662 @@ bool Database::listOrderHistory(qint64 userId, QJsonArray *orders, QString *erro
         orders->append(order);
     }
     return true;
+}
+
+bool Database::loginAdministrator(const QString &username, const QString &password,
+                                  QJsonObject *administrator, QString *error,
+                                  ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!administrator || username.trimmed().isEmpty() || password.isEmpty()) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("username and password are required"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+
+    const QString digest = QString::fromLatin1(
+        QCryptographicHash::hash(password.toUtf8(), QCryptographicHash::Sha256).toHex());
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "SELECT id, username, role, status FROM administrators "
+        "WHERE username = :username AND password_hash_sha256 = :password_hash"));
+    query.bindValue(QStringLiteral(":username"), username.trimmed());
+    query.bindValue(QStringLiteral(":password_hash"), digest);
+    if (!query.exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("administrator login failed: %1").arg(queryError(query)));
+        return false;
+    }
+    if (!query.next() || query.value(3).toString() != QStringLiteral("active")) {
+        setFailure(error, kind, ErrorKind::Unauthorized,
+                   QStringLiteral("invalid administrator credentials"));
+        return false;
+    }
+    *administrator = QJsonObject{{QStringLiteral("id"), query.value(0).toLongLong()},
+                                 {QStringLiteral("username"), query.value(1).toString()},
+                                 {QStringLiteral("role"), query.value(2).toString()},
+                                 {QStringLiteral("status"), query.value(3).toString()}};
+    return true;
+}
+
+bool Database::getAdministrator(qint64 administratorId, QJsonObject *administrator,
+                                QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!administrator || administratorId <= 0) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("administrator_id must be positive"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "SELECT id, username, role, status FROM administrators WHERE id = :id"));
+    query.bindValue(QStringLiteral(":id"), administratorId);
+    if (!query.exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("read administrator failed: %1").arg(queryError(query)));
+        return false;
+    }
+    if (!query.next()) {
+        setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("administrator not found"));
+        return false;
+    }
+    if (query.value(3).toString() != QStringLiteral("active")) {
+        setFailure(error, kind, ErrorKind::Unauthorized,
+                   QStringLiteral("administrator is disabled"));
+        return false;
+    }
+    *administrator = QJsonObject{{QStringLiteral("id"), query.value(0).toLongLong()},
+                                 {QStringLiteral("username"), query.value(1).toString()},
+                                 {QStringLiteral("role"), query.value(2).toString()},
+                                 {QStringLiteral("status"), query.value(3).toString()}};
+    return true;
+}
+
+bool Database::checkAdministrator(qint64 administratorId, bool superAdminOnly,
+                                  QString *error, ErrorKind *kind)
+{
+    QJsonObject administrator;
+    if (!getAdministrator(administratorId, &administrator, error, kind)) return false;
+    if (superAdminOnly && administrator.value(QStringLiteral("role")).toString()
+        != QStringLiteral("super_admin")) {
+        setFailure(error, kind, ErrorKind::Unauthorized,
+                   QStringLiteral("administrator role is not permitted"));
+        return false;
+    }
+    return true;
+}
+
+bool Database::getStationUtilizations(const QDateTime &periodStart,
+                                      const QDateTime &periodEnd,
+                                      QHash<qint64, double> *utilizations,
+                                      QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!utilizations || !periodStart.isValid() || !periodEnd.isValid()
+        || periodStart >= periodEnd) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("utilization period is invalid"));
+        return false;
+    }
+    if (!open(error)) {
+        if (kind) *kind = ErrorKind::Database;
+        return false;
+    }
+
+    const QDateTime startUtc = periodStart.toUTC();
+    const QDateTime endUtc = periodEnd.toUTC();
+    const qint64 periodStartMs = startUtc.toMSecsSinceEpoch();
+    const qint64 periodEndMs = endUtc.toMSecsSinceEpoch();
+
+    QHash<qint64, qint64> numeratorMsByStation;
+    QHash<qint64, qint64> denominatorMsByStation;
+    QHash<qint64, qint64> stationByPile;
+    utilizations->clear();
+
+    QSqlQuery query(connection_);
+    if (!query.exec(QStringLiteral("SELECT id FROM stations ORDER BY id"))) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("read stations for utilization failed: %1")
+                       .arg(queryError(query)));
+        return false;
+    }
+    while (query.next()) {
+        const qint64 stationId = query.value(0).toLongLong();
+        numeratorMsByStation.insert(stationId, 0);
+        denominatorMsByStation.insert(stationId, 0);
+        utilizations->insert(stationId, 0.0);
+    }
+
+    query.prepare(QStringLiteral(
+        "SELECT id, station_id, created_at FROM charging_piles ORDER BY id"));
+    if (!query.exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("read piles for utilization failed: %1")
+                       .arg(queryError(query)));
+        return false;
+    }
+    while (query.next()) {
+        const qint64 pileId = query.value(0).toLongLong();
+        const qint64 stationId = query.value(1).toLongLong();
+        const QString createdAtText = query.value(2).toString();
+        const QDateTime createdAt = QDateTime::fromString(createdAtText, Qt::ISODate);
+        if (!createdAt.isValid()) {
+            setFailure(error, kind, ErrorKind::Database,
+                       QStringLiteral("invalid charging pile created_at for pile %1")
+                           .arg(pileId));
+            return false;
+        }
+
+        stationByPile.insert(pileId, stationId);
+        const qint64 availableStartMs = qMax(periodStartMs,
+                                             createdAt.toUTC().toMSecsSinceEpoch());
+        const qint64 availableMs = qMax<qint64>(0, periodEndMs - availableStartMs);
+        denominatorMsByStation[stationId] += availableMs;
+    }
+
+    query.prepare(QStringLiteral(
+        "SELECT pile_id, status, started_at, ended_at FROM charging_orders "
+        "WHERE status IN ('charging', 'pending_settlement', 'completed') "
+        "AND started_at IS NOT NULL"));
+    if (!query.exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("read orders for utilization failed: %1")
+                       .arg(queryError(query)));
+        return false;
+    }
+    while (query.next()) {
+        const qint64 pileId = query.value(0).toLongLong();
+        const auto pileIterator = stationByPile.constFind(pileId);
+        if (pileIterator == stationByPile.constEnd()) continue;
+
+        const QString status = query.value(1).toString();
+        const QString startedAtText = query.value(2).toString();
+        const QDateTime startedAt = QDateTime::fromString(startedAtText, Qt::ISODate);
+        if (!startedAt.isValid()) {
+            setFailure(error, kind, ErrorKind::Database,
+                       QStringLiteral("invalid charging order started_at for pile %1")
+                           .arg(pileId));
+            return false;
+        }
+
+        qint64 endedAtMs = periodEndMs;
+        if (!query.value(3).isNull() && !query.value(3).toString().isEmpty()) {
+            const QDateTime endedAt = QDateTime::fromString(query.value(3).toString(),
+                                                             Qt::ISODate);
+            if (!endedAt.isValid()) {
+                setFailure(error, kind, ErrorKind::Database,
+                           QStringLiteral("invalid charging order ended_at for pile %1")
+                               .arg(pileId));
+                return false;
+            }
+            endedAtMs = endedAt.toUTC().toMSecsSinceEpoch();
+        } else if (status != QStringLiteral("charging")) {
+            // v0.3 requires ended_at for pending_settlement/completed. Ignore
+            // malformed legacy rows instead of attributing an open interval.
+            continue;
+        }
+
+        const qint64 startedAtMs = startedAt.toUTC().toMSecsSinceEpoch();
+        const qint64 actualStartMs = qMax(periodStartMs, startedAtMs);
+        const qint64 actualEndMs = qMin(periodEndMs, endedAtMs);
+        if (actualEndMs <= actualStartMs) continue;
+        numeratorMsByStation[*pileIterator] += actualEndMs - actualStartMs;
+    }
+
+    for (auto iterator = utilizations->begin(); iterator != utilizations->end(); ++iterator) {
+        const qint64 denominatorMs = denominatorMsByStation.value(iterator.key());
+        const qint64 numeratorMs = numeratorMsByStation.value(iterator.key());
+        iterator.value() = denominatorMs > 0
+            ? static_cast<double>(numeratorMs) / static_cast<double>(denominatorMs)
+            : 0.0;
+    }
+    return true;
+}
+
+bool Database::getStatistics(const QString &range, QJsonObject *statistics,
+                             QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!statistics || (range != QStringLiteral("7d") && range != QStringLiteral("30d"))) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("range must be 7d or 30d"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+
+    const int days = range == QStringLiteral("7d") ? 7 : 30;
+    const QString updatedAt = utcNow();
+    const QDateTime statisticsEnd = QDateTime::fromString(updatedAt, Qt::ISODate);
+    if (!statisticsEnd.isValid()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("build statistics timestamp failed"));
+        return false;
+    }
+    const QDate endDate = statisticsEnd.toUTC().date();
+    const QDate startDate = endDate.addDays(1 - days);
+    if (!startDate.isValid() || !endDate.isValid()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("build statistics date range failed"));
+        return false;
+    }
+
+    // Build a complete calendar series, including zero-value days. The wire
+    // response is consumed by trend charts, so the aggregate and daily rows
+    // must come from the same UTC calendar window and cannot use a rolling
+    // 7*24-hour predicate that would produce a different sum.
+    QHash<QString, QJsonObject> dailyByDate;
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "SELECT substr(settled_at, 1, 10) AS revenue_date, "
+        "COALESCE(SUM(total_amount_cents), 0), COUNT(*), "
+        "COALESCE(SUM(energy_wh), 0) FROM charging_orders "
+        "WHERE status = 'completed' AND settled_at IS NOT NULL "
+        "AND substr(settled_at, 1, 10) BETWEEN :start_date AND :end_date "
+        "GROUP BY revenue_date ORDER BY revenue_date"));
+    query.bindValue(QStringLiteral(":start_date"), startDate.toString(Qt::ISODate));
+    query.bindValue(QStringLiteral(":end_date"), endDate.toString(Qt::ISODate));
+    if (!query.exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("read revenue statistics failed: %1").arg(queryError(query)));
+        return false;
+    }
+    while (query.next()) {
+        const QString date = query.value(0).toString();
+        dailyByDate.insert(date, QJsonObject{
+            {QStringLiteral("date"), date},
+            {QStringLiteral("revenue_cents"), query.value(1).toLongLong()},
+            {QStringLiteral("completed_order_count"), query.value(2).toLongLong()},
+            {QStringLiteral("energy_wh"), query.value(3).toLongLong()}});
+    }
+
+    QJsonArray revenueDaily;
+    qint64 revenue = 0;
+    qint64 completedOrders = 0;
+    qint64 energyWh = 0;
+    for (QDate date = startDate; date <= endDate; date = date.addDays(1)) {
+        const QString dateText = date.toString(Qt::ISODate);
+        const QJsonObject row = dailyByDate.value(dateText, QJsonObject{
+            {QStringLiteral("date"), dateText},
+            {QStringLiteral("revenue_cents"), 0},
+            {QStringLiteral("completed_order_count"), 0},
+            {QStringLiteral("energy_wh"), 0}});
+        revenueDaily.append(row);
+        revenue += row.value(QStringLiteral("revenue_cents")).toInteger();
+        completedOrders += row.value(QStringLiteral("completed_order_count")).toInteger();
+        energyWh += row.value(QStringLiteral("energy_wh")).toInteger();
+    }
+
+    query.prepare(QStringLiteral(
+        "SELECT "
+        "COALESCE(SUM(status = 'idle'), 0), "
+        "COALESCE(SUM(status = 'reserved'), 0), "
+        "COALESCE(SUM(status = 'charging'), 0), "
+        "COALESCE(SUM(status = 'fault'), 0), "
+        "COALESCE(SUM(status = 'offline'), 0), COUNT(*) "
+        "FROM charging_piles"));
+    if (!query.exec() || !query.next()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("read pile statistics failed: %1").arg(queryError(query)));
+        return false;
+    }
+    const qint64 idle = query.value(0).toLongLong();
+    const qint64 reserved = query.value(1).toLongLong();
+    const qint64 charging = query.value(2).toLongLong();
+    const qint64 fault = query.value(3).toLongLong();
+    const qint64 offline = query.value(4).toLongLong();
+    const qint64 totalPiles = query.value(5).toLongLong();
+
+    // Station utilization always uses the most recent seven UTC calendar days,
+    // independently of the revenue range selected by the caller. Keep the
+    // period end tied to the same snapshot used by updated_at so an open
+    // charging order is measured consistently for this response.
+    const QDate utilizationStartDate = endDate.addDays(-6);
+    const QDateTime utilizationStart(utilizationStartDate, QTime(0, 0), Qt::UTC);
+    QHash<qint64, double> stationUtilizations;
+    if (!getStationUtilizations(utilizationStart, statisticsEnd,
+                                &stationUtilizations, error, kind)) {
+        return false;
+    }
+    double averageStationUtilization = 0.0;
+    if (!stationUtilizations.isEmpty()) {
+        for (auto iterator = stationUtilizations.constBegin();
+             iterator != stationUtilizations.constEnd(); ++iterator) {
+            averageStationUtilization += iterator.value();
+        }
+        averageStationUtilization /= static_cast<double>(stationUtilizations.size());
+    }
+
+    *statistics = QJsonObject{
+        {QStringLiteral("range"), range},
+        {QStringLiteral("revenue_cents"), revenue},
+        {QStringLiteral("revenue_daily"), revenueDaily},
+        {QStringLiteral("completed_order_count"), completedOrders},
+        {QStringLiteral("energy_wh"), energyWh},
+        {QStringLiteral("pile_idle"), idle},
+        {QStringLiteral("pile_reserved"), reserved},
+        {QStringLiteral("pile_charging"), charging},
+        {QStringLiteral("pile_fault"), fault},
+        {QStringLiteral("pile_offline"), offline},
+        {QStringLiteral("avg_station_utilization"), averageStationUtilization},
+        {QStringLiteral("updated_at"), updatedAt},
+        {QStringLiteral("has_data"), completedOrders > 0 || totalPiles > 0}};
+    return true;
+}
+
+bool Database::listAdminStations(const QString &queryText, QJsonArray *stations,
+                                 QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!stations) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("stations output is null"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+
+    // Keep the list snapshot precision aligned with getStatistics()'s
+    // updated_at/period cutoff (whole UTC seconds), avoiding artificial
+    // millisecond differences when the two read endpoints are polled together.
+    const QDateTime periodEnd = QDateTime::fromString(utcNow(), Qt::ISODate);
+    const QDateTime periodStart(periodEnd.date().addDays(-6), QTime(0, 0), Qt::UTC);
+    QHash<qint64, double> stationUtilizations;
+    if (!getStationUtilizations(periodStart, periodEnd, &stationUtilizations, error, kind)) {
+        return false;
+    }
+
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "SELECT s.id, s.name, s.address, s.latitude, s.longitude, s.status, "
+        "COUNT(p.id), "
+        "COALESCE(SUM(p.status = 'idle'), 0), "
+        "COALESCE(SUM(p.status = 'reserved'), 0), "
+        "COALESCE(SUM(p.status = 'charging'), 0), "
+        "COALESCE(SUM(p.status = 'fault'), 0), "
+        "COALESCE(SUM(p.status = 'offline'), 0) "
+        "FROM stations s LEFT JOIN charging_piles p ON p.station_id = s.id "
+        "WHERE (:query = '' OR s.name LIKE :pattern OR s.address LIKE :pattern) "
+        "GROUP BY s.id ORDER BY s.id"));
+    query.bindValue(QStringLiteral(":query"), queryText.trimmed());
+    query.bindValue(QStringLiteral(":pattern"), QStringLiteral("%%1%").arg(queryText.trimmed()));
+    if (!query.exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("list administrator stations failed: %1").arg(queryError(query)));
+        return false;
+    }
+    *stations = QJsonArray();
+    while (query.next()) {
+        stations->append(QJsonObject{
+            {QStringLiteral("id"), query.value(0).toLongLong()},
+            {QStringLiteral("name"), query.value(1).toString()},
+            {QStringLiteral("address"), query.value(2).toString()},
+            {QStringLiteral("latitude"), query.value(3).toDouble()},
+            {QStringLiteral("longitude"), query.value(4).toDouble()},
+            {QStringLiteral("status"), query.value(5).toString()},
+            {QStringLiteral("pile_total"), query.value(6).toLongLong()},
+            {QStringLiteral("pile_idle"), query.value(7).toLongLong()},
+            {QStringLiteral("pile_reserved"), query.value(8).toLongLong()},
+            {QStringLiteral("pile_charging"), query.value(9).toLongLong()},
+            {QStringLiteral("pile_fault"), query.value(10).toLongLong()},
+            {QStringLiteral("pile_offline"), query.value(11).toLongLong()},
+            {QStringLiteral("utilization"), stationUtilizations.value(query.value(0).toLongLong(), 0.0)},
+            {QStringLiteral("utilization_range"), QStringLiteral("7d")}});
+    }
+    return true;
+}
+
+bool Database::createStation(const QString &requestId, qint64 administratorId,
+                             const QString &name, const QString &address,
+                             double latitude, double longitude, qint64 pileCount,
+                             QJsonObject *station, QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!station || requestId.isEmpty() || administratorId <= 0
+        || name.trimmed().isEmpty() || address.trimmed().isEmpty()
+        || !std::isfinite(latitude) || latitude < -90.0 || latitude > 90.0
+        || !std::isfinite(longitude) || longitude < -180.0 || longitude > 180.0
+        || pileCount <= 0 || pileCount > 1000) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("station fields are invalid"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    if (!checkAdministrator(administratorId, true, error, kind)) return false;
+    const QString fingerprint = QStringLiteral("%1:%2:%3:%4:%5:%6")
+        .arg(name.trimmed(), address.trimmed()).arg(latitude, 0, 'g', 16)
+        .arg(longitude, 0, 'g', 16).arg(pileCount);
+    if (!begin(error, kind)) return false;
+    QJsonObject replay; bool found = false;
+    if (!loadRequest(requestId, QStringLiteral("admin.station.create"), fingerprint,
+                     &replay, &found, error, kind)) { rollback(); return false; }
+    if (found) {
+        *station = replay.value(QStringLiteral("station")).toObject();
+        // Requests persisted by an older server may predate the utilization
+        // fields. Keep idempotent replay responses on the current contract.
+        station->insert(QStringLiteral("utilization"),
+                        station->value(QStringLiteral("utilization")).toDouble());
+        station->insert(QStringLiteral("utilization_range"), QStringLiteral("7d"));
+        return commit(error, kind);
+    }
+    const QString timestamp = utcNow();
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "INSERT INTO stations(name, address, latitude, longitude, status, created_at, updated_at) "
+        "VALUES (:name, :address, :latitude, :longitude, 'active', :created_at, :updated_at)"));
+    query.bindValue(QStringLiteral(":name"), name.trimmed());
+    query.bindValue(QStringLiteral(":address"), address.trimmed());
+    query.bindValue(QStringLiteral(":latitude"), latitude);
+    query.bindValue(QStringLiteral(":longitude"), longitude);
+    query.bindValue(QStringLiteral(":created_at"), timestamp);
+    query.bindValue(QStringLiteral(":updated_at"), timestamp);
+    if (!query.exec()) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("create station failed: %1").arg(queryError(query)));
+        return false;
+    }
+    const qint64 stationId = query.lastInsertId().toLongLong();
+    query.prepare(QStringLiteral(
+        "INSERT INTO charging_piles(station_id, pile_code, pile_type, power_kw, "
+        "unit_price_cents_per_kwh, status, created_at, updated_at) "
+        "VALUES (:station_id, :pile_code, 'fast', 60.0, 120, 'idle', :created_at, :updated_at)"));
+    query.bindValue(QStringLiteral(":station_id"), stationId);
+    query.bindValue(QStringLiteral(":created_at"), timestamp);
+    query.bindValue(QStringLiteral(":updated_at"), timestamp);
+    for (qint64 index = 1; index <= pileCount; ++index) {
+        query.bindValue(QStringLiteral(":pile_code"), QStringLiteral("P-%1-%2")
+                        .arg(stationId).arg(index, 3, 10, QChar('0')));
+        if (!query.exec()) {
+            rollback();
+            setFailure(error, kind, ErrorKind::Database,
+                       QStringLiteral("create station pile failed: %1").arg(queryError(query)));
+            return false;
+        }
+    }
+    *station = QJsonObject{{QStringLiteral("id"), stationId},
+                           {QStringLiteral("name"), name.trimmed()},
+                           {QStringLiteral("address"), address.trimmed()},
+                           {QStringLiteral("latitude"), latitude},
+                           {QStringLiteral("longitude"), longitude},
+                           {QStringLiteral("status"), QStringLiteral("active")},
+                           {QStringLiteral("pile_total"), pileCount},
+                           {QStringLiteral("pile_idle"), pileCount},
+                           {QStringLiteral("pile_reserved"), 0},
+                           {QStringLiteral("pile_charging"), 0},
+                           {QStringLiteral("pile_fault"), 0},
+                           {QStringLiteral("pile_offline"), 0},
+                           {QStringLiteral("utilization"), 0.0},
+                           {QStringLiteral("utilization_range"), QStringLiteral("7d")}};
+    if (!saveRequest(requestId, QStringLiteral("admin.station.create"), fingerprint,
+                     QJsonObject{{QStringLiteral("station"), *station}}, error, kind)) {
+        rollback();
+        return false;
+    }
+    return commit(error, kind);
+}
+
+bool Database::restartPile(const QString &requestId, qint64 administratorId, qint64 pileId,
+                           QJsonObject *pile, QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!pile || requestId.isEmpty() || administratorId <= 0 || pileId <= 0) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("administrator_id and pile_id must be positive"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    if (!checkAdministrator(administratorId, false, error, kind)) return false;
+    const QString fingerprint = QStringLiteral("%1:%2").arg(administratorId).arg(pileId);
+    if (!begin(error, kind)) return false;
+    QJsonObject replay; bool found = false;
+    if (!loadRequest(requestId, QStringLiteral("admin.pile.restart"), fingerprint,
+                     &replay, &found, error, kind)) { rollback(); return false; }
+    if (found) {
+        *pile = replay.value(QStringLiteral("pile")).toObject();
+        return commit(error, kind);
+    }
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "SELECT id, station_id, pile_code, pile_type, power_kw, unit_price_cents_per_kwh, "
+        "status, total_charge_count, total_charge_seconds, restart_count, last_restart_at "
+        "FROM charging_piles WHERE id = :id"));
+    query.bindValue(QStringLiteral(":id"), pileId);
+    if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, queryError(query)); return false; }
+    if (!query.next()) { rollback(); setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("pile not found")); return false; }
+    const QString oldStatus = query.value(6).toString();
+    const QString timestamp = utcNow();
+    const bool recoverable = oldStatus == QStringLiteral("fault") || oldStatus == QStringLiteral("offline");
+    query.prepare(QStringLiteral(
+        "INSERT INTO pile_restart_logs(pile_id, administrator_id, requested_at, result, reason) "
+        "VALUES (:pile_id, :administrator_id, :requested_at, :result, :reason)"));
+    query.bindValue(QStringLiteral(":pile_id"), pileId);
+    query.bindValue(QStringLiteral(":administrator_id"), administratorId);
+    query.bindValue(QStringLiteral(":requested_at"), timestamp);
+    query.bindValue(QStringLiteral(":result"), recoverable ? QStringLiteral("succeeded") : QStringLiteral("rejected"));
+    query.bindValue(QStringLiteral(":reason"), recoverable ? QStringLiteral("restart completed")
+                                                            : QStringLiteral("pile is not recoverable"));
+    if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, queryError(query)); return false; }
+    if (!recoverable) {
+        if (!commit(error, kind)) return false;
+        setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("pile is not in a restartable state"));
+        return false;
+    }
+    query.prepare(QStringLiteral(
+        "UPDATE charging_piles SET status = 'idle', restart_count = restart_count + 1, "
+        "last_restart_at = :updated_at, updated_at = :updated_at WHERE id = :id"));
+    query.bindValue(QStringLiteral(":updated_at"), timestamp);
+    query.bindValue(QStringLiteral(":id"), pileId);
+    if (!query.exec() || query.numRowsAffected() != 1) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("update restarted pile failed: %1").arg(queryError(query)));
+        return false;
+    }
+    query.prepare(QStringLiteral(
+        "SELECT id, station_id, pile_code, pile_type, power_kw, unit_price_cents_per_kwh, "
+        "status, total_charge_count, total_charge_seconds, restart_count, last_restart_at "
+        "FROM charging_piles WHERE id = :id"));
+    query.bindValue(QStringLiteral(":id"), pileId);
+    if (!query.exec() || !query.next() || !readPile(query, pile, error)) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Database, QStringLiteral("read restarted pile failed"));
+        return false;
+    }
+    if (!saveRequest(requestId, QStringLiteral("admin.pile.restart"), fingerprint,
+                     QJsonObject{{QStringLiteral("pile"), *pile}}, error, kind)) {
+        rollback();
+        return false;
+    }
+    return commit(error, kind);
+}
+
+bool Database::listAdminUsers(const QString &phoneQuery, QJsonArray *users,
+                              QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!users) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("users output is null"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "SELECT u.id, u.phone, u.nickname, u.avatar_path, u.balance_cents, u.status, "
+        "u.created_at, "
+        "(SELECT o.status FROM charging_orders o WHERE o.user_id = u.id AND o.status IN "
+        "('pending_reservation','reserved','charging','pending_settlement') "
+        "ORDER BY o.id DESC LIMIT 1) "
+        "FROM users u WHERE (:query = '' OR u.phone LIKE :pattern OR u.nickname LIKE :pattern) "
+        "ORDER BY u.id"));
+    query.bindValue(QStringLiteral(":query"), phoneQuery.trimmed());
+    query.bindValue(QStringLiteral(":pattern"), QStringLiteral("%%1%").arg(phoneQuery.trimmed()));
+    if (!query.exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("list administrator users failed: %1").arg(queryError(query)));
+        return false;
+    }
+    *users = QJsonArray();
+    while (query.next()) {
+        users->append(QJsonObject{
+            {QStringLiteral("id"), query.value(0).toLongLong()},
+            {QStringLiteral("phone"), query.value(1).toString()},
+            {QStringLiteral("nickname"), query.value(2).toString()},
+            {QStringLiteral("avatar_path"), query.value(3).isNull()
+                ? QJsonValue(QJsonValue::Null) : QJsonValue(query.value(3).toString())},
+            {QStringLiteral("balance_cents"), query.value(4).toLongLong()},
+            {QStringLiteral("status"), query.value(5).toString()},
+            {QStringLiteral("created_at"), query.value(6).toString()},
+            {QStringLiteral("active_order_status"), query.value(7).isNull()
+                ? QJsonValue(QJsonValue::Null) : QJsonValue(query.value(7).toString())}});
+    }
+    return true;
+}
+
+bool Database::setUserStatus(const QString &requestId, qint64 administratorId, qint64 userId,
+                             const QString &status, QJsonObject *user,
+                             QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!user || requestId.isEmpty() || administratorId <= 0 || userId <= 0
+        || (status != QStringLiteral("active") && status != QStringLiteral("frozen"))) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("administrator_id, user_id and status are invalid"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    if (!checkAdministrator(administratorId, true, error, kind)) return false;
+    const QString fingerprint = QStringLiteral("%1:%2:%3").arg(administratorId).arg(userId).arg(status);
+    if (!begin(error, kind)) return false;
+    QJsonObject replay; bool found = false;
+    if (!loadRequest(requestId, QStringLiteral("admin.user.status.set"), fingerprint,
+                     &replay, &found, error, kind)) { rollback(); return false; }
+    if (found) {
+        *user = replay.value(QStringLiteral("user")).toObject();
+        return commit(error, kind);
+    }
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral("SELECT id FROM users WHERE id = :id"));
+    query.bindValue(QStringLiteral(":id"), userId);
+    if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, queryError(query)); return false; }
+    if (!query.next()) { rollback(); setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("user not found")); return false; }
+    const QString timestamp = utcNow();
+    query.prepare(QStringLiteral("UPDATE users SET status = :status, updated_at = :updated_at WHERE id = :id"));
+    query.bindValue(QStringLiteral(":status"), status);
+    query.bindValue(QStringLiteral(":updated_at"), timestamp);
+    query.bindValue(QStringLiteral(":id"), userId);
+    if (!query.exec() || query.numRowsAffected() != 1) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("update user status failed: %1").arg(queryError(query))); return false; }
+    query.prepare(QStringLiteral("SELECT id, phone, nickname, avatar_path, balance_cents, status FROM users WHERE id = :id"));
+    query.bindValue(QStringLiteral(":id"), userId);
+    if (!query.exec() || !readUser(query, user, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read updated user failed")); return false; }
+    if (!saveRequest(requestId, QStringLiteral("admin.user.status.set"), fingerprint,
+                     QJsonObject{{QStringLiteral("user"), *user}}, error, kind)) {
+        rollback();
+        return false;
+    }
+    return commit(error, kind);
 }
 
 bool Database::createReservation(const QString &requestId, qint64 userId, qint64 pileId, QJsonObject *order,

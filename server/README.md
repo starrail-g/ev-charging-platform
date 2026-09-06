@@ -24,11 +24,14 @@ tree launches. The first connection initializes an empty database with
 creation. Existing databases are never reseeded automatically.
 
 The service provides `health`, `echo`, `user.login`, profile read/update,
-wallet recharge, station/pile queries,
-active and historical order lookup, reservation transitions, and charging
-start/stop/settlement. Login accepts an 11-digit ASCII phone number, reads an
-existing user, or atomically registers a new active user with zero balance.
-See
+wallet recharge, station/pile queries, active and historical order lookup,
+reservation transitions, and charging start/stop/settlement, plus administrator
+login, statistics, station/pile, and user management operations. Login accepts
+an 11-digit ASCII phone number, reads an existing user, or atomically registers
+a new active user with zero balance. `admin.login` returns an 8-hour
+process-local session token; every other `admin.*` request must carry that
+token, including read-only queries. Mutation requests additionally carry
+`administrator_id`, which must match the authenticated token subject. See
 `docs/architecture/protocol.md` for framing and the v1 contract.
 
 With the server running, validate the basic TCP path:

@@ -4,7 +4,7 @@
 
 - Project: 东软电动汽车充电桩应用管理平台。
 - Current stage: 第一阶段最小闭环开发；真实截止时间为 2026-09-10 24:00。第二阶段截止 2026-09-17 24:00，个人报告截止 2026-09-18 24:00。
-- This file was updated on 2026-09-06 while converging `main` (PR #9) into the C phase-1 branch (PR #11). The requirements source of truth is `docs/requirements/requirements-matrix.md`.
+- This file was updated on 2026-09-06 while converging `main` (PR #9) into the C phase-1 branch (PR #11). The requirements source of truth is `docs/requirements/requirements-matrix.md`. 根目录的项目说明书 `.doc`、需求矩阵 `.xls` 和 `三人分工.md` 仅为本地参考文件，不上传、不提交；仓库内 `docs/` Markdown 才是正式项目材料。
 
 ## Architecture and boundaries
 
@@ -20,16 +20,11 @@
 
 ## Current status
 
-```text
-Qt user/admin clients -> protocol v1 / Socket -> server -> database layer -> SQLite
-dashboard and ML consume separately defined data interfaces
-```
-
-- `A-S1-01` (需求矩阵/边界/任务记录)、`A-S1-02` (Mock baseline + `SocketUserService` 覆盖 B PR #4 用户契约) 已完成；`A-S1-03` 真实 Socket 适配已随 PR #9 合入 `main`（`e577baa`，2026-09-05/06），含 P1 修复：UI 线程 Socket 异步化（QtConcurrent + generation 防旧回包）、mutation 请求 ID 跨可重试失败保留、`pending_reservation` 恢复、免密手机号登录与注册入口移除。`A-S1-04` 跨模块最终回归待进行。
-- B PR #4 提供 Schema v0.3 数据库/协议基线（已在 `main`）；PR #8（`994e5ff`）恢复统一 admin/dashboard UI 及其评审修复（A-02/A-04/A-06/A-07、P2-01、契约映射文档 `cfbb282`）。B 的 admin.* API（admin.login/statistics/station/pile.restart/user）已实现于 PR #10 分支（未合入 `main`），含 Q1–Q7 冻结答复（见下）。
+- `A-S1-01` (需求矩阵/边界/任务记录)、`A-S1-02` (Mock baseline + `SocketUserService` 覆盖 B PR #4 用户契约) 已完成；`A-S1-03` 真实 Socket 适配已随 PR #9 合入 `main`（`e577baa`，2026-09-05/06），含 P1 修复：UI 线程 Socket 异步化（QtConcurrent + generation 防旧回包）、mutation 请求 ID 跨可重试失败保留、`pending_reservation` 恢复、免密手机号登录与注册入口移除。`A-S1-04` 跨模块最终回归待进行。A 用户端 Mock 地图页面深色圆角下拉样式沿用。
+- B PR #4 提供 Schema v0.3 数据库/协议基线（已在 `main`）；PR #8（`994e5ff`）恢复统一 admin/dashboard UI 及其评审修复（A-02/A-04/A-06/A-07、P2-01、契约映射文档 `cfbb282`）。B 的 admin.* API 已随 **PR #12 合入 `main`（`3d015f7`，2026-09-06）**：`admin.login` 发放进程内 8h 会话 token（`600c657` 起保护 admin API），**除 admin.login 外所有 admin.* 请求必须携带 token**，mutation（station.create/pile.restart/user.status.set）额外携带并校验 `administrator_id` 与 token 主体一致；统计/利用率/重启语义由 `server/tests/admin.py` 覆盖。
 - The 2026-09-04 final-decision addendum in `docs/meetings/protocol-summary-2026-09-02.md` overrides the older stop-release/frozen wording; `docs/architecture/protocol.md`, A's `SocketUserService` and C's Mock are aligned to it.
-- C phase-1 批（管理操作 + Socket 适配 + Task-12 交付文档）以 16 commits 提交于 `feature/member-c-phase1-mvp`，PR #11 open（2026-09-06，CI 4/4 绿）；Q1–Q7 冻结对账见 `docs/api/README.md`（2026-09-05，B PR #10 分支 1f157de/11702ae/4eb0bad/45627d5 实证）。
-- 9/7 18:00 接口闸门以登录/概览/桩状态/动作为准；若届时 `main` 未含 B admin.* handler 或联调未过，管理端按协作规则申请 Mock 降级批准，材料不冒充真实联调。
+- C phase-1 批（管理操作 + Socket 适配 + Task-12 交付文档）以 16 commits 提交于 `feature/member-c-phase1-mvp`，PR #11 open（2026-09-06，CI 4/4 绿）。**2026-09-06 评审（PR #11 comments, A）：服务端 token 契约（PR #12）与 C 的 administrator_id-only 适配不匹配 → C 已完成 token 适配（LoginResult.token / buildPayload 附 token、mutation 附 administrator_id / 1100 清会话），fake-server 测试 15/15 + 真实 main 服务端联调冒烟全链路 PASS（login→overview 双 range→fan-out→冻结→重启），改动待推（本地未提交，commit 边界经 C 审查后 push）。**
+- 9/7 18:00 接口闸门以登录/概览/桩状态/动作为准；管理端已具备 token 契约适配，闸门当天以 main 服务端真联调验证。
 
 ## A-S1-02 delivered scope
 
@@ -57,8 +52,8 @@ dashboard and ML consume separately defined data interfaces
 ## Dependencies and TODO
 
 - `A-S1-04`: coordinated final regression, GUI evidence and clean-environment delivery (2026-09-07 gate and 09-10 integration deadline).
-- C: merge PR #11 into `main`, then 9/6–9/7 socket wiring smoke against B's server; 9/7 17:00 environment-config test and 18:00 interface gate (docs/meetings/interface-gate-2026-09-07.md); 9/8–9/10 release materials and clean-environment evidence (docs/release/stage1-checklist.md).
-- B (owned, PR #10 open): merge timeline for the admin.* handlers is coordinated by B/A; C does not drive it. The gate plan assumes the handlers land on `main` or a designated branch before 2026-09-07 18:00.
+- C: push the PR #11 token-alignment fix after C's review, then 9/6–9/7 socket wiring smoke against B's server (already locally green on the real main server); 9/7 17:00 environment-config test and 18:00 interface gate (docs/meetings/interface-gate-2026-09-07.md); 9/8–9/10 release materials and clean-environment evidence (docs/release/stage1-checklist.md).
+- B (owned): admin.* handlers are merged on `main` via PR #12 (`3d015f7`); if any further contract drift appears at the gate, coordinate through B/A — C does not drive it.
 - Open technical item: move slow database work off the Socket event-loop thread, or define a bounded worker/lock strategy (B-owned).
 - S2 intelligent-analysis chain: data preparation → model-service contract → predictions/recommendation/warning → B service adaptation → C display → integrated validation. It must not block the S1 basic charging loop.
 
@@ -74,9 +69,10 @@ dashboard and ML consume separately defined data interfaces
 - B Schema v0.3 protocol/database foundation and profile/wallet endpoints are merged; its smoke and concurrency suites cover transaction rollback, replay, lifecycle, frozen policy and completed-order history. The pile-uniqueness migration `002_v0.2_to_v0.3.sql` handles already-deployed v0.2 databases (C re-verified 2026-09-04).
 - A user-client Mock baseline and opt-in Socket adapter are implemented; PR #9 (P1 follow-up) merged 2026-09-05 as `e577baa`.
 - PR #8 (`994e5ff`, 2026-09-04) restored the unified admin/dashboard UI (reverting PR #7's rollback of PR #6) plus the A-02/A-04/A-06/A-07 gaps, P2-01 cleanup and the AdminRepository contract-to-wire mapping doc.
-- B answered the Q1–Q7 contract-freeze items on the PR #10 branch with four commits (`1f157de` revenue_daily series / `11702ae`+`4eb0bad` seven-day time-weighted station utilization / `45627d5` restart state safety and replay tests); C aligned the Socket adapter keys accordingly (administrator_id auth, dual-range fetchOverview, restart semantics identical to C's Mock).
-- C phase-1 delivery (PR #11) is committed on `feature/member-c-phase1-mvp` (management actions, Socket adapter, Task-12 docs, Q1–Q7 freeze ledger, defect closures, release templates), pending merge and the 09-07 gate.
+- B answered the Q1–Q7 contract-freeze items (revenue_daily series / seven-day time-weighted station utilization / restart state safety) and merged the admin.* handlers with token sessions via PR #12 (`3d015f7`, 2026-09-06); C aligned the Socket adapter accordingly (token + mutation administrator_id, dual-range fetchOverview, restart semantics identical to C's Mock) and verified against the real main server (2026-09-06 live smoke: login→overview→fan-out→freeze→restart all PASS).
+- C phase-1 delivery (PR #11) is committed on `feature/member-c-phase1-mvp` (management actions, Socket adapter, Task-12 docs, Q1–Q7 freeze ledger, defect closures, release templates); the token-alignment fix is pending C's review and push, then the 09-07 gate.
 - `docs/role-a-delivery-plan.md` records A's phase-I/II dependencies, acceptance gates and delivery list; `docs/role-c-delivery-plan.md` does the same for C.
+- A-S1-01/02/03 已完成（含 PR #9 P1 修复与 Socket 真实适配）；后续 A 任务包括联调测试、腾讯地图导航优化、智能分析结果展示和最终 qmake6 交付；不得将 Mock 或适配器构建通过误记为真实闭环完成。
 
 ## Async/session and permission safeguards (user client)
 
@@ -84,3 +80,4 @@ dashboard and ML consume separately defined data interfaces
 - `runService()` captures the auth generation and user ID, so callbacks after logout/account switching are discarded; station/pile request generations still reject older query results, and pile callbacks also verify the selected station ID.
 - Frozen users may read data and perform reservation cancellation, charging stop and settlement, but UI controls for reservation creation/confirmation, charging start/direct start and wallet recharge are disabled.
 - An optional discard callback restores transient UI state such as the recharge button when an in-flight request is invalidated.
+- Compatibility baseline: `origin/main` `e577baa` is merged into `feature/admin-api`; A's user-client additions are retained and B's administrator/database implementation is intentionally preserved because the mainline merge had removed those files.

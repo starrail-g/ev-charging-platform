@@ -1,7 +1,8 @@
 # 测试用例：登录流程（TC-C-S1-001 ~ 004）
 
 > 对应需求：C-S1-001（管理员登录）。正式 docx 模板（课堂派）到达前以此文件为内容源。
-> 契约依据：`docs/architecture/protocol.md` —— `admin.login`(username, password) → `admin.login.result`: `admin`；
+> 契约依据：`docs/architecture/protocol.md` —— `admin.login`(username, password) → `admin.login.result`:
+> `admin` + 8 小时有效 `token`；除登录外的所有 `admin.*` 请求均须携带该 token；
 > 错误分支按 code 不按 message：1100 UNAUTHORIZED。
 > 自动化实现：`apps/admin-client/tests/loginflow/tst_loginflow.cpp`（Qt Test）。
 > 执行状态更新时机：每次代码变更后跑 `tst_loginflow` 更新。
