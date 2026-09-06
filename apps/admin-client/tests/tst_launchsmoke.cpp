@@ -86,6 +86,32 @@ public:
                            });
     }
 
+    // 管理动作接口：本用例（来源标识/四态）不触发动作；
+    // 按"未接线"失败返回，不冒充动作已接入（C-S1-005/007 由 Mock 实现承担）
+    void restartPile(const QString &, QObject *context,
+                     std::function<void(const ev::ActionResult &)> callback) override
+    {
+        QTimer::singleShot(0, context, [callback = std::move(callback)] {
+            if (callback) {
+                ev::ActionResult result;
+                result.message = QStringLiteral("restartPile not wired in fake repository");
+                callback(result);
+            }
+        });
+    }
+
+    void setUserStatus(int, const QString &, QObject *context,
+                       std::function<void(const ev::ActionResult &)> callback) override
+    {
+        QTimer::singleShot(0, context, [callback = std::move(callback)] {
+            if (callback) {
+                ev::ActionResult result;
+                result.message = QStringLiteral("setUserStatus not wired in fake repository");
+                callback(result);
+            }
+        });
+    }
+
     QString dataSourceName() const override
     {
         return QStringLiteral("Socket 测试源");
