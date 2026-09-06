@@ -33,7 +33,20 @@ the backend traceability matrix.
 and dashboard queries. They derive values from source tables and must not be
 written directly. `revenue_daily` groups completed orders by `settled_at`,
 because revenue becomes final when wallet settlement succeeds; `ended_at`
-remains the physical charging-end timestamp for operational metrics.
+remains the physical charging-end timestamp for operational metrics. The
+`admin.statistics.get` service fills missing UTC calendar days with zero rows
+and returns a fixed 7-day or 30-day series; its aggregate revenue/order/energy
+fields are calculated from that same series.
+
+Station utilization is calculated by the shared `getStationUtilizations` service
+method for both `admin.station.list` and `admin.statistics.get`. Its seven-day
+UTC window is `[period_start, period_end)`. The numerator sums the interval
+intersection for `charging`, `pending_settlement`, and `completed` orders;
+an open `charging` order ends at `period_end`. The denominator sums
+`period_end - max(period_start, charging_piles.created_at)` for every pile at
+the station, without excluding `fault` or `offline` time. The statistics
+average is the arithmetic mean of station values, so stations—not piles—are
+the weighting unit.
 
 ## Status transitions
 
@@ -130,8 +143,9 @@ result unless an explicitly supported free-charge policy is introduced.
    does not cancel an existing order, but blocks new starts.
 6. **Remote restart**: begin transaction, verify administrator role and pile
    status, insert `pile_restart_logs`, update restart counters/timestamp and
-   optionally clear a recoverable fault. Rejected states still get an audit
-   row and no pile mutation.
+   clear only a recoverable `fault`/`offline` state. `idle`, `reserved`, and
+   `charging` are rejected with no pile or active-session mutation; rejected
+   states still get an audit row and no successful request replay record.
 
 Use `BEGIN IMMEDIATE` for write transactions so concurrent clients cannot
 both claim the same idle pile. Set a busy timeout and map lock/constraint

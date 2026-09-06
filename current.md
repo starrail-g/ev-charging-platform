@@ -5,6 +5,7 @@
 - Project: 东软电动汽车充电桩应用管理平台。
 - Current stage: 第一阶段最小闭环开发；真实截止时间为 2026-09-10 24:00。第二阶段截止 2026-09-17 24:00，个人报告截止 2026-09-18 24:00。
 - This file was updated for the `A-S1-03` PR #9 P1 follow-up on 2026-09-04. The requirements source of truth is `docs/requirements/requirements-matrix.md`.
+- 根目录的项目说明书 `.doc`、需求矩阵 `.xls` 和 `三人分工.md` 仅为本地参考文件，不上传、不提交；仓库内 `docs/` Markdown 才是正式项目材料。
 
 ## Architecture and boundaries
 
@@ -21,7 +22,8 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 - `A-S1-01`: **已完成**. Requirements traceability, stage boundaries, dependencies and public-task assignments are recorded in `docs/requirements/requirements-matrix.md` and the project task records.
 - `A-S1-02`: Mock baseline remains the default runtime path and has been validated. `SocketUserService` now covers the complete B PR #4 user contract; A-S1-03 is complete pending the separate A-S1-04 cross-module regression.
 - Mock 地图页面的驾车/步行下拉框采用深色圆角样式：默认项为黑底白字，当前选中项为白底黑字。
-- B PR #4 supplies the Schema v0.3 database/protocol baseline. PR #8 is merged in `origin/main` at `994e5ff`, restoring the unified admin/dashboard UI and its review fixes; A does not modify B/C implementation code.
+- B PR #4 supplies the Schema v0.3 database/protocol baseline. PR #8 is merged in `origin/main` at `994e5ff`, and PR #9 is now merged at `e577baa`, adding the asynchronous A SocketUserService and retry/session fixes.
+- B administrator APIs remain present on this compatibility branch: `admin.login` issues an 8-hour process-local token; all other `admin.*` reads and writes require it, mutations bind `administrator_id` to the token subject, and statistics/station utilization/restart semantics are covered by `server/tests/admin.py`.
 - The 2026-09-04 final-decision addendum in `docs/meetings/protocol-summary-2026-09-02.md` overrides the older stop-release/frozen wording; `docs/architecture/protocol.md` and `SocketUserService` are aligned to it.
 - C admin/dashboard work and cross-module testing remain in progress; no C task is marked complete by this update.
 
@@ -52,6 +54,7 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 - `A-S1-02` navigation: add Tencent Maps geocoding and basic driving/walking route display from local configuration; retain explicit Mock/offline fallback and record failure/Key-missing evidence.
 - Detailed user-client requirements and Tencent Maps investigation are recorded in `docs/ui/user-client-detailed-requirements.md`, including the Linux + Qt baseline, acceptance flow, API probe command, Key-safety rules and GitHub reference projects. Real POI fields are not yet treated as business prices/pile counts/statuses; those remain B/Mock data until verified.
 - `C-S1-01`/`C-S1-02`/`C-S1-03`: finish admin pages, dashboard data path, clean-build and cross-module evidence. End-to-end closure requires A, B and C paths plus abnormal-case tests.
+- Compatibility work after `origin/main` `e577baa`: preserve B's server/database/admin files while adopting A's Socket client changes; validate both the user-client Socket suite and the administrator API smoke path before merging.
 - S2 intelligent-analysis chain: data preparation → model-service contract → predictions/recommendation/warning → B service adaptation → C display → integrated validation. It must not block the S1 basic charging loop.
 
 ## Collaboration and security rules
@@ -63,7 +66,7 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 
 ## Recent history
 
-- B Schema v0.3 protocol/database foundation and profile/wallet endpoints are merged; its smoke and concurrency suites cover transaction rollback, replay, lifecycle, frozen policy and completed-order history.
+- B Schema v0.3 protocol/database foundation, profile/wallet endpoints, and administrator APIs are retained on this branch; smoke, concurrency, and admin suites cover transaction rollback, replay, lifecycle, frozen policy, completed-order history, utilization, restart, and authentication.
 - A user-client Mock baseline and opt-in Socket adapter are implemented; the PR #9 P1 follow-up makes Socket UI calls asynchronous, preserves mutation request IDs across retryable failures and exposes recovery for `pending_reservation`.
 - PR #8 restored the unified admin/dashboard UI plus the A-02/A-04/A-06/A-07 and amount-format review fixes on the current main line.
 - `docs/role-a-delivery-plan.md` records A's phase-I/II dependencies, acceptance gates and delivery list.
@@ -76,3 +79,4 @@ Target flow: Qt clients/dashboard → unified protocol or data interface → ser
 - `runService()` captures the auth generation and user ID, so callbacks after logout/account switching are discarded; station/pile request generations still reject older query results, and pile callbacks also verify the selected station ID.
 - Frozen users may read data and perform reservation cancellation, charging stop and settlement, but UI controls for reservation creation/confirmation, charging start/direct start and wallet recharge are disabled.
 - An optional discard callback restores transient UI state such as the recharge button when an in-flight request is invalidated.
+- Compatibility baseline: `origin/main` `e577baa` is merged into `feature/admin-api`; A's user-client additions are retained and B's administrator/database implementation is intentionally preserved because the mainline merge had removed those files.
