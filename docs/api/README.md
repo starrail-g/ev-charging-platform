@@ -148,15 +148,15 @@ JSON `null`；历史接口只返回 `completed` 订单，按 `settled_at` 倒序
 业务拒绝或数据库失败会回滚且不会固化记录，因此相同 ID 可在条件修复后重试，参数
 变化或操作变化则返回 `CONFLICT`。
 
-管理员接口草案：
+管理员接口（B 侧实现状态，2026-09-05 更新；位于 PR #10 分支，未合 main）：
 
 | 接口 | 用途 | 状态 |
 |---|---|---|
-| `admin.login` | 管理员认证，错误码 1100 | 已列入协议，服务端待实现 |
-| `admin.statistics.get` | 营收、桩状态、利用率摘要 | 字段待评审 |
-| `admin.pile.restart` | 桩重启和审计 | 服务端待实现 |
-| `admin.station.*` | 站点查询/创建 | 服务端待实现 |
-| `admin.user.list/status.set` | 用户查询、冻结/解冻 | 服务端待实现 |
+| `admin.login` | 管理员认证，错误码 1100 | B 已实现：无 token/连接级会话，响应 payload.admin{id,username,role,status} |
+| `admin.statistics.get` | 营收、桩状态、利用率摘要与逐日营收序列 | B 已实现：`7d`/`30d` 返回固定长度 `revenue_daily`（UTC 日历日补零），聚合=序列和（1f157de） |
+| `admin.pile.restart` | 桩重启和审计 | B 已实现：仅 fault/offline 恢复 idle、按请求 ID 幂等、其余状态 1201 不打断会话（45627d5） |
+| `admin.station.list/create` | 站点查询/创建 | B 已实现：站行含 pile 五态计数 + utilization/utilization_range="7d" |
+| `admin.user.list/status.set` | 用户查询、冻结/解冻 | B 已实现：冻结只拦 4 操作（1101），登录/只读放行 |
 
 ## 管理端 AdminRepository 契约与 wire 映射
 
@@ -167,7 +167,7 @@ Socket 任务落地）：
 
 | AdminRepository 方法 | 业务视图语义 | wire 映射策略 |
 |---|---|---|
-| `fetchOverview` | 概览指标（7 日/30 日营收、桩五态、利用率、快照时间） | `admin.statistics.get`（字段待冻结，9/4 评审 Q3–Q5） |
+| `fetchOverview` | 概览指标（7 日/30 日营收、桩五态、利用率、快照时间） | `admin.statistics.get` **双请求**：7d 为主体（五态/利用率/updated_at），30d 取聚合 `revenue_cents` 填 30d 副行（2026-09-05 Q3 冻结，无 30d 独立键） |
 | `fetchStations` | 管理端全量站点（含桩数/在线率聚合视图） | `admin.station.list` |
 | `fetchUsers` | 管理端全量用户 | `admin.user.list` |
 | `fetchPiles` | 管理端**全量**桩列表（跨站，桩页过滤/搜索在本端完成） | 逐站 fan-out：`admin.station.list` → 每站 `pile.list(station_id)` → 合并（默认，D5） |
@@ -190,3 +190,32 @@ breaking-change 风险窗口在后续 Socket 实现（新实现类）接入时�
 实现类并保持本契约不变。
 
 接口闸门通过前，管理端 Mock 数据不得冒充真实 Socket 联调结果。
+
+## 管理端 Socket 对接层 Q1–Q7 冻结对账（2026-09-05）
+
+> 设计稿：`superpowers/plans/2026-09-03-socket-admin-repository-design.md`（D1–D8）。
+> Q1–Q7 待冻结输入于 9/4 需求评审提出，2026-09-05 B 在 PR #10 分支
+> （feature/admin-api，f04f428→45627d5 四个 commit：1f157de revenue_daily /
+> 11702ae+4eb0bad 利用率 / 45627d5 restart 语义）以代码、测试（server/tests/admin.py）
+> 与文档（B 版 docs/api/README.md「管理端统计响应」「管理端站点利用率」两节）冻结。
+> C 侧 Socket 适配层已按 B 实际构造点（loginAdministrator/readPile/listAdminUsers/
+> listAdminStations/getStatistics）逐字段核对并同步（2026-09-05，未提交工作树）。
+
+| # | 冻结输入 | 冻结结论 | 状态 |
+|---|---|---|---|
+| Q1 | login/statistics/station.list/user.list 响应字段清单（snake_case） | B 实现即样例：admin{id,username,role,status}；statistics 信封样例见 B 版文档；station/user 键与 schema 列直出 | 已冻结（构造点逐字段核对全命中） |
+| Q2 | 管理端全量桩列表：`admin.pile.list` 增补 or 逐站聚合 | B 未增补 `admin.pile.list` → D5 逐站 fan-out 为阶段一正式方案；adapter 已实现；B 若后续增补则切单请求、抽象不变 | 已定（B 未增补；2026-09-05 拍板按现状） |
+| Q3 | statistics 对象覆盖 | `revenue_daily` 固定长度（7d→7/30d→30 条）、UTC 日历日升序补零、行内键 date/revenue_cents/completed_order_count/energy_wh、聚合=序列和、updated_at 同快照；**无独立 30d 合计键** → C fetchOverview 双请求（7d 主体 + 30d 取聚合值） | 已冻结（1f157de + B 文档样例） |
+| Q4 | 利用率口径 | 最近 7 个 UTC 自然日**时间加权占用率**：分子=charging/pending_settlement/completed 订单区间∩窗口（开放单截到 updated_at），分母=桩自 max(窗口起点, created_at) 可用时长（fault/offline 不扣）；站均=简单平均、与 range 无关；站行带 utilization+utilization_range="7d"。语义与演示 0.42 占位不同（socketparse 注释已同步） | 已冻结（11702ae/4eb0bad） |
+| Q5 | range 仅 `7d`/`30d`（A-02 裁剪） | B 仅实现 7d/30d、无 today/month/all；Web 大屏 2026-09-05 起搁置，A-02 收敛为 Qt 概览卡（7d 主卡 + 30d 副行） | 已确认（实现即口径） |
+| Q6 | admin.* 鉴权机制 | v1 无 token/连接级会话：admin.login 返回 admin 对象，后续 admin.* 请求 payload 携带 `administrator_id`（mutation 经 hasOnlyFields 严格校验，多余字段 1000 拒）；C buildPayload 单点已按此实现（原 username/password 附加方案废弃） | 已冻结（PR #10 代码实证） |
+| Q7 | 桩 total_charge_count/seconds、用户 created_at、站聚合字段 | readPile 11 列全含（含 restart_count/last_restart_at）、user.list 含 created_at/active_order_status、站行含 pile 五态计数+utilization | 已冻结（构造点核对） |
+
+C 侧代码落点（2026-09-05 校准，未提交工作树）：buildPayload 附加 `administrator_id`
+（登录缓存 admin.id）；fetchOverview 双请求合并（任一失败整页 error，同 D5 fan-out
+哲学）；socketparse 注释与映射表同步冻结口径。restart 语义（45627d5）与 C Mock/UI
+逐字一致（仅 fault/offline 可重启、其余 1201），无代码改动。
+
+9/7 18:00 闸门说明：B 的 admin.* handler 位于 PR #10 分支（尚未合 main），合入时间线
+由 B/A 协调（C 不推动）；闸门以登录/概览/桩状态/动作为准，若届时 main 未含 admin.*
+或联调未过，管理端按协作规则申请 Mock 降级批准，材料不冒充真实联调。
