@@ -31,6 +31,16 @@ struct LoginResult {
     QString message;           // 仅用于日志/兜底展示，不作为分支依据
 };
 
+// 管理动作结果（login 同构：错误分支只按 errorCode 分支，message 仅展示/日志）。
+// errorCode 语义同 docs/architecture/protocol.md §Error Codes：
+//   0=OK、1002=INVALID_REQUEST（参数非法）、1200=NOT_FOUND、1201=CONFLICT（状态转换不允许）。
+struct ActionResult {
+    bool ok = false;
+    int errorCode = 0;
+    bool networkError = false; // 传输层错误（服务不可达），协议码不覆盖
+    QString message;           // 仅用于日志/兜底展示，不作为分支依据
+};
+
 // 数据层抽象：页面不建 Socket 不写 SQL（架构约定），
 // 第一阶段用 MockAdminRepository，9/6 Socket 适配层替换。
 class AdminRepository
@@ -69,6 +79,20 @@ public:
     // 数据来源标识（状态栏展示用）：Mock 返回 "Mock 演示"，
     // 未来 Socket 适配层返回自身标识；空串表示不展示来源。
     virtual QString dataSourceName() const { return QString(); }
+
+    // 异步远程重启充电桩（C-S1-005；第一阶段为服务端确认后的状态模拟）：
+    // 仅故障/离线桩允许重启，成功后桩转 idle（模拟自检通过）并可观察；
+    // 其余状态返回 1201 CONFLICT。异步语义同 login（context 防悬垂、事件循环派发）。
+    virtual void restartPile(const QString &pileCode,
+                             QObject *context,
+                             std::function<void(const ActionResult &)> callback) = 0;
+
+    // 异步冻结/解冻用户（C-S1-007；第一阶段为模拟确认）：status ∈ active|frozen；
+    // 与当前状态相同返回 1201 CONFLICT，用户不存在返回 1200。
+    virtual void setUserStatus(int userId,
+                               const QString &status,
+                               QObject *context,
+                               std::function<void(const ActionResult &)> callback) = 0;
 };
 
 } // namespace ev
