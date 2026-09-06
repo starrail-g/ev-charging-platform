@@ -41,6 +41,19 @@ public:
     void fetchUsers(QObject *context,
                     std::function<void(const ev::ListResult<ev::UserInfo> &)> callback) override;
 
+    // 异步远程重启充电桩（C-S1-005，Mock 模拟）：仅 fault/offline 允许；
+    // 成功后快照内桩转 idle（模拟自检通过），后续 fetchPiles 可见新状态。
+    void restartPile(const QString &pileCode,
+                     QObject *context,
+                     std::function<void(const ev::ActionResult &)> callback) override;
+
+    // 异步冻结/解冻用户（C-S1-007，Mock 模拟）：status ∈ active|frozen；
+    // 与当前状态相同返回 1201 CONFLICT；用户不存在返回 1200。
+    void setUserStatus(int userId,
+                       const QString &status,
+                       QObject *context,
+                       std::function<void(const ev::ActionResult &)> callback) override;
+
     QString dataSourceName() const override { return QStringLiteral("Mock 演示"); }
 
     // 演示数据模式（Mock 特有，不进抽象接口；供概览页下拉驱动，
@@ -56,10 +69,19 @@ public:
 
 private:
     ev::LoginResult doLogin(const QString &username, const QString &password) const;
+    ev::ActionResult doRestartPile(const QString &pileCode);
+    ev::ActionResult doSetUserStatus(int userId, const QString &status);
 
     LoginMode m_mode = LoginMode::Ok;
     int m_loginCallCount = 0;
     ev::mockdata::DataMode m_overviewMode = ev::mockdata::DataMode::Normal;
+    // 管理端业务快照（动作模拟的"持久化"层）：构造时从 mockdata 纯函数取初始
+    // 快照，restartPile/setUserStatus 就地修改；fetch* 的 Normal 分支返回快照，
+    // 保证概览五态计数/站点在线率/桩页状态在动作后全链路自洽（mockdata::*()
+    // 纯函数本身保持无状态、可追溯，与既有口径测试互不影响）。
+    QList<ev::PileInfo> m_pileRows;
+    QList<ev::UserInfo> m_userRows;
+    ev::OverviewStats m_overviewStats;
 };
 
 #endif // MOCKADMINREPOSITORY_H
