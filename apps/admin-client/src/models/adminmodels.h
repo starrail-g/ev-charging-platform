@@ -8,7 +8,7 @@
 // 管理端只读展示模型（第一阶段）。
 // 字段对齐 database/schema/schema.sql（stations / charging_piles / users），
 // 语义对齐 docs/architecture/protocol.md：金额一律整数分（*_cents）、
-// 时间 UTC ISO-8601、桩状态协议五态。待 9/4 与 B 评审后最终冻结。
+// 时间 UTC ISO-8601、桩状态协议五态。2026-09-05 已随 PR #10 对齐冻结。
 namespace ev {
 
 // 桩状态（协议五态 + 未知兜底，protocol.md；解析不出协议值 → Unknown）
@@ -85,11 +85,16 @@ struct OverviewStats {
 //   ok=false    —— 接口失败(调用方必须按 ok 分支展示错误态,不能只依赖列表长度)
 //   error       —— 失败原因文案(展示/日志用)
 //   items       —— 成功时的数据列表
+// Socket 适配层接入后补结构化错误(与 LoginResult 对齐, 设计稿 §5):
+//   errorCode   —— 协议错误码(0=OK; docs/architecture/protocol.md §Error Codes)
+//   networkError—— 传输层错误(服务不可达/超时/断连), 协议码不覆盖, 单独标记
 template <typename T>
 struct ListResult {
     bool ok = true;
     QString error;
     QList<T> items;
+    int errorCode = 0;         // 协议错误码(仅错误分支有意义, Mock 默认 0 不感知)
+    bool networkError = false; // 传输层错误(仅错误分支有意义, Mock 默认 false 不感知)
 };
 
 // 概览结果包装(数据层与页面层共用,P2 review 修复后上移为通用模型):
@@ -101,6 +106,8 @@ struct OverviewResult {
     QString error;
     OverviewStats stats;
     bool hasData = false;
+    int errorCode = 0;         // 协议错误码(仅错误分支有意义, 设计稿 §5)
+    bool networkError = false; // 传输层错误(仅错误分支有意义, 设计稿 §5)
 };
 
 } // namespace ev

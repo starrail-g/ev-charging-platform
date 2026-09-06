@@ -12,8 +12,8 @@ class QObject;
 namespace ev {
 
 // 管理员对象。
-// 字段待 9/4 与 B 对齐（协议文档注明 admin 字段随 database schema 冻结）；
-// 当前按 database/schema/schema.sql administrators 表自拟。
+// 2026-09-05 与 B 对齐实证: admin.login 响应 payload.admin = {id, username, role,
+// status}(database.cpp loginAdministrator 构造点), 键名全命中, 语义随 schema 冻结。
 struct AdminInfo {
     int id = 0;
     QString username;
