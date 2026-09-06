@@ -2,7 +2,9 @@
 
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QItemSelectionModel>
 #include <QLabel>
+#include <QPushButton>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -55,14 +57,31 @@ UserPage::UserPage(ev::AdminRepository *repository, QWidget *parent)
     QFont hintFont = m_hintLabel->font();
     hintFont.setPixelSize(12);
     m_hintLabel->setFont(hintFont);
-    // 管理操作未接入：只读列表 + 明确说明，不提供伪造的"冻结/解冻"假操作。
-    // 该说明在正常数据态常驻（加载/空/错误等临时状态覆盖后恢复）
+
+    // C-S1-007：冻结/解冻入口（第一阶段 Mock 模拟；无选中行时不可用，
+    // 文案随选中用户状态切换：正常 → "冻结选中用户"，冻结 → "解冻选中用户"）
+    m_statusButton = new QPushButton(QStringLiteral("冻结选中用户"), this);
+    m_statusButton->setObjectName(QStringLiteral("userStatusButton"));
+    m_statusButton->setEnabled(false);
+
+    auto *toolbar = new QHBoxLayout;
+    toolbar->setContentsMargins(0, 0, 0, 0);
+    toolbar->addWidget(m_statusButton);
+    toolbar->addStretch();
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(10);
+    layout->addLayout(toolbar);
     layout->addWidget(m_table, 1);
     layout->addWidget(m_hintLabel);
+
+    connect(m_table->selectionModel(), &QItemSelectionModel::currentRowChanged,
+            this, [this](const QModelIndex &current, const QModelIndex &) {
+                onUserSelectionChanged(current.row());
+            });
+    connect(m_statusButton, &QPushButton::clicked,
+            this, &UserPage::onStatusButtonClicked);
 }
 
 void UserPage::refresh(ev::mockdata::DataMode mode)
@@ -89,6 +108,8 @@ void UserPage::rebuildRows()
 {
     if (!m_ok) {
         m_table->setRowCount(0);
+        m_statusButton->setEnabled(false);
+        m_actionPendingHint.clear();
         showHint(QStringLiteral("接口错误：%1").arg(m_error));
         return;
     }
@@ -106,15 +127,62 @@ void UserPage::rebuildRows()
         m_table->setItem(row, 4, new QTableWidgetItem(user.createdAt));
     }
 
-    if (m_users.isEmpty())
+    if (m_users.isEmpty()) {
         showHint(QStringLiteral("暂无用户数据"));
-    else
+    } else if (!m_actionPendingHint.isEmpty()) {
+        // 动作成功提示展示一次（如"用户 138…已冻结（模拟）"），随后清除
+        showHint(m_actionPendingHint);
+        m_actionPendingHint.clear();
+    } else {
         clearHint();
+    }
+
+    // 表格重建后 currentRow 可能保留（selectRow 同值不触发 currentRowChanged）：
+    // 不盲目禁用，按当前选中直接恢复按钮态与文案（数据已是刷新后的新状态）
+    onUserSelectionChanged(m_table->currentRow());
 }
 
 int UserPage::visibleRowCount() const
 {
     return m_table->rowCount();
+}
+
+void UserPage::onUserSelectionChanged(int currentRow)
+{
+    const bool hasSelection = currentRow >= 0 && currentRow < m_users.size();
+    m_statusButton->setEnabled(hasSelection);
+    if (!hasSelection)
+        return;
+    // 文案随状态切换：正常 → 冻结；冻结 → 解冻（动作目标 = 当前状态的翻转）
+    const bool frozen = m_users.at(currentRow).status == QStringLiteral("frozen");
+    m_statusButton->setText(frozen ? QStringLiteral("解冻选中用户")
+                                   : QStringLiteral("冻结选中用户"));
+}
+
+void UserPage::onStatusButtonClicked()
+{
+    const int row = m_table->currentRow();
+    if (row < 0 || row >= m_users.size())
+        return;
+
+    const ev::UserInfo &user = m_users.at(row);
+    const QString target = user.status == QStringLiteral("frozen")
+        ? QStringLiteral("active")
+        : QStringLiteral("frozen");
+
+    // 动作在途：禁用按钮防连点；结果经回调恢复（成功 → 提示 + 重新拉取，
+    // 失败/冲突 → 数据层 message 直接展示，列表保持现状可重试）
+    m_statusButton->setEnabled(false);
+    m_repository->setUserStatus(user.id, target, this,
+                                [this](const ev::ActionResult &result) {
+                                    if (result.ok) {
+                                        m_actionPendingHint = result.message;
+                                        refresh();
+                                    } else {
+                                        m_statusButton->setEnabled(true);
+                                        showHint(result.message);
+                                    }
+                                });
 }
 
 void UserPage::showHint(const QString &text)
@@ -125,8 +193,9 @@ void UserPage::showHint(const QString &text)
 
 void UserPage::clearHint()
 {
-    // 正常数据态：恢复"只读演示"常驻说明（区别于桩/站页的纯临时提示）
-    m_hintLabel->setText(
-        QStringLiteral("只读演示数据 · 冻结/解冻等管理操作待服务端接入后开放"));
+    // 正常数据态：常驻说明（区别于桩/站页的纯临时提示）——
+    // 明确模拟边界：冻结/解冻为本地模拟操作，不冒充真实服务端
+    m_hintLabel->setText(QStringLiteral(
+        "演示数据 · 冻结/解冻为模拟操作（9/7 接口闸门后接入真实服务端）"));
     m_hintLabel->setVisible(true);
 }
