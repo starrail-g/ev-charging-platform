@@ -17,8 +17,9 @@
 #include "models/adminmodels.h"
 
 // SocketAdminRepository 本地假服务器测试（设计稿 D8：纯本地、不依赖 B）：
-//   成功各接口 / 1100 / fan-out 两站 / 任一站失败整页 error / 动作 1200-1201 映射 /
-//   坏帧断连 / 超时 / 中途断连 / context 销毁防悬垂 / 连接失败后可重连。
+//   成功各接口 / 1100 / fetchPiles 全量单请求(admin.pile.list) / 整页 error /
+//   动作 1200-1201 映射 / 坏帧断连 / 超时 / 中途断连 / context 销毁防悬垂 /
+//   连接失败后可重连。
 // 假服务器行为经 onRequest 注入（按收到的请求 type 回响应）。
 
 // 本地假管理服务器：按连接持有 FrameDecoder，收到的请求可注入行为
@@ -139,9 +140,8 @@ private slots:
     void fetchOverviewMapsEmptyHasDataFlag();
     void authenticatedRequestsCarrySessionToken(); // Q6 冻结契约(2026-09-06)
     void unauthorizedClearsSessionState();
-    void fetchPilesFanOutAcrossStations();
-    void fetchPilesFailsWholePageOnStationError();
-    void fetchPilesSkipsInactiveStations();
+    void fetchPilesRequestsAllPilesInOneCall();
+    void fetchPilesFailsWholePageOnServerError();
     void restartPileUsesCachedIdAndMapsConflict();
     void requestTimeoutMarksNetworkError();
     void serverAbortFailsInflightAsNetworkError();
@@ -307,7 +307,8 @@ void TestSocketAdapter::authenticatedRequestsCarrySessionToken()
     // Q6 冻结(2026-09-06, PR #12 = main 3d015f7): 除 admin.login 外所有 admin.*
     // 请求携带会话 token; mutation(admin.pile.restart / admin.user.status.set)
     // 额外携带 administrator_id 且 = login 响应 admin.id; 读类(admin.station.list /
-    // admin.user.list)只带 token; 用户接口 pile.list 不附加任何管理凭据;
+    // admin.pile.list / admin.user.list)只带 token; 管理端不再调用用户侧 pile.list
+    // (口径 A, 2026-09-07: fetchPiles 走 admin.pile.list 全量);
     // username/password 绝不再现(hasOnlyFields 严格拒多余字段)。
     FakeAdminServer server;
     QVERIFY(server.listen());
@@ -324,8 +325,8 @@ void TestSocketAdapter::authenticatedRequestsCarrySessionToken()
         } else if (request.type == QStringLiteral("admin.user.list")) {
             reply(socket, request.id, QStringLiteral("admin.user.list.result"),
                   QJsonObject{{QStringLiteral("users"), QJsonArray{}}});
-        } else if (request.type == QStringLiteral("pile.list")) {
-            reply(socket, request.id, QStringLiteral("pile.list.result"),
+        } else if (request.type == QStringLiteral("admin.pile.list")) {
+            reply(socket, request.id, QStringLiteral("admin.pile.list.result"),
                   QJsonObject{{QStringLiteral("piles"), QJsonArray{
                       QJsonObject{{QStringLiteral("id"), 3},
                                   {QStringLiteral("station_id"), 1},
@@ -370,7 +371,7 @@ void TestSocketAdapter::authenticatedRequestsCarrySessionToken()
     });
     QTRY_VERIFY_WITH_TIMEOUT(usersDone, 3000);
 
-    // fan-out 先拿桩缓存(restartPile 需要 pile_id)
+    // fetchPiles 拿桩缓存(restartPile 需要 pile_id): 单请求 admin.pile.list
     bool pilesDone = false;
     repository.fetchPiles(&repository, [&](const ev::ListResult<ev::PileInfo> &) {
         pilesDone = true;
@@ -395,7 +396,6 @@ void TestSocketAdapter::authenticatedRequestsCarrySessionToken()
     bool sawLogin = false;
     bool sawRead = false;
     bool sawMutation = false;
-    bool sawUserPileList = false;
     for (const ev::protocol::Message &req : server.m_requests) {
         if (req.type == QStringLiteral("admin.login")) {
             sawLogin = true;
@@ -403,6 +403,7 @@ void TestSocketAdapter::authenticatedRequestsCarrySessionToken()
             continue;
         }
         if (req.type == QStringLiteral("admin.station.list")
+            || req.type == QStringLiteral("admin.pile.list")
             || req.type == QStringLiteral("admin.user.list")) {
             sawRead = true;
             // 读类：token 必须携带、不带 administrator_id/username/password
@@ -420,14 +421,12 @@ void TestSocketAdapter::authenticatedRequestsCarrySessionToken()
             QCOMPARE(req.payload.value(QLatin1String("administrator_id")).toInt(), 1);
             continue;
         }
-        if (req.type == QStringLiteral("pile.list")) {
-            sawUserPileList = true;
-            // 用户侧接口：不附加任何管理凭据
-            QVERIFY(!req.payload.contains(QLatin1String("token")));
-            QVERIFY(!req.payload.contains(QLatin1String("administrator_id")));
-        }
     }
-    QVERIFY(sawLogin && sawRead && sawMutation && sawUserPileList);
+    // 管理端全部请求均为 admin.*(口径 A 后不再调用用户侧 pile.list)
+    QVERIFY(sawLogin && sawRead && sawMutation);
+    for (const ev::protocol::Message &req : server.m_requests)
+        QVERIFY2(req.type.startsWith(QLatin1String("admin.")),
+                 "管理端不得再调用用户侧接口");
 }
 
 void TestSocketAdapter::unauthorizedClearsSessionState()
@@ -484,133 +483,16 @@ void TestSocketAdapter::unauthorizedClearsSessionState()
     }
 }
 
-void TestSocketAdapter::fetchPilesFanOutAcrossStations()
+void TestSocketAdapter::fetchPilesRequestsAllPilesInOneCall()
 {
-    FakeAdminServer server;
-    QVERIFY(server.listen());
-    server.onRequest = [&server](const ev::protocol::Message &request, QTcpSocket *socket) {
-        if (request.type == QStringLiteral("admin.station.list")) {
-            reply(socket, request.id, QStringLiteral("admin.station.list.result"),
-                  QJsonObject{{QStringLiteral("stations"), QJsonArray{
-                      QJsonObject{{QStringLiteral("id"), 1},
-                                  {QStringLiteral("name"), QStringLiteral("站一")},
-                                  {QStringLiteral("status"), QStringLiteral("active")},
-                                  {QStringLiteral("pile_total"), 3}},
-                      QJsonObject{{QStringLiteral("id"), 2},
-                                  {QStringLiteral("name"), QStringLiteral("站二")},
-                                  {QStringLiteral("status"), QStringLiteral("active")},
-                                  {QStringLiteral("pile_total"), 3}},
-                  }}});
-        } else if (request.type == QStringLiteral("pile.list")) {
-            const int stationId = request.payload.value(QStringLiteral("station_id")).toInt();
-            QJsonArray piles;
-            if (stationId == 1) {
-                piles = QJsonArray{
-                    QJsonObject{{QStringLiteral("id"), 1},
-                                {QStringLiteral("station_id"), 1},
-                                {QStringLiteral("pile_code"), QStringLiteral("P-101-A")},
-                                {QStringLiteral("status"), QStringLiteral("charging")}},
-                    QJsonObject{{QStringLiteral("id"), 2},
-                                {QStringLiteral("station_id"), 1},
-                                {QStringLiteral("pile_code"), QStringLiteral("P-101-B")},
-                                {QStringLiteral("status"), QStringLiteral("idle")}},
-                };
-            } else if (stationId == 2) {
-                piles = QJsonArray{
-                    QJsonObject{{QStringLiteral("id"), 4},
-                                {QStringLiteral("station_id"), 2},
-                                {QStringLiteral("pile_code"), QStringLiteral("P-202-A")},
-                                {QStringLiteral("status"), QStringLiteral("fault")}},
-                };
-            }
-            reply(socket, request.id, QStringLiteral("pile.list.result"),
-                  QJsonObject{{QStringLiteral("piles"), piles}});
-        }
-    };
-
-    ev::SocketAdminRepository repository(QStringLiteral("127.0.0.1"), server.port());
-    bool done = false;
-    ev::ListResult<ev::PileInfo> result;
-    repository.fetchPiles(&repository, [&](const ev::ListResult<ev::PileInfo> &out) {
-        result = out;
-        done = true;
-    });
-    QTRY_VERIFY_WITH_TIMEOUT(done, 5000);
-    QVERIFY2(result.ok, qPrintable(result.error));
-    QCOMPARE(result.items.size(), 3); // 2 + 1 逐站聚合
-
-    // fan-out 语义：先 station.list，后两站 pile.list（含各自 station_id）
-    QCOMPARE(server.m_requests.size(), 3);
-    QCOMPARE(server.m_requests.at(0).type, QStringLiteral("admin.station.list"));
-    QHash<int, int> stationRequests;
-    for (int i = 1; i < server.m_requests.size(); ++i) {
-        QCOMPARE(server.m_requests.at(i).type, QStringLiteral("pile.list"));
-        const int stationId =
-            server.m_requests.at(i).payload.value(QStringLiteral("station_id")).toInt();
-        stationRequests[stationId] += 1;
-    }
-    QCOMPARE(stationRequests.value(1), 1);
-    QCOMPARE(stationRequests.value(2), 1);
-}
-
-void TestSocketAdapter::fetchPilesFailsWholePageOnStationError()
-{
+    // 口径 A(2026-09-07 评审对齐): fetchPiles = 单请求 admin.pile.list,
+    // 服务端返回全量桩(全部站点含 inactive 站桩) —— 替换原"station.list →
+    // 逐站 pile.list"fan-out(pile.list 仅 active 站, 会漏停运站桩)
     FakeAdminServer server;
     QVERIFY(server.listen());
     server.onRequest = [](const ev::protocol::Message &request, QTcpSocket *socket) {
-        if (request.type == QStringLiteral("admin.station.list")) {
-            reply(socket, request.id, QStringLiteral("admin.station.list.result"),
-                  QJsonObject{{QStringLiteral("stations"), QJsonArray{
-                      QJsonObject{{QStringLiteral("id"), 1},
-                                  {QStringLiteral("status"), QStringLiteral("active")}},
-                      QJsonObject{{QStringLiteral("id"), 2},
-                                  {QStringLiteral("status"), QStringLiteral("active")}},
-                  }}});
-        } else if (request.type == QStringLiteral("pile.list")) {
-            const int stationId = request.payload.value(QStringLiteral("station_id")).toInt();
-            if (stationId == 2)
-                replyError(socket, request.id, 1200, QStringLiteral("station not found"));
-            else
-                reply(socket, request.id, QStringLiteral("pile.list.result"),
-                      QJsonObject{{QStringLiteral("piles"), QJsonArray{}}});
-        }
-    };
-
-    ev::SocketAdminRepository repository(QStringLiteral("127.0.0.1"), server.port());
-    bool done = false;
-    ev::ListResult<ev::PileInfo> result;
-    repository.fetchPiles(&repository, [&](const ev::ListResult<ev::PileInfo> &out) {
-        result = out;
-        done = true;
-    });
-    QTRY_VERIFY_WITH_TIMEOUT(done, 5000);
-    QVERIFY(!result.ok);
-    QCOMPARE(result.errorCode, 1200); // 任一站失败 → 整页协议错误（不缺站静默）
-    QVERIFY(!result.networkError);
-}
-
-void TestSocketAdapter::fetchPilesSkipsInactiveStations()
-{
-    // 管理端桩视图口径(2026-09-07 评审, main): admin.station.list 返回含 inactive
-    // 的全部站, 而 pile.list 只允许查 active 站(inactive → 1200)。fan-out 只对
-    // active 站发起; inactive 站跳过 → 桩列表不再因停运站整页失败。
-    FakeAdminServer server;
-    QVERIFY(server.listen());
-    server.onRequest = [](const ev::protocol::Message &request, QTcpSocket *socket) {
-        if (request.type == QStringLiteral("admin.station.list")) {
-            reply(socket, request.id, QStringLiteral("admin.station.list.result"),
-                  QJsonObject{{QStringLiteral("stations"), QJsonArray{
-                      QJsonObject{{QStringLiteral("id"), 1},
-                                  {QStringLiteral("name"), QStringLiteral("站一")},
-                                  {QStringLiteral("status"), QStringLiteral("active")},
-                                  {QStringLiteral("pile_total"), 2}},
-                      QJsonObject{{QStringLiteral("id"), 2},
-                                  {QStringLiteral("name"), QStringLiteral("停运站")},
-                                  {QStringLiteral("status"), QStringLiteral("inactive")},
-                                  {QStringLiteral("pile_total"), 3}},
-                  }}});
-        } else if (request.type == QStringLiteral("pile.list")) {
-            reply(socket, request.id, QStringLiteral("pile.list.result"),
+        if (request.type == QStringLiteral("admin.pile.list")) {
+            reply(socket, request.id, QStringLiteral("admin.pile.list.result"),
                   QJsonObject{{QStringLiteral("piles"), QJsonArray{
                       QJsonObject{{QStringLiteral("id"), 1},
                                   {QStringLiteral("station_id"), 1},
@@ -620,6 +502,10 @@ void TestSocketAdapter::fetchPilesSkipsInactiveStations()
                                   {QStringLiteral("station_id"), 1},
                                   {QStringLiteral("pile_code"), QStringLiteral("P-101-B")},
                                   {QStringLiteral("status"), QStringLiteral("idle")}},
+                      QJsonObject{{QStringLiteral("id"), 3},
+                                  {QStringLiteral("station_id"), 2}, // 停运站桩也全量返回
+                                  {QStringLiteral("pile_code"), QStringLiteral("P-202-C")},
+                                  {QStringLiteral("status"), QStringLiteral("fault")}},
                   }}});
         }
     };
@@ -631,15 +517,40 @@ void TestSocketAdapter::fetchPilesSkipsInactiveStations()
         result = out;
         done = true;
     });
-    QTRY_VERIFY_WITH_TIMEOUT(done, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(done, 3000);
     QVERIFY2(result.ok, qPrintable(result.error));
-    QCOMPARE(result.items.size(), 2); // 仅 active 站(站一)的桩
+    QCOMPARE(result.items.size(), 3); // 全量: 不含站状态过滤
 
-    // 只对 active 站发起 pile.list; 无 station_id=2(inactive) 的请求
-    QCOMPARE(server.m_requests.size(), 2);
-    QCOMPARE(server.m_requests.at(0).type, QStringLiteral("admin.station.list"));
-    QCOMPARE(server.m_requests.at(1).type, QStringLiteral("pile.list"));
-    QCOMPARE(server.m_requests.at(1).payload.value(QStringLiteral("station_id")).toInt(), 1);
+    // 单请求: 不再先 admin.station.list、不再逐站 pile.list
+    QCOMPARE(server.m_requests.size(), 1);
+    QCOMPARE(server.m_requests.at(0).type, QStringLiteral("admin.pile.list"));
+
+    // 桩缓存(restartPile 的 pile_code→id 前置)来自同一响应
+    QVERIFY(repository.cachedPileCount() >= 3);
+}
+
+void TestSocketAdapter::fetchPilesFailsWholePageOnServerError()
+{
+    // admin.pile.list 失败 → 整页 error 透传(协议码分支不丢失)
+    FakeAdminServer server;
+    QVERIFY(server.listen());
+    server.onRequest = [](const ev::protocol::Message &request, QTcpSocket *socket) {
+        if (request.type == QStringLiteral("admin.pile.list"))
+            replyError(socket, request.id, 1100,
+                       QStringLiteral("administrator token is missing or expired"));
+    };
+
+    ev::SocketAdminRepository repository(QStringLiteral("127.0.0.1"), server.port());
+    bool done = false;
+    ev::ListResult<ev::PileInfo> result;
+    repository.fetchPiles(&repository, [&](const ev::ListResult<ev::PileInfo> &out) {
+        result = out;
+        done = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(done, 3000);
+    QVERIFY(!result.ok);
+    QCOMPARE(result.errorCode, 1100); // 整页协议错误透传
+    QVERIFY(!result.networkError);
 }
 
 void TestSocketAdapter::restartPileUsesCachedIdAndMapsConflict()
@@ -647,14 +558,9 @@ void TestSocketAdapter::restartPileUsesCachedIdAndMapsConflict()
     FakeAdminServer server;
     QVERIFY(server.listen());
     server.onRequest = [&server](const ev::protocol::Message &request, QTcpSocket *socket) {
-        if (request.type == QStringLiteral("admin.station.list")) {
-            reply(socket, request.id, QStringLiteral("admin.station.list.result"),
-                  QJsonObject{{QStringLiteral("stations"), QJsonArray{
-                      QJsonObject{{QStringLiteral("id"), 1},
-                                  {QStringLiteral("status"), QStringLiteral("active")}},
-                  }}});
-        } else if (request.type == QStringLiteral("pile.list")) {
-            reply(socket, request.id, QStringLiteral("pile.list.result"),
+        if (request.type == QStringLiteral("admin.pile.list")) {
+            // 全量桩列表(口径 A): 缓存桩 code→id 供 restartPile 使用
+            reply(socket, request.id, QStringLiteral("admin.pile.list.result"),
                   QJsonObject{{QStringLiteral("piles"), QJsonArray{
                       QJsonObject{{QStringLiteral("id"), 3},
                                   {QStringLiteral("station_id"), 1},

@@ -296,7 +296,7 @@ QJsonObject SocketAdminRepository::buildPayload(const QString &type,
     //   - 除 admin.login 外所有 admin.* 请求携带会话 token(8h 进程内, 缺失/过期 1100);
     //   - mutation(admin.station.create / admin.pile.restart / admin.user.status.set)
     //     额外携带 administrator_id, 服务端校验与 token 主体一致(不匹配 1100);
-    //   - 读类(statistics/station.list/user.list)只带 token —— 多余字段会被
+    //   - 读类(statistics/station.list/pile.list/user.list)只带 token —— 多余字段会被
     //     hasOnlyFields 拒(1002), 故不附加 administrator_id;
     //   - 未认证(m_token 空)不附加任何凭据: 服务端按 1100 拒绝, 客户端清会话状态。
     // payload 组装只收敛本函数, 服务端契约再变只改这里。
@@ -378,7 +378,7 @@ void SocketAdminRepository::fetchOverview(
     // 无独立 30d 合计键; revenue_daily 固定长度(7d→7/30d→30 条), 聚合 revenue_cents =
     // 同序列和, updated_at 同快照。→ 双请求: 7d 为主体(桩五态/avg_station_utilization
     // 恒 7d 口径、与 range 无关), 30d 只取 revenue_cents 填 revenue30dCents(营收卡副行)。
-    // 任一失败 → 整页 error(与 D5 fan-out 同哲学: 指标半页不可静默展示), 已派发后
+    // 任一失败 → 整页 error(与 D5 整页一致性同哲学: 指标半页不可静默展示), 已派发后
     // 迟到的另一请求响应被忽略。
     struct MergeState {
         bool delivered = false;   // 整页结果只派发一次
@@ -508,122 +508,39 @@ void SocketAdminRepository::fetchUsers(
                 });
 }
 
-// D5: fetchPiles 跨站全量 = admin.station.list → 每站 pile.list(station_id) 并行聚合;
-// 任一站失败 → 整页 error(不允许静默缺站); B 冻结 admin.pile.list 后切单请求, 接口不变
+// 2026-09-07 评审口径 A(管理员全量视图, 与 B 对齐): fetchPiles 单请求
+// admin.pile.list(全量桩 = 全部站点含 inactive 站, 与 admin.statistics.get 的
+// 全库桩计数 / admin.station.list 的站级聚合同范围)——替换原 D5 fan-out
+// (admin.station.list → 逐站 pile.list): pile.list 仅允许查 active 站, fan-out
+// 会漏停运站桩并使概览/站页/桩页数字口径分裂。接口契约见回复 B 的评审评论
+// (读类: 仅 token; 响应 {piles:[readPile 11 列]}, 待 B 在 main 实现后冻结实证)
 void SocketAdminRepository::fetchPiles(
     QObject *context, std::function<void(const ListResult<PileInfo> &)> callback)
 {
-    auto state = std::make_shared<PileFanOutState>();
-    sendRequest(QStringLiteral("admin.station.list"), QJsonObject(), /*isAction=*/false,
-                context,
-                [this, state, context, callback](const ReplyEnvelope &env) {
-                    if (!env.ok) {
-                        failPileFanOut(state, env, callback);
-                        return;
-                    }
-                    QStringList issues;
-                    QString reason;
-                    QList<StationInfo> stations;
-                    if (!socketparse::parseStationsPayload(env.payload, &stations, &issues,
-                                                           &reason)) {
-                        ReplyEnvelope bad;
-                        bad.ok = false;
-                        bad.errorCode = kCodeInvalidRequest;
-                        bad.message = reason;
-                        failPileFanOut(state, bad, callback);
-                        return;
-                    }
-                    deliverPileFanOut(state, stations, context, callback);
-                });
-}
-
-void SocketAdminRepository::deliverPileFanOut(
-    const std::shared_ptr<PileFanOutState> &state, const QList<StationInfo> &stations,
-    QObject *context, const std::function<void(const ListResult<PileInfo> &)> &callback)
-{
-    // 管理端桩视图口径 = active 站(2026-09-07 评审, 与 main 业务边界对齐):
-    // admin.station.list 返回全部站(含 inactive, 供站页展示"已停运"), 而 pile.list
-    // 只允许查 active 站(inactive → 1200 NotFound)——只对 active 站 fan-out,
-    // inactive 站跳过不发请求, 否则任一 inactive 站都会整页失败并拖垮桩页/概览
-    QList<StationInfo> activeStations;
-    for (const StationInfo &station : stations) {
-        if (station.status == QLatin1String("active"))
-            activeStations.append(station);
-    }
-    if (activeStations.isEmpty()) {
-        // 无 active 站 → 空列表成功结果(不报错)
-        state->delivered = true;
-        ListResult<PileInfo> result;
-        result.ok = true;
-        result.errorCode = kCodeOk;
-        if (callback)
-            callback(result);
-        return;
-    }
-    state->remaining = activeStations.size();
-    for (const StationInfo &station : activeStations) {
-        QJsonObject specific;
-        specific.insert(QLatin1String("station_id"), station.id);
-        sendRequest(QStringLiteral("pile.list"), specific, /*isAction=*/false, context,
-                    [this, state, callback](const ReplyEnvelope &env) {
-                        if (state->delivered)
-                            return; // 整页结果已派发(失败先行或已完成), 迟到的其余站响应忽略
-                        if (!env.ok) {
-                            // 任一站失败 → 整页 error(管理端需要一致的全量视图)
-                            state->delivered = true;
-                            ListResult<PileInfo> result;
-                            result.ok = false;
-                            result.errorCode = env.errorCode;
-                            result.networkError = env.networkError;
-                            result.error = env.message;
-                            if (callback)
-                                callback(result);
-                            return;
-                        }
+    sendRequest(QStringLiteral("admin.pile.list"), QJsonObject(), /*isAction=*/false,
+                context, [this, callback](const ReplyEnvelope &env) {
+                    ListResult<PileInfo> result;
+                    result.ok = env.ok;
+                    result.errorCode = env.errorCode;
+                    result.networkError = env.networkError;
+                    result.error = env.message;
+                    if (env.ok) {
                         QStringList issues;
                         QString reason;
                         QList<PileInfo> piles;
                         if (!socketparse::parsePilesPayload(env.payload, &piles, &issues,
                                                             &reason)) {
-                            state->delivered = true;
-                            ListResult<PileInfo> result;
                             result.ok = false;
                             result.errorCode = kCodeInvalidRequest;
                             result.error = reason;
-                            if (callback)
-                                callback(result);
-                            return;
+                        } else {
+                            cachePileIds(piles); // restartPile 的 pile_code→id 前置
+                            result.items = piles;
                         }
-                        cachePileIds(piles);
-                        state->piles += piles;
-                        --state->remaining;
-                        if (state->remaining == 0 && !state->delivered) {
-                            state->delivered = true;
-                            ListResult<PileInfo> result;
-                            result.ok = true;
-                            result.errorCode = kCodeOk;
-                            result.items = state->piles;
-                            if (callback)
-                                callback(result);
-                        }
-                    });
-    }
-}
-
-void SocketAdminRepository::failPileFanOut(
-    const std::shared_ptr<PileFanOutState> &state, const ReplyEnvelope &env,
-    const std::function<void(const ListResult<PileInfo> &)> &callback)
-{
-    if (state->delivered)
-        return;
-    state->delivered = true;
-    ListResult<PileInfo> result;
-    result.ok = false;
-    result.errorCode = env.errorCode;
-    result.networkError = env.networkError;
-    result.error = env.message;
-    if (callback)
-        callback(result);
+                    }
+                    if (callback)
+                        callback(result);
+                });
 }
 
 // ── 动作类接口(D7 幂等纪律; 超时由 pending 统一处理: 不自动重发、不换 id) ───────

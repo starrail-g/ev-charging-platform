@@ -35,8 +35,10 @@ namespace ev {
 //      调用自动重连 + context 防悬垂(destroyed 即清 pending, 回调前 QPointer 双保险);
 //   D3 错误映射: 协议 error 信封按 payload.code 分支(errorCode), 传输层失败
 //      (连接失败/超时/断连/坏帧) → networkError=true + errorCode=0, 不冒充协议码;
-//   D5 fetchPiles 逐站聚合: admin.station.list → 每站 pile.list(station_id)(并行独立 id),
-//      任一站失败 → 整页 error(不一致的全量视图不可静默缺站);
+//   D5 fetchPiles 全量单请求: admin.pile.list(口径 A, 2026-09-07 评审对齐——
+//      全部站点含 inactive 站桩, 与 admin.statistics.get 全库桩计数同范围;
+//      替换原"admin.station.list → 逐站 pile.list"fan-out: pile.list 仅 active 站);
+//      失败 → 整页 error(不一致的全量视图不可静默缺站);
 //   D6 鉴权(Q6 冻结 2026-09-06, PR #12 = main 3d015f7): admin.login 响应发放
 //      进程内 8h 会话 token; 除 admin.login 外所有 admin.* 请求 payload 携带
 //      token; mutation(admin.station.create/admin.pile.restart/admin.user.status.set)
@@ -143,24 +145,6 @@ private:
     void applyLoginOutcome(bool ok, int errorCode, const AdminInfo &admin,
                            const QString &token);
 
-    // fetchPiles 逐站聚合内部状态(跨多次 sendRequest 闭包共享, shared_ptr 生命周期托管)
-    struct PileFanOutState {
-        bool delivered = false;          // 整页结果只派发一次
-        int remaining = 0;               // 未回 pile.list 数
-        bool failed = false;             // 任一站失败 → 整页 error
-        int errorCode = 0;
-        bool networkError = false;
-        QString error;
-        QList<PileInfo> piles;
-    };
-
-    void deliverPileFanOut(const std::shared_ptr<PileFanOutState> &state,
-                           const QList<StationInfo> &stations,
-                           QObject *context,
-                           const std::function<void(const ListResult<PileInfo> &)> &callback);
-    void failPileFanOut(const std::shared_ptr<PileFanOutState> &state,
-                        const ReplyEnvelope &env,
-                        const std::function<void(const ListResult<PileInfo> &)> &callback);
     void cachePileIds(const QList<PileInfo> &piles); // pile_code→id(restartPile wire 需 pile_id)
 
     QTcpSocket *m_socket = nullptr;
