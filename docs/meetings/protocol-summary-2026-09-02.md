@@ -194,6 +194,6 @@ Schema 新建使用 `database/schema/schema.sql`，v0.1 升级使用 `database/m
 - 冻结用户仍可登录并返回 `status=frozen`；`reservation.create`、`reservation.confirm`、`charging.start`（直充与预约）和 `wallet.recharge` 统一返回 `1101 ACCOUNT_FROZEN`。资料查询/更新、订单查询、预约取消、停止充电和结算放行。
 - 幂等请求命中 `request_records` 后优先回放原结果，再执行冻结检查；冻结只拦截未命中的新请求。
 - `charging.stop` 在同一事务内将订单置为 `pending_settlement` 并立即释放电桩为 `idle`；`charging.settle` 只负责金额计算、钱包扣款、流水、订单完成和计数，不再修改电桩状态。余额不足返回 `1202`，订单保持 `pending_settlement`，电桩保持 `idle`。
-- `admin.user.list` 的用户对象应带 `active_order_status`；原 admin.* 接口已实现，本分支新增 `admin.pile.list` 全量桩查询。
+- `admin.user.list` 的用户对象应带 `active_order_status`；原 admin.* 接口已实现，本分支新增 1 MiB-safe 游标分页的 `admin.pile.list` 全量桩查询。
 
 A 端适配器和 `docs/architecture/protocol.md` 已按本附录对齐。

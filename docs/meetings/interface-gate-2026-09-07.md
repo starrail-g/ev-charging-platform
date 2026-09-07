@@ -26,7 +26,7 @@
 | 1 | 启动 B 服务端（记录启动命令与端口） | 通过（9/6 预跑） | main `3d015f7` 本地构建（build/server-main），dev.sql 种子库，端口 45454；`smoke-live-result.txt` 逐字 |
 | 2 | C 管理端 socket 模式登录 `admin/123456` | 通过（9/6 预跑·适配层；GUI 现场复核） | `[PASS] admin.login`（token 已取，逐字见 txt） |
 | 3 | 概览 `admin.statistics.get`：7d/30d 营收、五态 counts、利用率、快照时间字段与 C 侧 socketparse 映射一致 | 通过（9/6 预跑；现场复核） | `[PASS] fetchOverview(7d+30d) | revenue7d=3050 revenue30d=3050 idle=2 fault=0 util=0.142 updated=…` |
-| 4 | 桩列表（口径 A：`admin.pile.list` 全量单请求，含停运站桩）字段：`total_charge_count/seconds`、站桩数/在线率（Q7） | 有条件通过（服务端已实现，GUI 现场复核仍待完成） | 服务端新增 `admin.pile.list` 全量查询（含 inactive 站桩），`server/tests/admin.py` 已覆盖；Socket 适配层 fetchPiles 已切单请求，闸门现场仍需 GUI 复核 |
+| 4 | 桩列表（口径 A：`admin.pile.list` 游标分页聚合，含停运站桩）字段：`total_charge_count/seconds`、站桩数/在线率（Q7） | 有条件通过（服务端已实现，GUI 现场复核仍待完成） | 服务端以 `after_id`/`next_after_id` 分页返回全量桩（含 inactive），逐帧不超过 1 MiB；`server/tests/admin.py` 与 Socket 适配测试已覆盖，闸门现场仍需 GUI 复核 |
 | 5 | 错误路径抽查：错误密码 1100、坏帧断连、超时 | 待现场执行 | 9/6 预跑未覆盖真实服务端错误路径（fake-server 测试已覆盖，sa 15/15） |
 | 6 | 双平台（Windows 开发机 + Ubuntu VM）各跑一遍 1–5 | 待现场执行 | VM 侧真实服务端冒烟尚未运行 |
 

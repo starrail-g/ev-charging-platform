@@ -11,6 +11,7 @@ from datetime import datetime, time, timedelta, timezone
 HOST = os.getenv("EV_SERVER_HOST", "127.0.0.1")
 PORT = int(os.getenv("EV_SERVER_PORT", "45454"))
 DATABASE_PATH = os.getenv("EV_DATABASE_PATH", "var/ev-charging.db")
+MAX_PAYLOAD_BYTES = 1024 * 1024
 
 
 def exchange(message):
@@ -20,6 +21,7 @@ def exchange(message):
         header = sock.recv(4)
         assert len(header) == 4
         size = struct.unpack(">I", header)[0]
+        assert 0 < size <= MAX_PAYLOAD_BYTES, size
         response = b""
         while len(response) < size:
             response += sock.recv(size - len(response))
@@ -190,16 +192,53 @@ execute_database(
     (9901, 990, "Z-01", 60.0, 120,
      "2026-09-01T00:00:00Z", "2026-09-01T00:00:00Z"),
 )
-admin_piles = exchange(admin_request("admin-piles", "admin.pile.list", {}))
+admin_piles = exchange(admin_request("admin-piles", "admin.pile.list", {
+    "after_id": 9899, "limit": 10}))
 assert admin_piles["type"] == "admin.pile.list.result", admin_piles
 admin_pile_rows = admin_piles["payload"]["piles"]
 assert_error(exchange(admin_request("admin-piles-extra-field", "admin.pile.list", {
     "administrator_id": admin_id})), 1002)
+assert_error(exchange(admin_request("admin-piles-invalid-limit", "admin.pile.list", {
+    "limit": 251})), 1002)
 assert any(row["id"] == 9901 and row["station_id"] == 990
            and row["status"] == "offline" for row in admin_pile_rows), admin_piles
 assert all(set(("id", "station_id", "pile_code", "pile_type", "power_kw",
                 "unit_price_cents_per_kwh", "status", "total_charge_count",
                 "total_charge_seconds")) <= set(row) for row in admin_pile_rows)
+
+# The wire contract is cursor-paged so normal inventory growth cannot create a
+# frame larger than kMaxPayloadBytes. Every response header is bounded in
+# exchange(), and these one-row pages must advance strictly to cover all rows.
+cursor = 0
+paged_ids = []
+while True:
+    page = exchange(admin_request(f"admin-piles-page-{cursor}", "admin.pile.list", {
+        "after_id": cursor, "limit": 1}))
+    assert page["type"] == "admin.pile.list.result", page
+    rows = page["payload"]["piles"]
+    assert len(rows) <= 1, page
+    paged_ids.extend(row["id"] for row in rows)
+    next_cursor = page["payload"].get("next_after_id")
+    if next_cursor is None:
+        break
+    assert rows and next_cursor == rows[-1]["id"] and next_cursor > cursor, page
+    cursor = next_cursor
+assert paged_ids == sorted(paged_ids)
+assert 9901 in paged_ids
+
+# The schema permits legacy pile_code values longer than one protocol frame.
+# That row cannot be represented, but it must yield a bounded error frame
+# rather than the former >1 MiB success frame that reset Qt clients.
+execute_database(
+    "INSERT OR IGNORE INTO charging_piles "
+    "(id, station_id, pile_code, pile_type, power_kw, "
+    "unit_price_cents_per_kwh, status, created_at, updated_at) "
+    "VALUES (?, ?, ?, 'fast', ?, ?, 'offline', ?, ?)",
+    (999999, 990, "X" * (MAX_PAYLOAD_BYTES + 1), 60.0, 120,
+     "2026-09-01T00:00:00Z", "2026-09-01T00:00:00Z"),
+)
+assert_error(exchange(admin_request("admin-piles-oversized-row", "admin.pile.list", {
+    "after_id": 9901, "limit": 1})), 1500)
 
 created_request = admin_request("admin-create-station", "admin.station.create", {
     "administrator_id": admin_id, "name": "API 验证站", "address": "测试路 1 号",

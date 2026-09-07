@@ -160,7 +160,7 @@ JSON `null`；历史接口只返回 `completed` 订单，按 `settled_at` 倒序
 |---|---|---|
 | `admin.login` | 管理员认证，错误码 1100 | 服务端已实现；成功返回 8 小时有效的随机 `token`，后续所有 `admin.*` 请求携带该 token |
 | `admin.statistics.get` | 营收、桩状态、利用率摘要和逐日营收序列 | 服务端已实现，支持 `7d` / `30d`，返回固定长度 `revenue_daily`，必须携带 token |
-| `admin.pile.list` | 全部站点（含 inactive）充电桩库存 | 服务端已实现；只读请求携带 token，返回 `piles` 全量明细 |
+| `admin.pile.list` | 全部站点（含 inactive）充电桩库存 | 服务端已实现；只读请求携带 token，以 `after_id`/`limit` 游标分页返回 `piles` 与可选 `next_after_id` |
 | `admin.pile.restart` | 桩重启和审计 | 服务端已实现；仅故障/离线桩恢复为空闲并按请求 ID 幂等，idle/reserved/charging 返回冲突且不打断会话 |
 | `admin.station.list/create` | 站点查询/创建 | 服务端已实现；必须携带 token，创建为超级管理员操作并按请求 ID 幂等 |
 | `admin.user.list/status.set` | 用户查询、冻结/解冻 | 服务端已实现；必须携带 token，状态修改为超级管理员操作并按请求 ID 幂等 |
@@ -177,20 +177,25 @@ Socket 任务落地）：
 | `fetchOverview` | 概览指标（7 日/30 日营收、桩五态、利用率、快照时间） | 分别请求 `admin.statistics.get` 的 `7d` 与 `30d`；聚合卡片读取 `revenue_cents`（7d 主体 + 30d 取聚合填副行），趋势图读取 `statistics.revenue_daily[*].revenue_cents` |
 | `fetchStations` | 管理端全量站点（含桩数/在线率/7 日利用率聚合视图） | `admin.station.list` |
 | `fetchUsers` | 管理端全量用户（含注册时间和活动订单状态） | `admin.user.list` |
-| `fetchPiles` | 管理端**全量**桩列表（全部站点含 inactive 站桩；桩页过滤/搜索在本端完成） | 单请求 `admin.pile.list`（口径 A，服务端已实现） |
+| `fetchPiles` | 管理端**全量**桩列表（全部站点含 inactive 站桩；桩页过滤/搜索在本端完成） | 顺序请求 `admin.pile.list` 游标页并在适配层聚合（口径 A，服务端已实现） |
 
 `fetchPiles` 的已知权衡（对应 9/3 评审 Q2 协议缺口；2026-09-07 评审口径 A 重开：
 管理员应查看**全部站点**（含 inactive）下的桩——`pile.list` 仅允许查 active 站，
 逐站 fan-out 会漏停运站桩并使概览/站页/桩页数字口径分裂）：
 
-- **契约请求**：`admin.pile.list`——读类鉴权（payload 仅 `token`，
-  无 `administrator_id`）；成功响应 `admin.pile.list.result {piles:[…]}`，行结构同
+- **契约**：`admin.pile.list`——读类鉴权（payload 有 `token`，可选
+  `after_id` 和 `limit`，无 `administrator_id`）；成功响应
+  `admin.pile.list.result {piles:[…], next_after_id?}`，行结构同
   `pile.list`（readPile 11 列）；范围 = 全部站点（含 inactive 站）的桩，与
   `admin.statistics.get` 的全库桩计数、`admin.station.list` 的站级聚合同口径。
+- **分页与帧限制**：`after_id` 为最后已消费桩 ID（首请求 `0`），`limit` 默认
+  `100`、最大 `250`；有后续页时服务端回 `next_after_id`。服务端按完整 JSON
+  envelope 的实际字节数截页，绝不发送超过协议 1 MiB 上限的成功帧；单条遗留数据
+  无法装入一帧时返回受控 `1500`，不会发送客户端必然拒绝的坏帧。
 - **失败语义**：整页 error（管理端需要一致的全量视图，不允许静默缺站），UI 进入
   error 态可重试；查询类请求无幂等限制，可原样重试。
-- **当前实现**：服务端已提供 `admin.pile.list`，只读鉴权仅需 `token`；成功响应为
-  `admin.pile.list.result {piles:[…]}`，范围覆盖全部站点（含 inactive）。
+- **当前实现**：服务端已提供 `admin.pile.list` 游标页；`SocketAdminRepository`
+  顺序聚合页面后才向 UI 返回完整列表，范围覆盖全部站点（含 inactive）。
 - **已移除**：原 D5 逐站 fan-out（`admin.station.list` → 每站 `pile.list(station_id)`
   并行聚合）及其 active 站过滤逻辑，见 `a7706b3` 后续 commit。
 
@@ -212,7 +217,7 @@ Socket 任务落地）：
 | # | 冻结输入 | 冻结结论 | 状态 |
 |---|---|---|---|
 | Q1 | login/statistics/station.list/user.list 响应字段清单（snake_case） | B 实现即样例：admin{id,username,role,status}；statistics 信封样例见下方「管理端统计响应」节；station/user 键与 schema 列直出 | 已冻结（构造点逐字段核对全命中） |
-| Q2 | 管理端全量桩列表：`admin.pile.list` 增补 or 逐站聚合 | **2026-09-07 评审口径 A**：管理员视图 = 全部站点（含 inactive）桩；`admin.pile.list` 读类仅 token，响应行结构同 `pile.list`，服务端查询全量 `charging_piles`。 | 已实现并由 `server/tests/admin.py` 覆盖 inactive 站桩 |
+| Q2 | 管理端全量桩列表：`admin.pile.list` 增补 or 逐站聚合 | **2026-09-07 评审口径 A**：管理员视图 = 全部站点（含 inactive）桩；`admin.pile.list` 读类携带 token，以 `after_id`/`limit` 游标分页，响应行结构同 `pile.list`，服务端查询全量 `charging_piles` 并遵守 1 MiB 帧上限。 | 已实现并由 `server/tests/admin.py` 覆盖分页、inactive 站桩和超大遗留行 |
 | Q3 | statistics 对象覆盖 | `revenue_daily` 固定长度（7d→7/30d→30 条）、UTC 日历日升序补零、行内键 date/revenue_cents/completed_order_count/energy_wh、聚合=序列和、updated_at 同快照；**无独立 30d 合计键** → C fetchOverview 双请求（7d 主体 + 30d 取聚合值） | 已冻结（1f157de + B 文档样例） |
 | Q4 | 利用率口径 | 最近 7 个 UTC 自然日**时间加权占用率**：分子=charging/pending_settlement/completed 订单区间∩窗口（开放单截到 updated_at），分母=桩自 max(窗口起点, created_at) 可用时长（fault/offline 不扣）；站均=简单平均、与 range 无关；站行带 utilization+utilization_range="7d"。语义与演示 0.42 占位不同（socketparse 注释已同步） | 已冻结（11702ae/4eb0bad） |
 | Q5 | range 仅 `7d`/`30d`（A-02 裁剪） | B 仅实现 7d/30d、无 today/month/all；Web 大屏搁置，A-02 收敛为 Qt 概览卡（7d 主卡 + 30d 副行） | 已确认（实现即口径） |

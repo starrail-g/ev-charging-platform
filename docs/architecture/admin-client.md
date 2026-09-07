@@ -59,7 +59,8 @@
 
 - "桩重启""冻结/解冻"为**服务端确认后的状态模拟**：Mock 实现返回固定结果；不描述为真实硬件控制。
 - `SocketAdminRepository` 已接入真实管理员接口；默认仍可通过工厂切换到 Mock 演示。其
-  `fetchPiles` 使用 `admin.pile.list` 单请求获取全部站点（含 inactive）桩，失败时整页报错。
+  `fetchPiles` 使用 `admin.pile.list` 的 `next_after_id` 游标页顺序聚合全部站点（含 inactive）桩；
+  每个 wire 响应保持在协议 1 MiB 上限内，任一页失败时整页报错。
 
 ## 6. 测试
 

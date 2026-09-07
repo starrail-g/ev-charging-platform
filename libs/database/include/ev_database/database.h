@@ -62,8 +62,10 @@ public:
                        QString *error = nullptr, ErrorKind *kind = nullptr);
     bool listAdminStations(const QString &queryText, QJsonArray *stations,
                            QString *error = nullptr, ErrorKind *kind = nullptr);
-    // Lists every charging pile, including piles belonging to inactive stations.
-    bool listAdminPiles(QJsonArray *piles, QString *error = nullptr,
+    // Lists one ID-cursor page of piles, including piles at inactive stations.
+    // hasMore is true when a later page exists after the returned rows.
+    bool listAdminPiles(qint64 afterId, qint64 limit, QJsonArray *piles,
+                        bool *hasMore, QString *error = nullptr,
                         ErrorKind *kind = nullptr);
     bool createStation(const QString &requestId, qint64 administratorId, const QString &name,
                        const QString &address, double latitude, double longitude,

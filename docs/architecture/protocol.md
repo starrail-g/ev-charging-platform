@@ -23,8 +23,10 @@ are implemented by the server on this branch and consumed by the Qt adapter.
 - A frame is a four-byte unsigned big-endian payload length followed by the
   payload. The length does not include its four-byte prefix.
 - Payload: UTF-8 JSON object, max 1 MiB. Zero-length and over-limit frames
-  are invalid; the server sends an `error` where possible and closes only
-  that connection.
+  are invalid; senders must not emit them. The server verifies every success
+  envelope before writing it and returns a bounded `1500` error if a response
+  cannot fit. The server sends an `error` where possible and closes only that
+  connection for malformed inbound frames.
 - If a TCP read contains valid frames followed by a malformed frame, the
   decoder returns the valid messages together with the error. The server
   dispatches those messages before sending the error and closing the session.
@@ -116,7 +118,7 @@ The following names and payloads are reserved for v1. Result types append
 | `admin.login` | `username`, `password` | `admin.login.result`: `admin`, short-lived `token`, `expires_in_seconds` |
 | `admin.statistics.get` | `token`, `range` (`7d` or `30d`) | `admin.statistics.get.result`: `statistics`（含固定长度 `revenue_daily`） |
 | `admin.station.list` | `token`, optional `query` | `admin.station.list.result`: `stations` |
-| `admin.pile.list` | `token` | `admin.pile.list.result`: `piles`（全部站点，包括 inactive 站点） |
+| `admin.pile.list` | `token`, optional `after_id` (non-negative integer, default `0`), optional `limit` (`1..250`, default `100`) | `admin.pile.list.result`: `piles`（全部站点，包括 inactive 站点）, optional `next_after_id` |
 | `admin.station.create` | `token`, `administrator_id`, `name`, `address`, `latitude`, `longitude`, `pile_count` | `admin.station.create.result`: `station` |
 | `admin.pile.restart` | `token`, `administrator_id`, `pile_id` | `admin.pile.restart.result`: `pile` |
 | `admin.user.list` | `token`, optional `phone_query` | `admin.user.list.result`: `users` (each user includes `active_order_status`) |
