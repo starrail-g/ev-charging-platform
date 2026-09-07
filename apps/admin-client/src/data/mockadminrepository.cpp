@@ -215,12 +215,8 @@ ev::ActionResult MockAdminRepository::doSetUserStatus(int userId, const QString 
     for (ev::UserInfo &user : m_userRows) {
         if (user.id != userId)
             continue;
-        if (user.status == status) {
-            // 重复提交相同状态：状态转换不允许（1201 CONFLICT）
-            result.errorCode = kCodeConflict;
-            result.message = QStringLiteral("用户 %1 已处于该状态").arg(user.phone);
-            return result;
-        }
+        // 与 main 服务端一致（Database::setUserStatus 直接 UPDATE、无同态拦截）：
+        // 同状态重复设置也幂等成功，不返回 1201
         user.status = status;
         result.ok = true;
         result.errorCode = kCodeOk;

@@ -20,8 +20,8 @@ class QTableWidget;
 //     attention = 故障 + 离线）
 //   + 异常聚焦入口 focusPile()（清除筛选 → 定位行 → 选中并确保可见）
 //   + 远程重启入口（C-S1-005，第一阶段为服务端确认后的状态模拟）：
-//     "重启选中桩"按钮 → AdminRepository::restartPile（仅故障/离线桩允许，
-//     状态冲突由数据层按协议码 1201 返回并在提示行展示，不冒充真实服务端）。
+//     "重启选中桩"按钮仅选中 fault/offline 桩时可用（与数据层规则同口径，
+//     idle/reserved/charging 不展示可执行外观）；数据层 1201 仍作兜底防御）。
 // 数据一律经 AdminRepository 异步链路（fetchPiles + fetchStations 取站点名），
 // 不直接触达数据源；refresh 的演示模式参数只驱动 Mock 特有接口
 // （同 OverviewPage 约定，9/6 Socket 接入后由数据层自动驱动）。
@@ -56,7 +56,7 @@ private:
     void showHint(const QString &text);
     void clearHint();
     void rebuildRows();
-    // 选中行变化 → 重启按钮可用态（无选中不可用）
+    // 选中行变化 → 重启按钮可用态（仅 fault/offline 桩可用；无选中不可用）
     void onPileSelectionChanged(int currentRow);
     // "重启选中桩"：经 Repository 异步动作，成功后提示 + 重新拉取
     void onRestartClicked();

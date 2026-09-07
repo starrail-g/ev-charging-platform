@@ -92,7 +92,7 @@ public:
                              std::function<void(const ActionResult &)> callback) = 0;
 
     // 异步冻结/解冻用户（C-S1-007；第一阶段为模拟确认）：status ∈ active|frozen；
-    // 与当前状态相同返回 1201 CONFLICT，用户不存在返回 1200。
+    // 同状态重复设置幂等成功（与 main 服务端语义一致），用户不存在返回 1200。
     virtual void setUserStatus(int userId,
                                const QString &status,
                                QObject *context,

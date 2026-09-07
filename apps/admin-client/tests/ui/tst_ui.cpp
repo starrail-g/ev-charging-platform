@@ -49,7 +49,7 @@ private slots:
     void pileRowsExposeCumulativeMetrics();
     void stationAndUserPagesRenderMockRows();
     void mockActionsEnforcePileRestartStateRules();
-    void mockSetUserStatusFlipsStateAndReportsConflicts();
+    void mockSetUserStatusFlipsStateAndIsIdempotent();
     void pilePageRestartButtonAppliesSimulatedRestart();
     void userPageStatusButtonFlipsSelectedUser();
 };
@@ -409,10 +409,11 @@ void TestUi::mockActionsEnforcePileRestartStateRules()
     QCOMPARE(restartMissing.errorCode, 1200);
 }
 
-void TestUi::mockSetUserStatusFlipsStateAndReportsConflicts()
+void TestUi::mockSetUserStatusFlipsStateAndIsIdempotent()
 {
     // C-S1-007 数据层规则：active↔frozen 翻转成功且快照持久；
-    // 重复提交相同状态 → 1201；非法状态值 → 1002；用户不存在 → 1200。
+    // 重复提交相同状态 → 幂等成功（与 main 服务端一致，无 1201）；
+    // 非法状态值 → 1002；用户不存在 → 1200。
     MockAdminRepository repository;
 
     // 同步等待异步回调（lambda 内不使用 QTRY 宏：失败分支裸 return 与
@@ -463,10 +464,11 @@ void TestUi::mockSetUserStatusFlipsStateAndReportsConflicts()
     QCOMPARE(freeze.errorCode, 0);
     QCOMPARE(userStatusSync(1), QStringLiteral("frozen"));
 
-    // 重复冻结同一用户 → 1201 CONFLICT
+    // 重复冻结同一用户 → 幂等成功（与 main 服务端同态设置直接成功一致）
     const ev::ActionResult refreeze = setStatusSync(1, QStringLiteral("frozen"));
-    QVERIFY(!refreeze.ok);
-    QCOMPARE(refreeze.errorCode, 1201);
+    QVERIFY2(refreeze.ok, qPrintable(refreeze.message));
+    QCOMPARE(refreeze.errorCode, 0);
+    QCOMPARE(userStatusSync(1), QStringLiteral("frozen"));
 
     // 解冻成功（frozen → active）
     const ev::ActionResult unfreeze = setStatusSync(1, QStringLiteral("active"));
@@ -486,8 +488,10 @@ void TestUi::mockSetUserStatusFlipsStateAndReportsConflicts()
 
 void TestUi::pilePageRestartButtonAppliesSimulatedRestart()
 {
-    // UI 集成：选中故障桩 → "重启选中桩" → 成功后提示行可观察 + 列表刷新；
-    // 选中充电中桩 → 冲突提示（不冒充静默成功）。
+    // UI 集成：选中故障桩 → "重启选中桩" → 成功后提示行可观察 + 列表刷新，
+    // 桩转 idle 后按钮自动禁用；选中充电中桩 → 按钮直接禁用
+    // （UI 不展示业务上不可执行的操作；数据层 1201 由
+    // mockActionsEnforcePileRestartStateRules 单独覆盖）。
     MockAdminRepository repository;
     PilePage page(&repository);
     page.refresh(ev::mockdata::DataMode::Normal);
@@ -528,13 +532,14 @@ void TestUi::pilePageRestartButtonAppliesSimulatedRestart()
         QVERIFY2(idleAfterRestart, "重启后桩状态应为 idle");
     }
 
-    // 充电中桩 → 冲突提示（1201），按钮恢复可用
+    // 重启成功后桩已转 idle（上面数据层校验）：列表刷新后按钮自动禁用，
+    // 不残留"可点但必被 1201 拒绝"的窗口
+    QVERIFY(!button->isEnabled());
+
+    // 充电中桩 → 按钮禁用：UI 不展示业务上不可执行的操作
     page.focusPile(QStringLiteral("P-101-A"));
     QTRY_COMPARE_WITH_TIMEOUT(page.currentPileCode(), QStringLiteral("P-101-A"), 1000);
-    QTest::mouseClick(button, Qt::LeftButton);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        hint->text().contains(QStringLiteral("仅故障/离线桩可重启")), 3000);
-    QVERIFY(button->isEnabled());
+    QVERIFY(!button->isEnabled());
 }
 
 void TestUi::userPageStatusButtonFlipsSelectedUser()
