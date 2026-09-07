@@ -4,7 +4,9 @@
 #include <QHash>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QItemSelectionModel>
 #include <QLabel>
+#include <QPushButton>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -67,6 +69,13 @@ PilePage::PilePage(ev::AdminRepository *repository, QWidget *parent)
     toolbar->setContentsMargins(0, 0, 0, 0);
     toolbar->addWidget(filterLabel);
     toolbar->addWidget(m_filterCombo);
+    // C-S1-005：远程重启（第一阶段 Mock 模拟；选中 fault/offline 桩才可用，
+    // idle/reserved/charging 桩按钮禁用——与数据层/服务端业务规则同口径）
+    m_restartButton = new QPushButton(QStringLiteral("重启选中桩"), this);
+    m_restartButton->setObjectName(QStringLiteral("pileRestartButton"));
+    m_restartButton->setEnabled(false);
+    toolbar->addSpacing(12);
+    toolbar->addWidget(m_restartButton);
     toolbar->addStretch();
 
     // ---- 桩列表（A-04：编号/站点/类型/功率/单价/状态/累计次数/累计时长）----
@@ -103,6 +112,13 @@ PilePage::PilePage(ev::AdminRepository *repository, QWidget *parent)
 
     connect(m_filterCombo, &QComboBox::currentIndexChanged,
             this, &PilePage::onFilterIndexChanged);
+    // QTableWidget 无 currentRowChanged 信号：走 selectionModel 的 currentRowChanged
+    connect(m_table->selectionModel(), &QItemSelectionModel::currentRowChanged,
+            this, [this](const QModelIndex &current, const QModelIndex &) {
+                onPileSelectionChanged(current.row());
+            });
+    connect(m_restartButton, &QPushButton::clicked,
+            this, &PilePage::onRestartClicked);
 }
 
 void PilePage::refresh(ev::mockdata::DataMode mode)
@@ -148,6 +164,8 @@ void PilePage::rebuildRows()
     if (!m_pilesOk || !m_stationsOk) {
         const QString detail = m_pilesOk ? m_stationsError : m_pilesError;
         m_table->setRowCount(0);
+        m_restartButton->setEnabled(false); // 数据不可用：无操作对象
+        m_actionPendingHint.clear();
         showHint(QStringLiteral("接口错误：%1").arg(detail));
         return;
     }
@@ -188,6 +206,11 @@ void PilePage::rebuildRows()
 
     if (m_piles.isEmpty()) {
         showHint(QStringLiteral("暂无充电桩数据"));
+    } else if (!m_actionPendingHint.isEmpty()) {
+        // 动作成功提示展示一次（如"桩 P-101-C 已重启…"），随后清除，
+        // 下一次普通刷新/切页回到无提示状态
+        showHint(m_actionPendingHint);
+        m_actionPendingHint.clear();
     } else {
         clearHint();
     }
@@ -199,6 +222,11 @@ void PilePage::rebuildRows()
         m_pendingFocus.clear();
         focusPile(pending);
     }
+
+    // 表格重建后 currentRow 可能保留（selectRow 同值不触发 currentRowChanged）：
+    // 按当前选中恢复按钮可用态（重启成功后桩已转 idle → 按钮自动禁用，
+    // 不残留"可点但必被数据层拒绝"的窗口）
+    onPileSelectionChanged(m_table->currentRow());
 }
 
 void PilePage::setStatusFilter(const QString &filter)
@@ -280,6 +308,40 @@ QString PilePage::currentPileCode() const
         return QString();
     QTableWidgetItem *codeItem = m_table->item(row, 0);
     return codeItem ? codeItem->text() : QString();
+}
+
+void PilePage::onPileSelectionChanged(int currentRow)
+{
+    // 与数据层/服务端同口径：仅 fault/offline 桩可重启；其余状态选中时
+    // 按钮禁用，不展示业务上不可执行的操作（数据层 1201 仍作兜底防御）
+    const bool canRestart = currentRow >= 0 && currentRow < m_piles.size()
+        && (m_piles.at(currentRow).status == ev::PileStatus::Fault
+            || m_piles.at(currentRow).status == ev::PileStatus::Offline);
+    m_restartButton->setEnabled(canRestart);
+}
+
+void PilePage::onRestartClicked()
+{
+    const QString pileCode = currentPileCode();
+    if (pileCode.isEmpty())
+        return;
+
+    // 动作在途：禁用按钮防连点；结果经回调恢复（成功 → 提示 + 重新拉取，
+    // 失败/冲突 → 数据层 message 直接展示，列表保持现状可重试）
+    m_restartButton->setEnabled(false);
+    m_repository->restartPile(pileCode, this,
+                              [this](const ev::ActionResult &result) {
+                                  if (result.ok) {
+                                      // 成功不恢复按钮：refresh 后由 rebuildRows
+                                      // 按新状态（桩已转 idle）校正为禁用
+                                      m_actionPendingHint = result.message;
+                                      refresh();
+                                  } else {
+                                      // 失败/冲突：桩状态未变，恢复可用可重试
+                                      m_restartButton->setEnabled(true);
+                                      showHint(result.message);
+                                  }
+                              });
 }
 
 void PilePage::showHint(const QString &text)

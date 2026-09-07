@@ -13,9 +13,9 @@
 | C-S1-002 | 主窗口导航：登录页↔业务页切换，业务页未登录不可进入 | `apps/admin-client/src/app/mainwindow.*` | C | 无 | 9/1 | 启动冒烟测试通过（9/1 骨架 + 9/2 防回退断言，4 场景绿） | 已确认 |
 | C-S1-003 | 概览页：营收摘要、桩状态摘要、站点利用率摘要、更新时间 | `apps/admin-client/src/pages/overviewpage.*` | C | B：统计字段口径 | 9/3 | Mock 数据三态显示（正常/空/失败） | 已确认 |
 | C-S1-004 | 桩列表页：状态查询、筛选、刷新 | `apps/admin-client/src/pages/pilepage.*` | C | B：桩状态枚举 | 9/4 | `tst_mockrepository` 通过 | 已确认 |
-| C-S1-005 | 桩远程重启（第一阶段为服务端确认后的状态模拟） | `apps/admin-client/src/pages/pilepage.*` | C | B：操作接口 | 9/5 | 状态冲突测试通过 | 已确认 |
-| C-S1-006 | 站点查询和管理页 | `apps/admin-client/src/pages/stationpage.*` | C | B：站点字段 | 9/4 | Mock 查询演示 | 已确认 |
-| C-S1-007 | 用户查询和冻结/解冻（模拟确认） | `apps/admin-client/src/pages/userpage.*` | C | B：用户字段 | 9/5 | 冲突测试通过 | 已确认 |
+| C-S1-005 | 桩远程重启（第一阶段为服务端确认后的状态模拟） | `apps/admin-client/src/pages/pilepage.*` | C | B：操作接口 | 9/5 | 9/4 提前实现：`AdminRepository::restartPile`（仅 fault/offline 可重启，其余 1201 CONFLICT）+ Mock 状态模拟（重启后转 idle）+ 桩页"重启选中桩"按钮 + tst_ui 锁定（mockActionsEnforcePileRestartStateRules / pilePageRestartButtonAppliesSimulatedRestart） | 已确认 |
+| C-S1-006 | 站点查询和管理页 | `apps/admin-client/src/pages/stationpage.*` | C | B：站点字段 | 9/4 | Mock 查询演示（9/4 表格断言：5 列、在线率 66.7%） | 已确认 |
+| C-S1-007 | 用户查询和冻结/解冻（模拟确认） | `apps/admin-client/src/pages/userpage.*` | C | B：用户字段 | 9/5 | 9/4 提前实现：`AdminRepository::setUserStatus`（active↔frozen 翻转；相同状态 1201；非法 1002；不存在 1200）+ 用户页冻结/解冻按钮（文案随状态切换）+ 模拟边界常驻提示 + tst_ui 锁定（mockSetUserStatusFlipsStateAndReportsConflicts / userPageStatusButtonFlipsSelectedUser） | 已确认 |
 | C-S1-008 | 加载中、空数据、接口失败、无权限等可见状态 | 全部页面 + `src/widgets/statestack.*` | C | 无 | 9/2 组件初版 / 9/3 页面接入 | 四态组件已建并接入概览页（9/2）；三态手工验证 + 截图 | 已确认 |
 | C-S1-009 | Repository 抽象 + Mock/Socket 双实现，页面不建 Socket 不写 SQL | `apps/admin-client/src/data/*` | C | 无 | 9/2 抽象+Mock / 9/6 Socket | `AdminRepository` 抽象 + `MockAdminRepository` 已建（9/2），`MockAdminRepository` 对接登录 | 已确认 |
 | C-S1-010 | 大屏近 7 日营收趋势图 | `dashboard/index.html` + `js/app.js` | C | B：营收统计字段 | 9/3 | 本地 HTTP 200 + 图表有数据 | 已确认 |
@@ -28,11 +28,11 @@
 | C-S1-017 | Qt Test：登录流程测试（成功/密码错误/服务不可用/空输入） | `apps/admin-client/tests/loginflow/tst_loginflow.cpp` | C | 无 | 9/2 | 测试通过（9/2 已实现：4 场景全部通过，Totals 6 passed；空输入含 Repository 未调用断言） | 已确认 |
 | C-S1-018 | Qt Test：Mock Repository 测试 | `apps/admin-client/tests/tst_mockrepository.cpp` | C | 无 | 9/3 | 测试通过 | 已确认 |
 | C-S1-019 | Qt Test：状态映射测试（未知状态不崩溃） | `apps/admin-client/tests/tst_statusmapping.cpp` | C | B：状态枚举 | 9/3 | 测试通过（`parsePileStatus` 未知值返回 Unknown 已设计） | 已确认 |
-| C-S1-020 | 接口闸门记录（9/7 18:00） | `docs/meetings/interface-gate-2026-09-07.md` | C | B：三接口可运行 | 9/7 | 闸门结果文档 | 待外部确认（B） |
-| C-S1-021 | 冒烟与联调步骤文档 | `tests/integration/role-c-smoke-test.md` | C | 无 | 9/8 | 文档 + 实际执行 | 已确认 |
-| C-S1-022 | 回归结果记录 | `tests/integration/role-c-regression.md` | C | 无 | 9/9 | 文档 | 已确认 |
-| C-S1-023 | 缺陷日志（编号 C-S1-xxx 起） | `docs/release/defect-log.md` | C | 无 | 9/2 首条登记 | 每缺陷一行记录（9/2 已登记 C-S1-001/002，责任人 B） | 已确认 |
-| C-S1-024 | 第一阶段发布清单 | `docs/release/stage1-checklist.md` | C | 无 | 9/9 | 逐项打勾 | 已确认 |
+| C-S1-020 | 接口闸门记录（9/7 18:00） | `docs/meetings/interface-gate-2026-09-07.md` | C | B：三接口可运行 | 9/7 | 文档骨架已建（9/4：闸门定义/检查清单/降级流程）；结果 9/7 现场填写 | 待外部确认（B） |
+| C-S1-021 | 冒烟与联调步骤文档 | `tests/integration/role-c-smoke-test.md` | C | 无 | 9/8 | 文档已建（9/4 骨架含命令与执行记录表）；9/8 实际执行后填结果 | 已确认 |
+| C-S1-022 | 回归结果记录 | `tests/integration/role-c-regression.md` | C | 无 | 9/9 | 文档已建（9/4 骨架含基线 24/6/7 + node 35）；9/9 全量执行后填结果 | 已确认 |
+| C-S1-023 | 缺陷日志（编号 C-S1-xxx 起） | `docs/release/defect-log.md` | C | 无 | 9/2 首条登记 | 每缺陷一行记录（C-S1-001/002 已 2026-09-04 复验通过并更新状态） | 已确认 |
+| C-S1-024 | 第一阶段发布清单 | `docs/release/stage1-checklist.md` | C | 无 | 9/9 | 清单已建（9/4：构建/测试/材料/安全复核五节）；9/9-10 逐项打勾 | 已确认 |
 | C-S1-025 | 干净 Ubuntu 环境构建+启动验证 | README 验证命令 | C | 虚拟机环境 | 9/8 | 构建日志记录 | 已确认 |
 | C-S1-026 | 需求矩阵（xlsx） | 课堂派模板（未到） | C | 模板 | 9/10 | 模板套用后上传 | 待外部确认（课堂派） |
 | C-S1-027 | 概要设计说明书（docx） | 课堂派模板（未到） | C | 模板 | 9/10 | 模板套用后上传 | 待外部确认（课堂派） |

@@ -1,5 +1,6 @@
 #include <QtTest>
 
+#include <QElapsedTimer>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -47,6 +48,10 @@ private slots:
     void pilePageFiltersByAttentionStateAndCode();
     void pileRowsExposeCumulativeMetrics();
     void stationAndUserPagesRenderMockRows();
+    void mockActionsEnforcePileRestartStateRules();
+    void mockSetUserStatusFlipsStateAndIsIdempotent();
+    void pilePageRestartButtonAppliesSimulatedRestart();
+    void userPageStatusButtonFlipsSelectedUser();
 };
 
 void TestUi::statusTagsExposeProtocolState()
@@ -328,6 +333,248 @@ void TestUi::stationAndUserPagesRenderMockRows()
     QCOMPARE(userTable->horizontalHeaderItem(4)->text(), QStringLiteral("注册时间 (UTC)"));
     QCOMPARE(userTable->item(0, 4)->text(), QStringLiteral("2026-08-15T03:24:00Z"));
     QCOMPARE(userTable->item(1, 4)->text(), QStringLiteral("2026-08-02T11:40:00Z"));
+}
+
+void TestUi::mockActionsEnforcePileRestartStateRules()
+{
+    // C-S1-005 数据层规则：仅 fault/offline 可重启（成功 → 桩转 idle 且快照
+    // 持久）；运行/空闲/预约 → 1201 CONFLICT 且状态不变；未知桩 → 1200。
+    MockAdminRepository repository;
+
+    // 同步等待异步回调（lambda 内不使用 QTRY 宏：其失败分支含裸 return，
+    // 与有返回值的 lambda 不兼容；改事件循环轮询 + 外层断言）
+    auto waitDone = [](const bool &done) {
+        QElapsedTimer timer;
+        timer.start();
+        while (!done && timer.elapsed() < 3000)
+            QTest::qWait(20);
+    };
+
+    auto restartPileSync = [&repository, &waitDone](const QString &pileCode) {
+        QObject context;
+        bool done = false;
+        ev::ActionResult out;
+        repository.restartPile(
+            pileCode, &context, [&](const ev::ActionResult &result) {
+                out = result;
+                done = true;
+            });
+        waitDone(done);
+        return out;
+    };
+    auto pileStatusSync = [&repository, &waitDone](const QString &pileCode) {
+        QObject context;
+        bool done = false;
+        ev::PileStatus out = ev::PileStatus::Unknown;
+        repository.fetchPiles(
+            &context, [&](const ev::ListResult<ev::PileInfo> &result) {
+                for (const ev::PileInfo &pile : result.items) {
+                    if (pile.pileCode == pileCode) {
+                        out = pile.status;
+                        break;
+                    }
+                }
+                done = true;
+            });
+        waitDone(done);
+        return out;
+    };
+
+    // 初始快照：P-101-C 故障、P-202-C 离线（mockdataset 同口径）
+    QCOMPARE(pileStatusSync(QStringLiteral("P-101-C")), ev::PileStatus::Fault);
+
+    // 故障桩重启成功 → idle（模拟自检通过），快照持久
+    const ev::ActionResult restartFault = restartPileSync(QStringLiteral("P-101-C"));
+    QVERIFY2(restartFault.ok, qPrintable(restartFault.message));
+    QCOMPARE(restartFault.errorCode, 0);
+    QCOMPARE(pileStatusSync(QStringLiteral("P-101-C")), ev::PileStatus::Idle);
+
+    // 离线桩同样允许
+    QVERIFY(restartPileSync(QStringLiteral("P-202-C")).ok);
+    QCOMPARE(pileStatusSync(QStringLiteral("P-202-C")), ev::PileStatus::Idle);
+
+    // 充电中桩重启 → 1201 CONFLICT，状态不变
+    const ev::ActionResult restartCharging = restartPileSync(QStringLiteral("P-101-A"));
+    QVERIFY(!restartCharging.ok);
+    QCOMPARE(restartCharging.errorCode, 1201);
+    QCOMPARE(pileStatusSync(QStringLiteral("P-101-A")), ev::PileStatus::Charging);
+
+    // 空闲桩同样冲突（重启动作必须可观察、可拒绝，不静默）
+    QVERIFY(!restartPileSync(QStringLiteral("P-101-B")).ok);
+    QCOMPARE(restartPileSync(QStringLiteral("P-101-B")).errorCode, 1201);
+
+    // 不存在的桩 → 1200 NOT_FOUND
+    const ev::ActionResult restartMissing = restartPileSync(QStringLiteral("P-XXX"));
+    QVERIFY(!restartMissing.ok);
+    QCOMPARE(restartMissing.errorCode, 1200);
+}
+
+void TestUi::mockSetUserStatusFlipsStateAndIsIdempotent()
+{
+    // C-S1-007 数据层规则：active↔frozen 翻转成功且快照持久；
+    // 重复提交相同状态 → 幂等成功（与 main 服务端一致，无 1201）；
+    // 非法状态值 → 1002；用户不存在 → 1200。
+    MockAdminRepository repository;
+
+    // 同步等待异步回调（lambda 内不使用 QTRY 宏：失败分支裸 return 与
+    // 有返回值 lambda 不兼容；事件循环轮询 + 外层断言）
+    auto waitDone = [](const bool &done) {
+        QElapsedTimer timer;
+        timer.start();
+        while (!done && timer.elapsed() < 3000)
+            QTest::qWait(20);
+    };
+
+    auto setStatusSync = [&repository, &waitDone](int userId, const QString &status) {
+        QObject context;
+        bool done = false;
+        ev::ActionResult out;
+        repository.setUserStatus(
+            userId, status, &context, [&](const ev::ActionResult &result) {
+                out = result;
+                done = true;
+            });
+        waitDone(done);
+        return out;
+    };
+    auto userStatusSync = [&repository, &waitDone](int userId) {
+        QObject context;
+        bool done = false;
+        QString out;
+        repository.fetchUsers(
+            &context, [&](const ev::ListResult<ev::UserInfo> &result) {
+                for (const ev::UserInfo &user : result.items) {
+                    if (user.id == userId) {
+                        out = user.status;
+                        break;
+                    }
+                }
+                done = true;
+            });
+        waitDone(done);
+        return out;
+    };
+
+    // 初始：用户 1 active（mockdataset 同口径）
+    QCOMPARE(userStatusSync(1), QStringLiteral("active"));
+
+    // 冻结成功 → 快照持久
+    const ev::ActionResult freeze = setStatusSync(1, QStringLiteral("frozen"));
+    QVERIFY2(freeze.ok, qPrintable(freeze.message));
+    QCOMPARE(freeze.errorCode, 0);
+    QCOMPARE(userStatusSync(1), QStringLiteral("frozen"));
+
+    // 重复冻结同一用户 → 幂等成功（与 main 服务端同态设置直接成功一致）
+    const ev::ActionResult refreeze = setStatusSync(1, QStringLiteral("frozen"));
+    QVERIFY2(refreeze.ok, qPrintable(refreeze.message));
+    QCOMPARE(refreeze.errorCode, 0);
+    QCOMPARE(userStatusSync(1), QStringLiteral("frozen"));
+
+    // 解冻成功（frozen → active）
+    const ev::ActionResult unfreeze = setStatusSync(1, QStringLiteral("active"));
+    QVERIFY2(unfreeze.ok, qPrintable(unfreeze.message));
+    QCOMPARE(userStatusSync(1), QStringLiteral("active"));
+
+    // 非法状态值 → 1002 INVALID_REQUEST
+    const ev::ActionResult bogus = setStatusSync(1, QStringLiteral("banned"));
+    QVERIFY(!bogus.ok);
+    QCOMPARE(bogus.errorCode, 1002);
+
+    // 用户不存在 → 1200 NOT_FOUND
+    const ev::ActionResult missing = setStatusSync(99, QStringLiteral("frozen"));
+    QVERIFY(!missing.ok);
+    QCOMPARE(missing.errorCode, 1200);
+}
+
+void TestUi::pilePageRestartButtonAppliesSimulatedRestart()
+{
+    // UI 集成：选中故障桩 → "重启选中桩" → 成功后提示行可观察 + 列表刷新，
+    // 桩转 idle 后按钮自动禁用；选中充电中桩 → 按钮直接禁用
+    // （UI 不展示业务上不可执行的操作；数据层 1201 由
+    // mockActionsEnforcePileRestartStateRules 单独覆盖）。
+    MockAdminRepository repository;
+    PilePage page(&repository);
+    page.refresh(ev::mockdata::DataMode::Normal);
+    QTRY_COMPARE_WITH_TIMEOUT(page.visibleRowCount(), 6, 3000);
+
+    auto *button = page.findChild<QPushButton *>(QStringLiteral("pileRestartButton"));
+    auto *hint = page.findChild<QLabel *>(QStringLiteral("pilePageHint"));
+    QVERIFY(button);
+    QVERIFY(hint);
+    QVERIFY(!button->isEnabled()); // 无选中行不可用
+
+    // 选中故障桩 P-101-C（focusPile 清除筛选并选中）
+    page.focusPile(QStringLiteral("P-101-C"));
+    QTRY_COMPARE_WITH_TIMEOUT(page.currentPileCode(), QStringLiteral("P-101-C"), 1000);
+    QVERIFY(button->isEnabled());
+
+    QTest::mouseClick(button, Qt::LeftButton);
+    // 动作(500ms) + 自动刷新(500ms) 后提示行展示成功结果
+    QTRY_VERIFY_WITH_TIMEOUT(hint->text().contains(QStringLiteral("已重启")), 3000);
+
+    // 数据层快照已持久：再次拉取该桩为 idle
+    {
+        QObject context;
+        bool done = false;
+        bool idleAfterRestart = false;
+        repository.fetchPiles(
+            &context, [&](const ev::ListResult<ev::PileInfo> &result) {
+                for (const ev::PileInfo &pile : result.items) {
+                    if (pile.pileCode == QStringLiteral("P-101-C"))
+                        idleAfterRestart = pile.status == ev::PileStatus::Idle;
+                }
+                done = true;
+            });
+        QElapsedTimer timer;
+        timer.start();
+        while (!done && timer.elapsed() < 3000)
+            QTest::qWait(20);
+        QVERIFY2(idleAfterRestart, "重启后桩状态应为 idle");
+    }
+
+    // 重启成功后桩已转 idle（上面数据层校验）：列表刷新后按钮自动禁用，
+    // 不残留"可点但必被 1201 拒绝"的窗口
+    QVERIFY(!button->isEnabled());
+
+    // 充电中桩 → 按钮禁用：UI 不展示业务上不可执行的操作
+    page.focusPile(QStringLiteral("P-101-A"));
+    QTRY_COMPARE_WITH_TIMEOUT(page.currentPileCode(), QStringLiteral("P-101-A"), 1000);
+    QVERIFY(!button->isEnabled());
+}
+
+void TestUi::userPageStatusButtonFlipsSelectedUser()
+{
+    // UI 集成：选中用户 → 按钮文案随状态切换（正常→冻结 / 冻结→解冻），
+    // 点击后列表刷新展示新状态，模拟操作可观察、不冒充真实服务端。
+    MockAdminRepository repository;
+    UserPage page(&repository);
+    page.refresh(ev::mockdata::DataMode::Normal);
+    QTRY_COMPARE_WITH_TIMEOUT(page.visibleRowCount(), 3, 3000);
+
+    auto *button = page.findChild<QPushButton *>(QStringLiteral("userStatusButton"));
+    auto *table = page.findChild<QTableWidget *>(QStringLiteral("userTable"));
+    QVERIFY(button);
+    QVERIFY(table);
+    QVERIFY(!button->isEnabled()); // 无选中行不可用
+
+    // 用户 1（active）→ 冻结
+    table->selectRow(0);
+    QTRY_VERIFY_WITH_TIMEOUT(button->isEnabled(), 1000);
+    QCOMPARE(button->text(), QStringLiteral("冻结选中用户"));
+    QTest::mouseClick(button, Qt::LeftButton);
+    QTRY_COMPARE_WITH_TIMEOUT(table->item(0, 3)->text(), QStringLiteral("冻结"), 3000);
+
+    // 重选后文案切到"解冻" → 解冻回正常
+    table->selectRow(0);
+    QTRY_VERIFY_WITH_TIMEOUT(button->isEnabled(), 1000);
+    QCOMPARE(button->text(), QStringLiteral("解冻选中用户"));
+    QTest::mouseClick(button, Qt::LeftButton);
+    QTRY_COMPARE_WITH_TIMEOUT(table->item(0, 3)->text(), QStringLiteral("正常"), 3000);
+
+    // 预置冻结用户 2 → 按钮直接是"解冻"
+    table->selectRow(1);
+    QTRY_VERIFY_WITH_TIMEOUT(button->isEnabled(), 1000);
+    QCOMPARE(button->text(), QStringLiteral("解冻选中用户"));
 }
 
 QTEST_MAIN(TestUi)

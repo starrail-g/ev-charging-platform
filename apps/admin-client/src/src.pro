@@ -1,9 +1,13 @@
-QT += core gui widgets
+QT += core gui widgets network
 
 TARGET = admin-client
 TEMPLATE = app
 CONFIG += c++17
 CONFIG -= app_bundle
+
+# D1 协议栈复用: libs/protocol(Message/encodeFrame/FrameDecoder), 不复制
+# (相对基准 = 仓库根, 与下方 UI_TOKEN_SCRIPT 的 $$PWD/../../../ 一致)
+include(../../../libs/protocol/protocol.pri)
 
 win32:UI_TOKEN_PYTHON = python
 unix:UI_TOKEN_PYTHON = python3
@@ -20,6 +24,8 @@ SOURCES += \
     pages/userpage.cpp \
     data/mockadminrepository.cpp \
     data/mockdataset.cpp \
+    data/socketadminrepository.cpp \
+    data/socketparse.cpp \
     models/adminmodels.cpp \
     theme/theme.cpp \
     widgets/aurorabackdrop.cpp \
@@ -40,6 +46,8 @@ HEADERS += \
     data/adminrepository.h \
     data/mockadminrepository.h \
     data/mockdataset.h \
+    data/socketadminrepository.h \
+    data/socketparse.h \
     models/adminmodels.h \
     theme/theme.h \
     theme/generated/theme_tokens.h \

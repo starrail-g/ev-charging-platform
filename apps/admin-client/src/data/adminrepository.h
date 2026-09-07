@@ -12,8 +12,8 @@ class QObject;
 namespace ev {
 
 // 管理员对象。
-// 字段待 9/4 与 B 对齐（协议文档注明 admin 字段随 database schema 冻结）；
-// 当前按 database/schema/schema.sql administrators 表自拟。
+// 2026-09-05 与 B 对齐实证: admin.login 响应 payload.admin = {id, username, role,
+// status}(database.cpp loginAdministrator 构造点), 键名全命中, 语义随 schema 冻结。
 struct AdminInfo {
     int id = 0;
     QString username;
@@ -27,7 +27,21 @@ struct LoginResult {
     bool ok = false;
     AdminInfo admin;
     int errorCode = 0;         // 协议码：0=OK，1100=UNAUTHORIZED
-    bool networkError = false; // 传输层错误（服务不可用），协议码不覆盖，单独标记
+    bool networkError = false; // 传输层错误（服务不可达），协议码不覆盖，单独标记
+    QString message;           // 仅用于日志/兜底展示，不作为分支依据
+    // 管理员会话 token（admin.login.result 契约字段，Q6 冻结 2026-09-06：
+    // 服务端进程内 8h 会话，PR #12 = main 3d015f7）；除 admin.login 外所有
+    // admin.* 请求携带；收到 1100 即失效需重登。Mock 实现不产生（空串）。
+    QString token;
+};
+
+// 管理动作结果（login 同构：错误分支只按 errorCode 分支，message 仅展示/日志）。
+// errorCode 语义同 docs/architecture/protocol.md §Error Codes：
+//   0=OK、1002=INVALID_REQUEST（参数非法）、1200=NOT_FOUND、1201=CONFLICT（状态转换不允许）。
+struct ActionResult {
+    bool ok = false;
+    int errorCode = 0;
+    bool networkError = false; // 传输层错误（服务不可达），协议码不覆盖
     QString message;           // 仅用于日志/兜底展示，不作为分支依据
 };
 
@@ -69,6 +83,20 @@ public:
     // 数据来源标识（状态栏展示用）：Mock 返回 "Mock 演示"，
     // 未来 Socket 适配层返回自身标识；空串表示不展示来源。
     virtual QString dataSourceName() const { return QString(); }
+
+    // 异步远程重启充电桩（C-S1-005；第一阶段为服务端确认后的状态模拟）：
+    // 仅故障/离线桩允许重启，成功后桩转 idle（模拟自检通过）并可观察；
+    // 其余状态返回 1201 CONFLICT。异步语义同 login（context 防悬垂、事件循环派发）。
+    virtual void restartPile(const QString &pileCode,
+                             QObject *context,
+                             std::function<void(const ActionResult &)> callback) = 0;
+
+    // 异步冻结/解冻用户（C-S1-007；第一阶段为模拟确认）：status ∈ active|frozen；
+    // 同状态重复设置幂等成功（与 main 服务端语义一致），用户不存在返回 1200。
+    virtual void setUserStatus(int userId,
+                               const QString &status,
+                               QObject *context,
+                               std::function<void(const ActionResult &)> callback) = 0;
 };
 
 } // namespace ev
