@@ -15,14 +15,20 @@
 
 ## 2. 检查清单（执行时逐项填写）
 
+> 预跑状态：2026-09-06 已用**真实 main 服务端（`3d015f7`）+ SocketAdminRepository 适配层**
+> console 冒烟一轮（非 GUI 展示、非闸门现场），结果与证据已预填下表；闸门现场（9/7 18:00）
+> 以管理端 GUI socket 模式逐项复核、更新证据列，并在 §3 填正式结论。
+> 证据文件在仓库外 `D:/work/chargingplatform/build/repro/`（不入 git；逐字记录另见
+> docs/requirements/current.md §2）。
+
 | # | 步骤 | 结果（通过/失败/阻塞） | 证据（日志/输出/截图） |
 |---|---|---|---|
-| 1 | 启动 B 服务端（记录启动命令与端口） |  |  |
-| 2 | C 管理端 socket 模式登录 `admin/123456` |  |  |
-| 3 | 概览 `admin.statistics.get`：7d/30d 营收、五态 counts、利用率、快照时间字段与 C 侧 socketparse 映射一致 |  |  |
-| 4 | 桩列表 fan-out（或 `admin.pile.list`）字段：`total_charge_count/seconds`、站桩数/在线率（Q7） |  |  |
-| 5 | 错误路径抽查：错误密码 1100、坏帧断连、超时 |  |  |
-| 6 | 双平台（Windows 开发机 + Ubuntu VM）各跑一遍 1–5 |  |  |
+| 1 | 启动 B 服务端（记录启动命令与端口） | 通过（9/6 预跑） | main `3d015f7` 本地构建（build/server-main），dev.sql 种子库，端口 45454；`smoke-live-result.txt` 逐字 |
+| 2 | C 管理端 socket 模式登录 `admin/123456` | 通过（9/6 预跑·适配层；GUI 现场复核） | `[PASS] admin.login`（token 已取，逐字见 txt） |
+| 3 | 概览 `admin.statistics.get`：7d/30d 营收、五态 counts、利用率、快照时间字段与 C 侧 socketparse 映射一致 | 通过（9/6 预跑；现场复核） | `[PASS] fetchOverview(7d+30d) | revenue7d=3050 revenue30d=3050 idle=2 fault=0 util=0.142 updated=…` |
+| 4 | 桩列表 fan-out（或 `admin.pile.list`）字段：`total_charge_count/seconds`、站桩数/在线率（Q7） | 通过（9/6 预跑；现场复核） | `[PASS] fetchStations | stations=2`；`[PASS] fetchPiles(fan-out) | piles=6`；restart 补跑 `request_records` c-admin-33/39 留痕（A-03/B-02 `restart_count:1` → idle） |
+| 5 | 错误路径抽查：错误密码 1100、坏帧断连、超时 | 待现场执行 | 9/6 预跑未覆盖真实服务端错误路径（fake-server 测试已覆盖，sa 15/15） |
+| 6 | 双平台（Windows 开发机 + Ubuntu VM）各跑一遍 1–5 | 待现场执行 | VM 侧真实服务端冒烟尚未运行 |
 
 ## 3. 结论（执行后填写）
 

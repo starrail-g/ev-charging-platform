@@ -64,11 +64,26 @@ Windows 下 `make` 为 `mingw32-make`（需先 export PATH，见上）。
 # Windows: .\src\release\admin-client.exe
 ```
 
-## Mock / Socket 切换
+## Mock / Socket 数据源切换
 
-- 第一阶段默认 `MockAdminRepository`（固定演示数据）。
-- 9/7 18:00 接口闸门通过后切换 `SocketAdminRepository`；未通过则保持 Mock 并标注。
-- 切换方式：TODO（随 9/6 适配层实现补充）。
+数据源在 `src/main.cpp` 工厂点按环境变量收敛，页面层一律经 `AdminRepository` 抽象、不感知数据源。
+
+默认（未设置 `EV_ADMIN_DATA_SOURCE`，或值非 `socket`）使用 `MockAdminRepository`：
+固定演示数据，桩重启/冻结动作为模拟执行（成功提示带"（模拟）"后缀），无需服务端。
+
+连接真实服务端时（Socket 模式）：
+
+```bash
+EV_ADMIN_DATA_SOURCE=socket ./admin-client            # git-bash / Ubuntu
+# Windows cmd: set EV_ADMIN_DATA_SOURCE=socket && admin-client.exe
+```
+
+- 仅当 `EV_ADMIN_DATA_SOURCE` 恰为 `socket` 时才启用 `SocketAdminRepository`；空值与其
+  它值均为 Mock。
+- 服务端默认地址 `127.0.0.1:45454`，可用 `EV_SERVER_HOST` / `EV_SERVER_PORT` 覆盖
+  （键名与 `config/example.env` 一致）。
+- 阶段一口径：9/7 18:00 接口闸门前默认保持 Mock；socket 模式以真实服务端联调验收，
+  现场记录见 `docs/meetings/interface-gate-2026-09-07.md`，演示材料不冒充真实联调。
 
 ## 已知限制
 

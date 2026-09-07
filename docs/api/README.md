@@ -216,16 +216,18 @@ breaking-change 风险窗口在后续 Socket 实现（新实现类）接入时�
 | Q6 | admin.* 鉴权机制 | **PR #12 终稿（覆盖 9/5 v1 冻结）**：`admin.login` 发放进程内 8h 随机 `token`；除 login 外所有 `admin.*` 请求携带 token；mutation（station.create/pile.restart/user.status.set）额外携带 `administrator_id` 且必须与 token 主体一致；token 缺失/过期/不匹配 → 1100 UNAUTHORIZED，客户端收到 1100 清除本地认证状态 | 已冻结（PR #12/main `3d015f7` 代码实证） |
 | Q7 | 桩 total_charge_count/seconds、用户 created_at、站聚合字段 | readPile 11 列全含（含 restart_count/last_restart_at）、user.list 含 created_at/active_order_status、站行含 pile 五态计数+utilization | 已冻结（构造点核对） |
 
-C 侧代码落点（2026-09-06 token 适配，待推送）：login 响应校验并提取 token（LoginResult.token）；
+C 侧代码落点（2026-09-06 token 适配，已推送 `ec09270`）：login 响应校验并提取 token（LoginResult.token）；
 buildPayload 对 admin.*（除 login）附加 token、mutation 附加 administrator_id（登录缓存
 admin.id）；收到 1100 清除本地 token/认证状态；fetchOverview 双请求合并（任一失败整页
 error，同 D5 fan-out 哲学）。restart 语义（45627d5）与 C Mock/UI 逐字一致（仅 fault/offline
 可重启、其余 1201），无代码改动。
 
 9/7 18:00 闸门说明：B 的 admin.* handler 已随 PR #12 合入 `main`（2026-09-06），管理端
-token 适配已完成并**通过真实 main 服务端联调冒烟**（2026-09-06：login→overview 双 range→
-逐站 fan-out→冻结/解冻→重启全链路 PASS，见 `build/repro/admin-real-smoke.cpp` 与
-`smoke-live-result.txt`）；闸门以登录/概览/桩状态/动作为准，材料不冒充真实联调。
+token 适配已完成并推送（`ec09270`），且**通过真实 main 服务端联调冒烟**（2026-09-06：
+首轮 login→overview 双 range→逐站 fan-out→冻结/解冻 PASS，restart 因当时库内无 fault
+桩跳过；补跑对 A-03/B-02 真跑 `admin.pile.restart` PASS，`request_records` 留痕）。
+证据文件在**仓库外** `D:/work/chargingplatform/build/repro/`（不入 git；逐字记录见
+`docs/requirements/current.md` §2）；闸门以登录/概览/桩状态/动作为准，材料不冒充真实联调。
 
 ### 管理端统计响应
 

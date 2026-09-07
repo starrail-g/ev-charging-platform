@@ -2,7 +2,7 @@
 
 > 本文件只写**已经实现并通过验证**的能力（不提前宣称预测模型、生产地图配置或
 > 真实后端联调完成）；项目整体状态见仓库根 `current.md`（三块纪律：已提交/仅本地/待办）。
-> 最后更新：2026-09-04（管理操作批 + Socket 批本地验证后待续）。
+> 最后更新：2026-09-07（评审修正：sa 计数 15、证据文件外部路径与逐字记录、闸门预跑记录）。
 
 ## 1. 实际验证平台与命令（9/4 基线）
 
@@ -33,17 +33,26 @@
 - `serve.py --check` 资产门禁通过；密钥只走 config/local.env / 环境变量。
 
 ### 测试证据（9/4-9/6 本地与 VM，逐字）
-- Windows（构建目录 build/admin-client-socket）：tst_ui **24** / tst_launchsmoke **6** /
-  tst_loginflow **7** / tst_socketparse **9** / tst_socketadapter **15**，全 0 failed
-  （9/6 token 适配后：+authenticatedRequestsCarrySessionToken +unauthorizedClearsSessionState）
+> 构建目录与证据文件一律在**仓库外** `D:/work/chargingplatform/build/`（仓库约定：构建
+> 产物/证据不入 git，PR 内不可见属正常）；本文引用均给明确外部位置。
+- Windows（构建目录 `D:/work/chargingplatform/build/admin-client-socket`）：tst_ui **24** /
+  tst_launchsmoke **6** / tst_loginflow **7** / tst_socketparse **9** / tst_socketadapter **15**，
+  全 0 failed（9/6 token 适配后：+authenticatedRequestsCarrySessionToken
+  +unauthorizedClearsSessionState）
 - Ubuntu VM（BitDev，qmake6 6.2.4）：同五套逐字一致（tst_socketadapter 曾现 Ubuntu-only
   SIGSEGV——fake server 析构对正在析构的 accepted socket 调 deleteLater 属 UB，已修：
   断开只清 decoder，socket 生命周期交还 QTcpServer；修复后全绿）
 - node：35 passed（Windows + VM）；serve --check / tokens --check 通过
-- **真实 main 服务端联调冒烟（2026-09-06，token 契约 PR #12）**：admin.login（拿 token）→
-  fetchOverview 双 range → fetchStations → fetchPiles 逐站 fan-out → setUserStatus
-  冻结/解冻 → restartPile，全链路 PASS（`build/repro/admin-real-smoke.cpp` +
-  `smoke-live-result.txt`；临时库由 dev.sql 初始化，重启语义持久化已实证）
+- **真实 main 服务端联调冒烟（2026-09-06，token 契约 main `3d015f7`）**——证据文件在
+  仓库外 `D:/work/chargingplatform/build/repro/`（console 冒烟程序 `admin-real-smoke.cpp`
+  + 结果 `smoke-live-result.txt`，9/6 落盘；临时库 `ev-live.db` 由 dev.sql 初始化）：
+  - 首轮（21:22 落盘，逐字）：login 拿 token PASS / fetchOverview 双 range PASS /
+    fetchStations PASS / fetchPiles 逐站 fan-out PASS（6 桩，fault=0）/ 冻结 PASS /
+    解冻 PASS；**restartPile 跳过**（当时库内无 fault 桩——前序轮次已重启归位）。
+  - 补跑（21:53–21:55，两桩处 fault 态后）：`admin.pile.restart` 真跑 ×2 成功并持久化
+    ——服务端 `request_records` 留痕 `c-admin-33`（A-03）/`c-admin-39`（B-02），响应
+    `restart_count:1`、`last_restart_at` 写入、状态回 idle（db 实查一致），证明动作由
+    服务端真实执行而非 Mock；GUI 层 socket 模式展示留待 9/7 18:00 闸门现场复核。
 
 ## 3. 本阶段明确未实现项（答辩材料口径，不提前宣称）
 - 生产腾讯地图 Key 配置（保留本地联调；无 Key 自动拓扑降级）
