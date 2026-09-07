@@ -106,8 +106,10 @@ bool parseStationsPayload(const QJsonObject &payload, QList<StationInfo> *statio
 bool parseUsersPayload(const QJsonObject &payload, QList<UserInfo> *users,
                        QStringList *issues, QString *reason);
 // payload["statistics"]: 必须是对象(整体结构错 → false)
+// hasData(out, 可空): statistics.has_data → OverviewResult.hasData
+//   (冻结 2026-09-07, main getStatistics: 空库 false / 有数据 true; 缺失 → true)
 bool parseStatisticsPayload(const QJsonObject &payload, OverviewStats *stats,
-                            QStringList *issues, QString *reason);
+                            bool *hasData, QStringList *issues, QString *reason);
 // payload["admin"]: 必须是对象; admin.login.result 专用
 bool parseAdminLoginPayload(const QJsonObject &payload, LoginResult *out,
                             QStringList *issues, QString *reason);

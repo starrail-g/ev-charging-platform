@@ -385,6 +385,7 @@ void SocketAdminRepository::fetchOverview(
         int remaining = 2;        // 未回请求数
         OverviewStats stats7;
         qint64 revenue30dCents = 0;
+        bool hasData = true;      // 7d 主体 has_data(空库=false, 服务端权威)
     };
     auto state = std::make_shared<MergeState>();
 
@@ -409,10 +410,10 @@ void SocketAdminRepository::fetchOverview(
         result.errorCode = kCodeOk;
         result.stats = state->stats7;
         result.stats.revenue30dCents = state->revenue30dCents;
-        // Socket 语义: 服务端返回 statistics 即"有数据"; 全零可能是新站点的有效数据,
-        // 不允许从指标全零反推 hasData(Mock Empty 态 hasData=false 是演示专用,
-        // 语义见 adminmodels.h)
-        result.hasData = true;
+        // has_data(冻结 2026-09-07, main getStatistics): 服务端显式区分空库(false)
+        // 与"有数据但指标为 0"(true); 以 7d 主体响应为准(两 range 同库同刻一致),
+        // 空库场景由概览页走"暂无概览数据"空态, 不展示 0 值指标页
+        result.hasData = state->hasData;
         if (callback)
             callback(result);
     };
@@ -433,8 +434,10 @@ void SocketAdminRepository::fetchOverview(
                         QStringList issues;
                         QString reason;
                         OverviewStats stats;
+                        bool hasData = true;
                         if (!socketparse::parseStatisticsPayload(env.payload, &stats,
-                                                                  &issues, &reason)) {
+                                                                  &hasData, &issues,
+                                                                  &reason)) {
                             ReplyEnvelope bad;
                             bad.ok = false;
                             bad.errorCode = kCodeInvalidRequest;
@@ -445,6 +448,7 @@ void SocketAdminRepository::fetchOverview(
                         --state->remaining;
                         if (range == QLatin1String("7d")) {
                             state->stats7 = stats; // 主体: 五态/利用率/updated_at 取 7d
+                            state->hasData = hasData; // has_data 以主体为准
                         } else {
                             // 30d 响应聚合 revenue_cents = 30 条 revenue_daily 之和
                             state->revenue30dCents = stats.revenueCents;
@@ -537,8 +541,17 @@ void SocketAdminRepository::deliverPileFanOut(
     const std::shared_ptr<PileFanOutState> &state, const QList<StationInfo> &stations,
     QObject *context, const std::function<void(const ListResult<PileInfo> &)> &callback)
 {
-    if (stations.isEmpty()) {
-        // 无站点 → 空列表成功结果(不报错)
+    // 管理端桩视图口径 = active 站(2026-09-07 评审, 与 main 业务边界对齐):
+    // admin.station.list 返回全部站(含 inactive, 供站页展示"已停运"), 而 pile.list
+    // 只允许查 active 站(inactive → 1200 NotFound)——只对 active 站 fan-out,
+    // inactive 站跳过不发请求, 否则任一 inactive 站都会整页失败并拖垮桩页/概览
+    QList<StationInfo> activeStations;
+    for (const StationInfo &station : stations) {
+        if (station.status == QLatin1String("active"))
+            activeStations.append(station);
+    }
+    if (activeStations.isEmpty()) {
+        // 无 active 站 → 空列表成功结果(不报错)
         state->delivered = true;
         ListResult<PileInfo> result;
         result.ok = true;
@@ -547,8 +560,8 @@ void SocketAdminRepository::deliverPileFanOut(
             callback(result);
         return;
     }
-    state->remaining = stations.size();
-    for (const StationInfo &station : stations) {
+    state->remaining = activeStations.size();
+    for (const StationInfo &station : activeStations) {
         QJsonObject specific;
         specific.insert(QLatin1String("station_id"), station.id);
         sendRequest(QStringLiteral("pile.list"), specific, /*isAction=*/false, context,

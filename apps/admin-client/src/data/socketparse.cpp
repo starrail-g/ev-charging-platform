@@ -275,7 +275,7 @@ bool parseUsersPayload(const QJsonObject &payload, QList<UserInfo> *users,
 }
 
 bool parseStatisticsPayload(const QJsonObject &payload, OverviewStats *stats,
-                            QStringList *issues, QString *reason)
+                            bool *hasData, QStringList *issues, QString *reason)
 {
     const QJsonValue value = payload.value(QLatin1String("statistics"));
     if (!value.isObject()) {
@@ -283,8 +283,22 @@ bool parseStatisticsPayload(const QJsonObject &payload, OverviewStats *stats,
             *reason = QStringLiteral("响应 payload.statistics 缺失或非对象");
         return false;
     }
+    const QJsonObject statistics = value.toObject();
     if (stats)
-        *stats = parseStatistics(value.toObject(), issues);
+        *stats = parseStatistics(statistics, issues);
+    // has_data(冻结 2026-09-07, main getStatistics): 服务端用该键区分空库(false)
+    // 与"有数据但指标为 0"(true)。缺失/非布尔 → true + issue(契约漂移时维持旧
+    // "服务端返回即视为有数据"语义, 不把有数据误判为空库)
+    bool parsedHasData = true;
+    const QJsonValue hasDataValue = statistics.value(QLatin1String("has_data"));
+    if (hasDataValue.isBool()) {
+        parsedHasData = hasDataValue.toBool();
+    } else {
+        logIssue(issues,
+                 QStringLiteral("statistics.has_data 缺失或非布尔, 按 true 处理"));
+    }
+    if (hasData)
+        *hasData = parsedHasData;
     emitIssues("parseStatisticsPayload", issues ? *issues : QStringList());
     return true;
 }

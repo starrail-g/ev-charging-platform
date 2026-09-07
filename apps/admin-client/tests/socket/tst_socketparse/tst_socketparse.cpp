@@ -20,6 +20,7 @@ private slots:
     void parseStationDerivesOnlineCount();
     void parseUserKeepsUtcCreatedAt();
     void parseStatisticsUsesSumFallbackAnd30dKey();
+    void parseStatisticsPayloadMapsHasData();
     void payloadListsSkipBadItemsButFailOnStructure();
     void adminLoginPayloadAndErrorCode();
 };
@@ -170,6 +171,50 @@ void TestSocketParse::parseStatisticsUsesSumFallbackAnd30dKey()
 
     // 全缺 → 0 默认
     QCOMPARE(ev::socketparse::parseStatistics(QJsonObject{}).revenueCents, qint64(0));
+}
+
+void TestSocketParse::parseStatisticsPayloadMapsHasData()
+{
+    // has_data(冻结 2026-09-07, main getStatistics): 空库 false / 有数据 true;
+    // 键缺失或类型错 → true + issue(契约漂移不把有数据误判为空库)
+    QStringList issues;
+    QString reason;
+    bool hasData = false;
+
+    // 缺失 → true(旧契约兼容)
+    QJsonObject payload{
+        {QStringLiteral("statistics"),
+         QJsonObject{{QStringLiteral("revenue_cents"), 0},
+                     {QStringLiteral("pile_idle"), 0}}}};
+    QVERIFY(ev::socketparse::parseStatisticsPayload(payload, nullptr, &hasData,
+                                                    &issues, &reason));
+    QVERIFY(hasData);
+
+    // has_data: true → true
+    QJsonObject statistics{{QStringLiteral("has_data"), true},
+                           {QStringLiteral("revenue_cents"), 0}};
+    payload.insert(QStringLiteral("statistics"), statistics);
+    issues.clear();
+    QVERIFY(ev::socketparse::parseStatisticsPayload(payload, nullptr, &hasData,
+                                                    &issues, &reason));
+    QVERIFY(hasData);
+
+    // has_data: false(空库)→ false
+    statistics.insert(QStringLiteral("has_data"), false);
+    payload.insert(QStringLiteral("statistics"), statistics);
+    issues.clear();
+    QVERIFY(ev::socketparse::parseStatisticsPayload(payload, nullptr, &hasData,
+                                                    &issues, &reason));
+    QVERIFY(!hasData);
+
+    // 类型错(字符串塞布尔)→ true + issue
+    statistics.insert(QStringLiteral("has_data"), QStringLiteral("yes"));
+    payload.insert(QStringLiteral("statistics"), statistics);
+    issues.clear();
+    QVERIFY(ev::socketparse::parseStatisticsPayload(payload, nullptr, &hasData,
+                                                    &issues, &reason));
+    QVERIFY(hasData);
+    QVERIFY2(!issues.isEmpty(), "类型错应记录解析问题");
 }
 
 void TestSocketParse::payloadListsSkipBadItemsButFailOnStructure()
