@@ -234,3 +234,18 @@ current stage. Clients still depend only on this wire contract and never
 access SQLite directly. Database work is currently synchronous in the
 connection event loop; moving long-running operations to bounded workers is a
 known follow-up before production deployment.
+
+## Accepted Map-Service Extension (Pending Implementation)
+
+The accepted server-side Tencent Maps and simulated-pile contract is defined in
+[`map-service-protocol.md`](map-service-protocol.md). It preserves the v1
+envelope and adds `map.station.search`, `map.route.plan`, and
+`admin.map.audit.list`; it also extends `pile.list.result` with optional snapshot
+and simulation metadata.
+
+The extension is a frozen design boundary, not a claim of current runtime
+support. The server handlers, Schema v0.4 migration, map cache/audit store,
+simulation timer, and user-client Socket adaptation remain pending. The
+full-scope `admin.pile.list` introduced by PR #13 is compatible with this
+extension: it remains an authenticated cross-station inventory query and does
+not trigger map synchronization or status simulation.

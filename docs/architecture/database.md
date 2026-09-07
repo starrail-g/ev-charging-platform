@@ -177,3 +177,25 @@ recreates indexes/views, changes revenue grouping to `settled_at`, and updates
 roll back instead of being silently accepted. Run `PRAGMA foreign_key_check`
 after the migration; a successful check returns no rows. Do not pipe the SQL
 file into an executor configured to continue after errors.
+
+## Accepted map/simulation schema boundary (future v0.4)
+
+The server-side map contract is frozen in
+[`map-service-protocol.md`](map-service-protocol.md), but the repository schema
+remains v0.3. No v0.4 migration or runtime table is delivered by the contract
+PR.
+
+The implementation migration must add provider identity and sync metadata to
+`stations`; simulation/source timestamps to `charging_piles`; and dedicated
+stores for map requests, upstream calls, parsed cache entries, pile-status
+events, and simulation state. `provider + provider_poi_id` must uniquely map a
+Tencent POI to one internal station. First-time station upsert and stable pile
+generation must commit or roll back together.
+
+The simulator may update only simulated piles without unfinished
+`pending_reservation`, `reserved`, `charging`, or `pending_settlement` orders.
+It must never invent `reserved` or `charging`; those states remain owned by the
+existing business transactions. Map/audit/event records use a 30-day UTC
+retention policy and must not store the Tencent Key, a complete
+credential-bearing URL, raw upstream JSON, or long-term precise user-location
+history.
