@@ -154,20 +154,21 @@ JSON `null`；历史接口只返回 `completed` 订单，按 `settled_at` 倒序
 业务拒绝或数据库失败会回滚且不会固化记录，因此相同 ID 可在条件修复后重试，参数
 变化或操作变化则返回 `CONFLICT`。
 
-管理员接口当前实现（随 PR #12 合入 `main` `3d015f7`，2026-09-06；B 版文档同步）：
+管理员接口当前实现：原 admin.* 接口随 PR #12 合入 `main`（`3d015f7`，2026-09-06）；本分支另增 `admin.pile.list` 全量桩查询：
 
 | 接口 | 用途 | 状态 |
 |---|---|---|
 | `admin.login` | 管理员认证，错误码 1100 | 服务端已实现；成功返回 8 小时有效的随机 `token`，后续所有 `admin.*` 请求携带该 token |
 | `admin.statistics.get` | 营收、桩状态、利用率摘要和逐日营收序列 | 服务端已实现，支持 `7d` / `30d`，返回固定长度 `revenue_daily`，必须携带 token |
+| `admin.pile.list` | 全部站点（含 inactive）充电桩库存 | 服务端已实现；只读请求携带 token，返回 `piles` 全量明细 |
 | `admin.pile.restart` | 桩重启和审计 | 服务端已实现；仅故障/离线桩恢复为空闲并按请求 ID 幂等，idle/reserved/charging 返回冲突且不打断会话 |
 | `admin.station.list/create` | 站点查询/创建 | 服务端已实现；必须携带 token，创建为超级管理员操作并按请求 ID 幂等 |
 | `admin.user.list/status.set` | 用户查询、冻结/解冻 | 服务端已实现；必须携带 token，状态修改为超级管理员操作并按请求 ID 幂等 |
 
 ## 管理端 AdminRepository 契约与 wire 映射
 
-管理端 UI（`apps/admin-client`）通过 `AdminRepository` 抽象访问数据；当前唯一实现
-是 `MockAdminRepository`（本 PR 交付）。接口语义是**管理端业务视图**，与 wire 协议
+管理端 UI（`apps/admin-client`）通过 `AdminRepository` 抽象访问数据；当前同时提供
+`MockAdminRepository` 和 `SocketAdminRepository`。接口语义是**管理端业务视图**，与 wire 协议
 **非一对一**，映射关系如下（Socket 实现方案 2026-09-03 设计评审定稿，实现随 9/6
 Socket 任务落地）：
 
@@ -176,28 +177,26 @@ Socket 任务落地）：
 | `fetchOverview` | 概览指标（7 日/30 日营收、桩五态、利用率、快照时间） | 分别请求 `admin.statistics.get` 的 `7d` 与 `30d`；聚合卡片读取 `revenue_cents`（7d 主体 + 30d 取聚合填副行），趋势图读取 `statistics.revenue_daily[*].revenue_cents` |
 | `fetchStations` | 管理端全量站点（含桩数/在线率/7 日利用率聚合视图） | `admin.station.list` |
 | `fetchUsers` | 管理端全量用户（含注册时间和活动订单状态） | `admin.user.list` |
-| `fetchPiles` | 管理端**全量**桩列表（全部站点含 inactive 站桩；桩页过滤/搜索在本端完成） | 单请求 `admin.pile.list`（口径 A，2026-09-07 评审对齐；契约待 B 在 main 实现后冻结实证） |
+| `fetchPiles` | 管理端**全量**桩列表（全部站点含 inactive 站桩；桩页过滤/搜索在本端完成） | 单请求 `admin.pile.list`（口径 A，服务端已实现） |
 
 `fetchPiles` 的已知权衡（对应 9/3 评审 Q2 协议缺口；2026-09-07 评审口径 A 重开：
 管理员应查看**全部站点**（含 inactive）下的桩——`pile.list` 仅允许查 active 站，
 逐站 fan-out 会漏停运站桩并使概览/站页/桩页数字口径分裂）：
 
-- **契约请求（已回复 B）**：`admin.pile.list`——读类鉴权（payload 仅 `token`，
+- **契约请求**：`admin.pile.list`——读类鉴权（payload 仅 `token`，
   无 `administrator_id`）；成功响应 `admin.pile.list.result {piles:[…]}`，行结构同
   `pile.list`（readPile 11 列）；范围 = 全部站点（含 inactive 站）的桩，与
   `admin.statistics.get` 的全库桩计数、`admin.station.list` 的站级聚合同口径。
 - **失败语义**：整页 error（管理端需要一致的全量视图，不允许静默缺站），UI 进入
   error 态可重试；查询类请求无幂等限制，可原样重试。
-- **过渡期**：B 合入 `admin.pile.list` 前，Socket 模式对该请求会收到 unsupported
-  1002 → 桩页/概览整页 error（闸门前默认 Mock，不受影响）；B 落地后即恢复。
+- **当前实现**：服务端已提供 `admin.pile.list`，只读鉴权仅需 `token`；成功响应为
+  `admin.pile.list.result {piles:[…]}`，范围覆盖全部站点（含 inactive）。
 - **已移除**：原 D5 逐站 fan-out（`admin.station.list` → 每站 `pile.list(station_id)`
   并行聚合）及其 active 站过滤逻辑，见 `a7706b3` 后续 commit。
 
 接口变更说明：三个 `fetch*` 纯虚方法自 PR #6（2026-09-02 合并）起即为
-`AdminRepository` 契约的一部分，本 PR 为回退后的恢复而非新设计。当前仓库中接口
-实现仅有 `MockAdminRepository` 且与本 PR 同步交付，不破坏 `main` 编译；接口
-breaking-change 风险窗口在后续 Socket 实现（新实现类）接入时，届时需同步新增
-实现类并保持本契约不变。
+`AdminRepository` 契约的一部分；当前仓库同时提供 `MockAdminRepository` 和
+`SocketAdminRepository`，两者均遵循本契约。
 
 接口闸门通过前，管理端 Mock 数据不得冒充真实 Socket 联调结果。
 
@@ -213,7 +212,7 @@ breaking-change 风险窗口在后续 Socket 实现（新实现类）接入时�
 | # | 冻结输入 | 冻结结论 | 状态 |
 |---|---|---|---|
 | Q1 | login/statistics/station.list/user.list 响应字段清单（snake_case） | B 实现即样例：admin{id,username,role,status}；statistics 信封样例见下方「管理端统计响应」节；station/user 键与 schema 列直出 | 已冻结（构造点逐字段核对全命中） |
-| Q2 | 管理端全量桩列表：`admin.pile.list` 增补 or 逐站聚合 | **2026-09-07 评审口径 A 重开（本轮 PR #11 评审）**：管理员视图 = 全部站点（含 inactive 站）桩。`pile.list` 仅 active 站、fan-out 漏停运站桩且与统计/站聚合口径分裂 → C 已切单请求 `admin.pile.list`（契约见上节；读类仅 token、响应行结构同 pile.list）；**待 B 在 main 实现**，实现后契约实证再标已冻结 | 待 B 实现（C 侧已按契约切换） |
+| Q2 | 管理端全量桩列表：`admin.pile.list` 增补 or 逐站聚合 | **2026-09-07 评审口径 A**：管理员视图 = 全部站点（含 inactive）桩；`admin.pile.list` 读类仅 token，响应行结构同 `pile.list`，服务端查询全量 `charging_piles`。 | 已实现并由 `server/tests/admin.py` 覆盖 inactive 站桩 |
 | Q3 | statistics 对象覆盖 | `revenue_daily` 固定长度（7d→7/30d→30 条）、UTC 日历日升序补零、行内键 date/revenue_cents/completed_order_count/energy_wh、聚合=序列和、updated_at 同快照；**无独立 30d 合计键** → C fetchOverview 双请求（7d 主体 + 30d 取聚合值） | 已冻结（1f157de + B 文档样例） |
 | Q4 | 利用率口径 | 最近 7 个 UTC 自然日**时间加权占用率**：分子=charging/pending_settlement/completed 订单区间∩窗口（开放单截到 updated_at），分母=桩自 max(窗口起点, created_at) 可用时长（fault/offline 不扣）；站均=简单平均、与 range 无关；站行带 utilization+utilization_range="7d"。语义与演示 0.42 占位不同（socketparse 注释已同步） | 已冻结（11702ae/4eb0bad） |
 | Q5 | range 仅 `7d`/`30d`（A-02 裁剪） | B 仅实现 7d/30d、无 today/month/all；Web 大屏搁置，A-02 收敛为 Qt 概览卡（7d 主卡 + 30d 副行） | 已确认（实现即口径） |

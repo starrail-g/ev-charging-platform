@@ -106,7 +106,7 @@ Web 大屏（C） ──┘
 
 ### 5.3 v1 操作范围
 
-基础诊断：`health`、`echo`。用户端：`user.login`、`user.profile.get/update`、`wallet.recharge`、`station.list`、`pile.list`、`order.active.get`、`reservation.create/confirm/cancel`、`charging.start/stop/settle`。管理端：`admin.login`、`admin.statistics.get`、`admin.station.list/create`、`admin.pile.restart`、`admin.user.list`、`admin.user.status.set`。
+基础诊断：`health`、`echo`。用户端：`user.login`、`user.profile.get/update`、`wallet.recharge`、`station.list`、`pile.list`、`order.active.get`、`reservation.create/confirm/cancel`、`charging.start/stop/settle`。管理端：`admin.login`、`admin.statistics.get`、`admin.station.list/create`、`admin.pile.list`、`admin.pile.restart`、`admin.user.list`、`admin.user.status.set`。
 
 对象 ID 按协议约定使用整数；请求 ID 仍是字符串。金额统一为整数分（`*_cents`），时间统一为 UTC ISO-8601，例如 `2026-09-01T10:15:00Z`。用户对象至少包含 `id`、`phone`、`nickname`、`balance_cents` 和 `status`。
 
@@ -119,7 +119,7 @@ Web 大屏（C） ──┘
 - 同一用户不能存在多个活动订单，同一桩不能被多个活动订单占用；冻结用户不能创建新订单或开始充电。
 - 结算必须原子更新订单、桩、钱包余额和钱包流水；余额不足或任何数据库错误都不能留下部分更新。
 - 相同请求 `id` 的停止/结算可幂等重放；请求 ID 持久化和重复提交策略必须由数据库/服务层完成后才能作为完整能力交付。
-- v1 尚未定义独立会话 Token；在明确增加会话设计前，服务端校验请求 payload 中的凭据、用户 ID 和管理员上下文。
+- 用户端 v1 尚未定义独立会话 Token；管理员接口已采用 `admin.login` 发放的进程内会话 token，后续 `admin.*` 请求必须携带该 token。
 
 当前协议文档仍保留“服务端初始只实现 `health`/`echo`、无直接 SQLite 依赖”的历史说明。它不能替代 B 最新 PR/合并代码的实测结果；完成业务联调时必须同步协议文档、`current.md` 和可复现证据。
 
@@ -194,6 +194,6 @@ Schema 新建使用 `database/schema/schema.sql`，v0.1 升级使用 `database/m
 - 冻结用户仍可登录并返回 `status=frozen`；`reservation.create`、`reservation.confirm`、`charging.start`（直充与预约）和 `wallet.recharge` 统一返回 `1101 ACCOUNT_FROZEN`。资料查询/更新、订单查询、预约取消、停止充电和结算放行。
 - 幂等请求命中 `request_records` 后优先回放原结果，再执行冻结检查；冻结只拦截未命中的新请求。
 - `charging.stop` 在同一事务内将订单置为 `pending_settlement` 并立即释放电桩为 `idle`；`charging.settle` 只负责金额计算、钱包扣款、流水、订单完成和计数，不再修改电桩状态。余额不足返回 `1202`，订单保持 `pending_settlement`，电桩保持 `idle`。
-- `admin.user.list` 的用户对象应带 `active_order_status`；管理员接口仍属于后续实现范围。
+- `admin.user.list` 的用户对象应带 `active_order_status`；原 admin.* 接口已实现，本分支新增 `admin.pile.list` 全量桩查询。
 
 A 端适配器和 `docs/architecture/protocol.md` 已按本附录对齐。

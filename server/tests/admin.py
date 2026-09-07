@@ -85,6 +85,7 @@ assert_error(exchange(request("admin-bad-login", "admin.login", {
 for operation, payload in (
     ("admin.statistics.get", {"range": "7d"}),
     ("admin.station.list", {}),
+    ("admin.pile.list", {}),
     ("admin.user.list", {}),
     ("admin.station.create", {
         "administrator_id": admin_id, "name": "未授权站点", "address": "不可达",
@@ -142,6 +143,7 @@ assert all(0 <= row["utilization"] <= 1 for row in station_rows), station_rows
 # one still-open charging order. Verify the interval intersection and the
 # open-order cutoff are reflected in the reported seven-day ratio.
 station_by_id = {row["id"]: row for row in station_rows}
+
 updated_at_dt = datetime.fromisoformat(
     statistics_7d_payload["updated_at"].replace("Z", "+00:00"))
 period_start_dt = datetime.combine(
@@ -170,6 +172,34 @@ statistics_for_stations = exchange(
 average_from_stations = sum(row["utilization"] for row in station_rows) / len(station_rows)
 assert abs(statistics_for_stations["payload"]["statistics"]["avg_station_utilization"]
            - average_from_stations) < 1e-4
+
+# Administrative pile inventory covers the complete charging_piles table,
+# including piles at inactive stations (unlike user-facing pile.list).
+execute_database(
+    "INSERT OR IGNORE INTO stations "
+    "(id, name, address, latitude, longitude, status, created_at, updated_at) "
+    "VALUES (?, ?, ?, ?, ?, 'inactive', ?, ?)",
+    (990, "停运演示站", "测试地址", 41.7, 123.4,
+     "2026-09-01T00:00:00Z", "2026-09-01T00:00:00Z"),
+)
+execute_database(
+    "INSERT OR IGNORE INTO charging_piles "
+    "(id, station_id, pile_code, pile_type, power_kw, "
+    "unit_price_cents_per_kwh, status, created_at, updated_at) "
+    "VALUES (?, ?, ?, 'fast', ?, ?, 'offline', ?, ?)",
+    (9901, 990, "Z-01", 60.0, 120,
+     "2026-09-01T00:00:00Z", "2026-09-01T00:00:00Z"),
+)
+admin_piles = exchange(admin_request("admin-piles", "admin.pile.list", {}))
+assert admin_piles["type"] == "admin.pile.list.result", admin_piles
+admin_pile_rows = admin_piles["payload"]["piles"]
+assert_error(exchange(admin_request("admin-piles-extra-field", "admin.pile.list", {
+    "administrator_id": admin_id})), 1002)
+assert any(row["id"] == 9901 and row["station_id"] == 990
+           and row["status"] == "offline" for row in admin_pile_rows), admin_piles
+assert all(set(("id", "station_id", "pile_code", "pile_type", "power_kw",
+                "unit_price_cents_per_kwh", "status", "total_charge_count",
+                "total_charge_seconds")) <= set(row) for row in admin_pile_rows)
 
 created_request = admin_request("admin-create-station", "admin.station.create", {
     "administrator_id": admin_id, "name": "API 验证站", "address": "测试路 1 号",

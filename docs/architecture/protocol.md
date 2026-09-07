@@ -12,8 +12,8 @@ read/query, user profile/wallet, and user charging lifecycle operations
 (`health`, `echo`, `user.login`, `user.profile.*`, `wallet.recharge`,
 `station.list`, `pile.list`, `order.active.get`, `order.history.list`,
 `reservation.*`, `charging.*`, and the administrator operations listed below).
-The administrator wire operations are implemented by the server on this branch;
-the Qt adapter remains pending.
+The administrator wire operations, including the full-scope `admin.pile.list`,
+are implemented by the server on this branch and consumed by the Qt adapter.
 
 ## Transport and Framing
 
@@ -116,6 +116,7 @@ The following names and payloads are reserved for v1. Result types append
 | `admin.login` | `username`, `password` | `admin.login.result`: `admin`, short-lived `token`, `expires_in_seconds` |
 | `admin.statistics.get` | `token`, `range` (`7d` or `30d`) | `admin.statistics.get.result`: `statistics`（含固定长度 `revenue_daily`） |
 | `admin.station.list` | `token`, optional `query` | `admin.station.list.result`: `stations` |
+| `admin.pile.list` | `token` | `admin.pile.list.result`: `piles`（全部站点，包括 inactive 站点） |
 | `admin.station.create` | `token`, `administrator_id`, `name`, `address`, `latitude`, `longitude`, `pile_count` | `admin.station.create.result`: `station` |
 | `admin.pile.restart` | `token`, `administrator_id`, `pile_id` | `admin.pile.restart.result`: `pile` |
 | `admin.user.list` | `token`, optional `phone_query` | `admin.user.list.result`: `users` (each user includes `active_order_status`) |

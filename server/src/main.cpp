@@ -126,6 +126,8 @@ private:
             handleAdministratorStatistics(request);
         } else if (request.type == QStringLiteral("admin.station.list")) {
             handleAdministratorStationList(request);
+        } else if (request.type == QStringLiteral("admin.pile.list")) {
+            handleAdministratorPileList(request);
         } else if (request.type == QStringLiteral("admin.station.create")) {
             handleAdministratorStationCreate(request);
         } else if (request.type == QStringLiteral("admin.pile.restart")) {
@@ -451,6 +453,23 @@ private:
         }
         sendResponse(request, QStringLiteral("admin.station.list.result"),
                      QJsonObject{{QStringLiteral("stations"), stations}});
+    }
+
+    void handleAdministratorPileList(const Message &request)
+    {
+        if (!hasOnlyFields(request.payload, {QStringLiteral("token")})) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("admin.pile.list accepts token only"));
+            return;
+        }
+        QJsonArray piles; QString error; ErrorKind kind = ErrorKind::None;
+        if (!database_.listAdminPiles(&piles, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error,
+                              QStringLiteral("list administrator piles failed"));
+            return;
+        }
+        sendResponse(request, QStringLiteral("admin.pile.list.result"),
+                     QJsonObject{{QStringLiteral("piles"), piles}});
     }
 
     void handleAdministratorStationCreate(const Message &request)

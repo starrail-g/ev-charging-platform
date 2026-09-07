@@ -62,6 +62,9 @@ public:
                        QString *error = nullptr, ErrorKind *kind = nullptr);
     bool listAdminStations(const QString &queryText, QJsonArray *stations,
                            QString *error = nullptr, ErrorKind *kind = nullptr);
+    // Lists every charging pile, including piles belonging to inactive stations.
+    bool listAdminPiles(QJsonArray *piles, QString *error = nullptr,
+                        ErrorKind *kind = nullptr);
     bool createStation(const QString &requestId, qint64 administratorId, const QString &name,
                        const QString &address, double latitude, double longitude,
                        qint64 pileCount, QJsonObject *station,

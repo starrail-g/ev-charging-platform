@@ -513,7 +513,7 @@ void SocketAdminRepository::fetchUsers(
 // 全库桩计数 / admin.station.list 的站级聚合同范围)——替换原 D5 fan-out
 // (admin.station.list → 逐站 pile.list): pile.list 仅允许查 active 站, fan-out
 // 会漏停运站桩并使概览/站页/桩页数字口径分裂。接口契约见回复 B 的评审评论
-// (读类: 仅 token; 响应 {piles:[readPile 11 列]}, 待 B 在 main 实现后冻结实证)
+// (读类: 仅 token; 响应 {piles:[readPile 11 列]})
 void SocketAdminRepository::fetchPiles(
     QObject *context, std::function<void(const ListResult<PileInfo> &)> callback)
 {

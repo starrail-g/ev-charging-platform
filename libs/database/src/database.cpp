@@ -1326,6 +1326,44 @@ bool Database::listAdminStations(const QString &queryText, QJsonArray *stations,
     return true;
 }
 
+bool Database::listAdminPiles(QJsonArray *piles, QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!piles) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("piles output is null"));
+        return false;
+    }
+    if (!open(error)) {
+        if (kind) *kind = ErrorKind::Database;
+        return false;
+    }
+
+    // Administrative inventory is intentionally broader than user-facing
+    // pile.list: include piles at inactive stations so the management view,
+    // statistics and station aggregates all describe the same snapshot.
+    QSqlQuery query(connection_);
+    if (!query.exec(QStringLiteral(
+            "SELECT id, station_id, pile_code, pile_type, power_kw, "
+            "unit_price_cents_per_kwh, status, total_charge_count, "
+            "total_charge_seconds, restart_count, last_restart_at "
+            "FROM charging_piles ORDER BY id"))) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("list administrator piles failed: %1").arg(queryError(query)));
+        return false;
+    }
+    *piles = QJsonArray();
+    while (query.next()) {
+        QJsonObject pile;
+        if (!readPile(query, &pile, error)) {
+            if (kind) *kind = ErrorKind::Database;
+            return false;
+        }
+        piles->append(pile);
+    }
+    return true;
+}
+
 bool Database::createStation(const QString &requestId, qint64 administratorId,
                              const QString &name, const QString &address,
                              double latitude, double longitude, qint64 pileCount,
