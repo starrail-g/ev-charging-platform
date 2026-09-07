@@ -4,6 +4,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QFileInfo>
 #include <QHostAddress>
 #include <QJsonObject>
@@ -126,6 +127,8 @@ private:
             handleAdministratorStatistics(request);
         } else if (request.type == QStringLiteral("admin.station.list")) {
             handleAdministratorStationList(request);
+        } else if (request.type == QStringLiteral("admin.pile.list")) {
+            handleAdministratorPileList(request);
         } else if (request.type == QStringLiteral("admin.station.create")) {
             handleAdministratorStationCreate(request);
         } else if (request.type == QStringLiteral("admin.pile.restart")) {
@@ -209,6 +212,16 @@ private:
         if (!id || !value.isDouble()) return false;
         const double number = value.toDouble();
         if (!std::isfinite(number) || number < 1.0 || std::floor(number) != number
+            || number > 9007199254740991.0) return false;
+        *id = static_cast<qint64>(number);
+        return true;
+    }
+
+    static bool nonNegativeId(const QJsonValue &value, qint64 *id)
+    {
+        if (!id || !value.isDouble()) return false;
+        const double number = value.toDouble();
+        if (!std::isfinite(number) || number < 0.0 || std::floor(number) != number
             || number > 9007199254740991.0) return false;
         *id = static_cast<qint64>(number);
         return true;
@@ -453,6 +466,70 @@ private:
                      QJsonObject{{QStringLiteral("stations"), stations}});
     }
 
+    void handleAdministratorPileList(const Message &request)
+    {
+        constexpr qint64 kDefaultPageSize = 100;
+        constexpr qint64 kMaximumPageSize = 250;
+        qint64 afterId = 0;
+        qint64 limit = kDefaultPageSize;
+        const QJsonValue afterIdValue = request.payload.value(QStringLiteral("after_id"));
+        const QJsonValue limitValue = request.payload.value(QStringLiteral("limit"));
+        if (!hasOnlyFields(request.payload,
+                           {QStringLiteral("token"), QStringLiteral("after_id"),
+                            QStringLiteral("limit")})
+            || (!afterIdValue.isUndefined() && !nonNegativeId(afterIdValue, &afterId))
+            || (!limitValue.isUndefined()
+                && (!positiveId(limitValue, &limit) || limit > kMaximumPageSize))) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("admin.pile.list requires optional non-negative after_id and limit 1..250"));
+            return;
+        }
+        QJsonArray databasePage;
+        bool hasMore = false;
+        QString error;
+        ErrorKind kind = ErrorKind::None;
+        if (!database_.listAdminPiles(afterId, limit, &databasePage, &hasMore,
+                                      &error, &kind)) {
+            sendDatabaseError(request.id, kind, error,
+                              QStringLiteral("list administrator piles failed"));
+            return;
+        }
+
+        // Do not depend solely on row count: legacy SQLite rows can contain a
+        // legal pile_code large enough to exceed the protocol's 1 MiB frame.
+        // Use the exact compact JSON envelope size and leave a cursor for the
+        // first row that does not fit in this response.
+        QJsonArray piles;
+        bool truncatedForFrame = false;
+        for (const QJsonValue &value : databasePage) {
+            const QJsonObject pile = value.toObject();
+            const qint64 lastId = pile.value(QStringLiteral("id")).toInteger();
+            QJsonArray candidate = piles;
+            candidate.append(pile);
+            const bool candidateHasMore = hasMore || candidate.size() < databasePage.size();
+            QJsonObject candidatePayload{{QStringLiteral("piles"), candidate}};
+            if (candidateHasMore)
+                candidatePayload.insert(QStringLiteral("next_after_id"), lastId);
+            if (!responseFitsFrameLimit(request.id, QStringLiteral("admin.pile.list.result"),
+                                        candidatePayload)) {
+                truncatedForFrame = true;
+                break;
+            }
+            piles = candidate;
+        }
+        if (piles.isEmpty() && !databasePage.isEmpty()) {
+            sendError(request.id, ErrorCode::InternalError,
+                      QStringLiteral("a charging pile cannot fit in one protocol frame"));
+            return;
+        }
+        const bool pageHasMore = hasMore || truncatedForFrame;
+        QJsonObject payload{{QStringLiteral("piles"), piles}};
+        if (pageHasMore)
+            payload.insert(QStringLiteral("next_after_id"),
+                           piles.last().toObject().value(QStringLiteral("id")).toInteger());
+        sendResponse(request, QStringLiteral("admin.pile.list.result"), payload);
+    }
+
     void handleAdministratorStationCreate(const Message &request)
     {
         qint64 administratorId = 0;
@@ -618,13 +695,31 @@ private:
 
     void sendResponse(const Message &request, const QString &type, const QJsonObject &payload)
     {
+        if (!responseFitsFrameLimit(request.id, type, payload)) {
+            sendError(request.id, ErrorCode::InternalError,
+                      QStringLiteral("response exceeds protocol payload limit"));
+            return;
+        }
         socket_->write(encodeFrame(Message{kProtocolVersion, request.id, type, payload}));
+    }
+
+    static bool responseFitsFrameLimit(const QString &id, const QString &type,
+                                       const QJsonObject &payload)
+    {
+        return QJsonDocument(Message{kProtocolVersion, id, type, payload}.toJson())
+                   .toJson(QJsonDocument::Compact).size() <= kMaxPayloadBytes;
     }
 
     void sendError(const QString &id, ErrorCode code, const QString &message)
     {
-        socket_->write(encodeFrame(Message{kProtocolVersion, id.isEmpty() ? QStringLiteral("server") : id,
-                                           QStringLiteral("error"), errorPayload(code, message)}));
+        const QString responseId = id.isEmpty() ? QStringLiteral("server") : id;
+        QJsonObject payload = errorPayload(code, message);
+        if (!responseFitsFrameLimit(responseId, QStringLiteral("error"), payload)) {
+            payload = errorPayload(ErrorCode::InternalError,
+                                   QStringLiteral("error response exceeds protocol payload limit"));
+        }
+        socket_->write(encodeFrame(Message{kProtocolVersion, responseId,
+                                           QStringLiteral("error"), payload}));
     }
 
     QTcpSocket *socket_;

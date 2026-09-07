@@ -1326,6 +1326,55 @@ bool Database::listAdminStations(const QString &queryText, QJsonArray *stations,
     return true;
 }
 
+bool Database::listAdminPiles(qint64 afterId, qint64 limit, QJsonArray *piles,
+                              bool *hasMore, QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!piles || !hasMore || afterId < 0 || limit <= 0
+        || limit >= std::numeric_limits<qint64>::max()) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("administrator pile page arguments are invalid"));
+        return false;
+    }
+    if (!open(error)) {
+        if (kind) *kind = ErrorKind::Database;
+        return false;
+    }
+
+    // Administrative inventory is intentionally broader than user-facing
+    // pile.list: include piles at inactive stations so the management view,
+    // statistics and station aggregates all describe the same snapshot. Read
+    // one extra row so callers can issue a stable ID-cursor continuation.
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+            "SELECT id, station_id, pile_code, pile_type, power_kw, "
+            "unit_price_cents_per_kwh, status, total_charge_count, "
+            "total_charge_seconds, restart_count, last_restart_at "
+            "FROM charging_piles WHERE id > :after_id ORDER BY id LIMIT :limit"));
+    query.bindValue(QStringLiteral(":after_id"), afterId);
+    query.bindValue(QStringLiteral(":limit"), limit + 1);
+    if (!query.exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("list administrator piles failed: %1").arg(queryError(query)));
+        return false;
+    }
+    *piles = QJsonArray();
+    *hasMore = false;
+    while (query.next()) {
+        if (piles->size() == limit) {
+            *hasMore = true;
+            break;
+        }
+        QJsonObject pile;
+        if (!readPile(query, &pile, error)) {
+            if (kind) *kind = ErrorKind::Database;
+            return false;
+        }
+        piles->append(pile);
+    }
+    return true;
+}
+
 bool Database::createStation(const QString &requestId, qint64 administratorId,
                              const QString &name, const QString &address,
                              double latitude, double longitude, qint64 pileCount,

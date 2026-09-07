@@ -8,6 +8,8 @@
 #include <QTcpSocket>
 #include <QtGlobal>
 
+#include <cmath>
+
 #include "ev_protocol/frame_codec.h"
 #include "ev_protocol/message.h"
 #include "socketparse.h"
@@ -22,6 +24,7 @@ constexpr int kCodeOk = 0;
 constexpr int kCodeUnauthorized = 1100; // 会话 token 缺失/过期/与 administrator_id 不匹配
 constexpr int kCodeInvalidRequest = 1002; // 坏信封/响应结构错误的兜底协议码
 constexpr int kCodeNotFound = 1200;
+constexpr int kPileListPageSize = 100;
 
 // 查询类超时文案(可原样重试——查询无幂等限制)
 const QString kQueryTimeoutMessage = QStringLiteral("请求超时，请重试");
@@ -508,38 +511,72 @@ void SocketAdminRepository::fetchUsers(
                 });
 }
 
-// 2026-09-07 评审口径 A(管理员全量视图, 与 B 对齐): fetchPiles 单请求
-// admin.pile.list(全量桩 = 全部站点含 inactive 站, 与 admin.statistics.get 的
-// 全库桩计数 / admin.station.list 的站级聚合同范围)——替换原 D5 fan-out
-// (admin.station.list → 逐站 pile.list): pile.list 仅允许查 active 站, fan-out
-// 会漏停运站桩并使概览/站页/桩页数字口径分裂。接口契约见回复 B 的评审评论
-// (读类: 仅 token; 响应 {piles:[readPile 11 列]}, 待 B 在 main 实现后冻结实证)
 void SocketAdminRepository::fetchPiles(
     QObject *context, std::function<void(const ListResult<PileInfo> &)> callback)
 {
-    sendRequest(QStringLiteral("admin.pile.list"), QJsonObject(), /*isAction=*/false,
-                context, [this, callback](const ReplyEnvelope &env) {
+    fetchPilesPage(context, std::make_shared<PileFetchState>(), std::move(callback));
+}
+
+void SocketAdminRepository::fetchPilesPage(
+    QObject *context, const std::shared_ptr<PileFetchState> &state,
+    std::function<void(const ListResult<PileInfo> &)> callback)
+{
+    QJsonObject specific{{QStringLiteral("after_id"), static_cast<double>(state->afterId)},
+                         {QStringLiteral("limit"), kPileListPageSize}};
+    sendRequest(QStringLiteral("admin.pile.list"), specific, /*isAction=*/false,
+                context, [this, context, state, callback](const ReplyEnvelope &env) {
                     ListResult<PileInfo> result;
                     result.ok = env.ok;
                     result.errorCode = env.errorCode;
                     result.networkError = env.networkError;
                     result.error = env.message;
-                    if (env.ok) {
-                        QStringList issues;
-                        QString reason;
-                        QList<PileInfo> piles;
-                        if (!socketparse::parsePilesPayload(env.payload, &piles, &issues,
-                                                            &reason)) {
-                            result.ok = false;
-                            result.errorCode = kCodeInvalidRequest;
-                            result.error = reason;
-                        } else {
-                            cachePileIds(piles); // restartPile 的 pile_code→id 前置
-                            result.items = piles;
-                        }
+                    if (!env.ok) {
+                        if (callback)
+                            callback(result);
+                        return;
                     }
-                    if (callback)
-                        callback(result);
+
+                    QStringList issues;
+                    QString reason;
+                    QList<PileInfo> page;
+                    if (!socketparse::parsePilesPayload(env.payload, &page, &issues, &reason)) {
+                        result.ok = false;
+                        result.errorCode = kCodeInvalidRequest;
+                        result.error = reason;
+                        if (callback)
+                            callback(result);
+                        return;
+                    }
+                    state->items.append(page);
+
+                    const QJsonValue nextValue = env.payload.value(QStringLiteral("next_after_id"));
+                    if (nextValue.isUndefined() || nextValue.isNull()) {
+                        cachePileIds(state->items); // restartPile 的 pile_code→id 前置
+                        result.items = state->items;
+                        if (callback)
+                            callback(result);
+                        return;
+                    }
+                    if (!nextValue.isDouble()) {
+                        result.ok = false;
+                        result.errorCode = kCodeInvalidRequest;
+                        result.error = QStringLiteral("next_after_id must be an integer");
+                        if (callback)
+                            callback(result);
+                        return;
+                    }
+                    const double nextNumber = nextValue.toDouble();
+                    if (!std::isfinite(nextNumber) || std::floor(nextNumber) != nextNumber
+                        || nextNumber <= state->afterId || nextNumber > 9007199254740991.0) {
+                        result.ok = false;
+                        result.errorCode = kCodeInvalidRequest;
+                        result.error = QStringLiteral("next_after_id must advance the pile cursor");
+                        if (callback)
+                            callback(result);
+                        return;
+                    }
+                    state->afterId = static_cast<qint64>(nextNumber);
+                    fetchPilesPage(context, state, callback);
                 });
 }
 

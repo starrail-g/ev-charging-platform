@@ -39,7 +39,7 @@
   tst_launchsmoke **6** / tst_loginflow **7** / tst_socketparse **10** / tst_socketadapter **16**，
   全 0 failed（9/6 token 适配后 +authenticatedRequestsCarrySessionToken
   +unauthorizedClearsSessionState；9/7 评审轮后 sp +parseStatisticsPayloadMapsHasData、
-  sa 用例重构为 fetchPiles 全量单请求口径并 +fetchOverviewMapsEmptyHasDataFlag）
+  sa 用例重构为 fetchPiles 管理员全量口径并 +fetchOverviewMapsEmptyHasDataFlag）
 - Ubuntu VM（BitDev，qmake6 6.2.4）：同五套逐字一致（tst_socketadapter 曾现 Ubuntu-only
   SIGSEGV——fake server 析构对正在析构的 accepted socket 调 deleteLater 属 UB，已修：
   断开只清 decoder，socket 生命周期交还 QTcpServer；修复后全绿）
@@ -50,7 +50,7 @@
   - 首轮（21:22 落盘，逐字）：login 拿 token PASS / fetchOverview 双 range PASS /
     fetchStations PASS / fetchPiles 逐站 fan-out PASS（6 桩，fault=0）/ 冻结 PASS /
     解冻 PASS；**restartPile 跳过**（当时库内无 fault 桩——前序轮次已重启归位）。
-    注：9/7 评审口径 A 后 fetchPiles 已改为单请求 `admin.pile.list`（全量含停运站桩），
+    注：9/7 评审口径 A 后 fetchPiles 改为 `admin.pile.list` 游标分页聚合（全量含停运站桩），
     闸门现场按新口径复跑并留痕。
   - 补跑（21:53–21:55，两桩处 fault 态后）：`admin.pile.restart` 真跑 ×2 成功并持久化
     ——服务端 `request_records` 留痕 `c-admin-33`（A-03）/`c-admin-39`（B-02），响应

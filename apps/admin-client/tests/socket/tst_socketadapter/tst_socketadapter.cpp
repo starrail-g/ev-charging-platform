@@ -17,7 +17,7 @@
 #include "models/adminmodels.h"
 
 // SocketAdminRepository 本地假服务器测试（设计稿 D8：纯本地、不依赖 B）：
-//   成功各接口 / 1100 / fetchPiles 全量单请求(admin.pile.list) / 整页 error /
+//   成功各接口 / 1100 / fetchPiles 游标分页聚合(admin.pile.list) / 整页 error /
 //   动作 1200-1201 映射 / 坏帧断连 / 超时 / 中途断连 / context 销毁防悬垂 /
 //   连接失败后可重连。
 // 假服务器行为经 onRequest 注入（按收到的请求 type 回响应）。
@@ -140,7 +140,7 @@ private slots:
     void fetchOverviewMapsEmptyHasDataFlag();
     void authenticatedRequestsCarrySessionToken(); // Q6 冻结契约(2026-09-06)
     void unauthorizedClearsSessionState();
-    void fetchPilesRequestsAllPilesInOneCall();
+    void fetchPilesAggregatesCursorPages();
     void fetchPilesFailsWholePageOnServerError();
     void restartPileUsesCachedIdAndMapsConflict();
     void requestTimeoutMarksNetworkError();
@@ -371,7 +371,7 @@ void TestSocketAdapter::authenticatedRequestsCarrySessionToken()
     });
     QTRY_VERIFY_WITH_TIMEOUT(usersDone, 3000);
 
-    // fetchPiles 拿桩缓存(restartPile 需要 pile_id): 单请求 admin.pile.list
+    // fetchPiles 拿桩缓存(restartPile 需要 pile_id): admin.pile.list 游标页聚合
     bool pilesDone = false;
     repository.fetchPiles(&repository, [&](const ev::ListResult<ev::PileInfo> &) {
         pilesDone = true;
@@ -483,25 +483,32 @@ void TestSocketAdapter::unauthorizedClearsSessionState()
     }
 }
 
-void TestSocketAdapter::fetchPilesRequestsAllPilesInOneCall()
+void TestSocketAdapter::fetchPilesAggregatesCursorPages()
 {
-    // 口径 A(2026-09-07 评审对齐): fetchPiles = 单请求 admin.pile.list,
-    // 服务端返回全量桩(全部站点含 inactive 站桩) —— 替换原"station.list →
-    // 逐站 pile.list"fan-out(pile.list 仅 active 站, 会漏停运站桩)
+    // 口径 A 保持管理员全量视图（含 inactive 站桩），但 wire 层必须在 1 MiB
+    // 帧上限内用 next_after_id 游标分页；适配层对页面仍返回聚合后的全量列表。
     FakeAdminServer server;
     QVERIFY(server.listen());
     server.onRequest = [](const ev::protocol::Message &request, QTcpSocket *socket) {
         if (request.type == QStringLiteral("admin.pile.list")) {
+            const qint64 afterId = request.payload.value(QStringLiteral("after_id")).toInteger();
+            if (afterId == 0) {
+                reply(socket, request.id, QStringLiteral("admin.pile.list.result"),
+                      QJsonObject{{QStringLiteral("piles"), QJsonArray{
+                          QJsonObject{{QStringLiteral("id"), 1},
+                                      {QStringLiteral("station_id"), 1},
+                                      {QStringLiteral("pile_code"), QStringLiteral("P-101-A")},
+                                      {QStringLiteral("status"), QStringLiteral("charging")}},
+                          QJsonObject{{QStringLiteral("id"), 2},
+                                      {QStringLiteral("station_id"), 1},
+                                      {QStringLiteral("pile_code"), QStringLiteral("P-101-B")},
+                                      {QStringLiteral("status"), QStringLiteral("idle")}},
+                      }}, {QStringLiteral("next_after_id"), 2}});
+                return;
+            }
+            QCOMPARE(afterId, qint64(2));
             reply(socket, request.id, QStringLiteral("admin.pile.list.result"),
                   QJsonObject{{QStringLiteral("piles"), QJsonArray{
-                      QJsonObject{{QStringLiteral("id"), 1},
-                                  {QStringLiteral("station_id"), 1},
-                                  {QStringLiteral("pile_code"), QStringLiteral("P-101-A")},
-                                  {QStringLiteral("status"), QStringLiteral("charging")}},
-                      QJsonObject{{QStringLiteral("id"), 2},
-                                  {QStringLiteral("station_id"), 1},
-                                  {QStringLiteral("pile_code"), QStringLiteral("P-101-B")},
-                                  {QStringLiteral("status"), QStringLiteral("idle")}},
                       QJsonObject{{QStringLiteral("id"), 3},
                                   {QStringLiteral("station_id"), 2}, // 停运站桩也全量返回
                                   {QStringLiteral("pile_code"), QStringLiteral("P-202-C")},
@@ -521,9 +528,16 @@ void TestSocketAdapter::fetchPilesRequestsAllPilesInOneCall()
     QVERIFY2(result.ok, qPrintable(result.error));
     QCOMPARE(result.items.size(), 3); // 全量: 不含站状态过滤
 
-    // 单请求: 不再先 admin.station.list、不再逐站 pile.list
-    QCOMPARE(server.m_requests.size(), 1);
+    // 两页均只用管理员桩接口；不再先 station.list 或逐站 pile.list。
+    QCOMPARE(server.m_requests.size(), 2);
     QCOMPARE(server.m_requests.at(0).type, QStringLiteral("admin.pile.list"));
+    QCOMPARE(server.m_requests.at(1).type, QStringLiteral("admin.pile.list"));
+    QCOMPARE(server.m_requests.at(0).payload.value(QStringLiteral("after_id")).toInteger(),
+             qint64(0));
+    QCOMPARE(server.m_requests.at(1).payload.value(QStringLiteral("after_id")).toInteger(),
+             qint64(2));
+    QCOMPARE(server.m_requests.at(0).payload.value(QStringLiteral("limit")).toInteger(),
+             qint64(100));
 
     // 桩缓存(restartPile 的 pile_code→id 前置)来自同一响应
     QVERIFY(repository.cachedPileCount() >= 3);
