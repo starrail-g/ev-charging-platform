@@ -110,6 +110,15 @@ bool parseUsersPayload(const QJsonObject &payload, QList<UserInfo> *users,
 //   (冻结 2026-09-07, main getStatistics: 空库 false / 有数据 true; 缺失 → true)
 bool parseStatisticsPayload(const QJsonObject &payload, OverviewStats *stats,
                             bool *hasData, QStringList *issues, QString *reason);
+// statistics 对象 → 完整逐日营收序列(严格, 供图表; 旧摘要有数据但序列坏 → available=false
+//   + error, 不把缺失日补 0、不伪造曲线):
+//   - range 回声 == expectedRange(7d/30d); revenue_daily 条数 == 7/30;
+//   - 日期为 UTC ISO 日, 升序无重复无缺日, 末日 == updated_at 的 UTC 日期;
+//   - updated_at 为合法 ISO-8601 且以 Z 结尾(整秒快照, 同服务端 utcNow);
+//   - 金额非负整数且 <= 2^53-1(JSON/图表可精确表示), 逐日之和 == revenue_cents。
+// 任一不符 → 返回 available=false 的序列(error 中文说明); 全零合法序列视为正常零营收。
+RevenueSeries parseRevenueSeries(const QJsonObject &statisticsObject,
+                                 const QString &expectedRange);
 // payload["admin"]: 必须是对象; admin.login.result 专用
 bool parseAdminLoginPayload(const QJsonObject &payload, LoginResult *out,
                             QStringList *issues, QString *reason);

@@ -12,12 +12,13 @@
 #include "data/mockadminrepository.h"
 #include "theme/generated/theme_tokens.h"
 #include "widgets/metriccard.h"
+#include "widgets/revenuemetriccard.h"
 #include "widgets/statestack.h"
 #include "widgets/stationtopologywidget.h"
 
 namespace {
 
-const QString kSimulatedErrorDisplay = QStringLiteral("接口错误：模拟数据层失败");
+const QString kLoadErrorDisplay = QStringLiteral("接口错误：概览加载失败");
 const QString kFaultDisplay = QStringLiteral("故障");
 const QString kOfflineDisplay = QStringLiteral("离线");
 
@@ -89,6 +90,9 @@ OverviewPage::OverviewPage(ev::AdminRepository *repository, QWidget *parent)
     auto *topLayout = new QHBoxLayout;
     topLayout->addStretch();
     topLayout->addWidget(demoControls);
+    // 演示控件只在 Mock 数据源下显示(Socket 模式不出现"演示控制", 错误文案亦不冒充模拟)
+    demoControls->setVisible(
+        !m_repository->dataSourceName().contains(QLatin1String("Socket")));
 
     // ---- 内容区：指标卡 + 需关注列表 + 站点态势 ----
     auto *content = new QWidget(this);
@@ -97,8 +101,12 @@ OverviewPage::OverviewPage(ev::AdminRepository *repository, QWidget *parent)
     m_pileTotalCard = new MetricCard(QStringLiteral("总桩数"), QStringLiteral("metricPileTotal"), content);
     m_availabilityCard = new MetricCard(QStringLiteral("网络可用率"), QStringLiteral("metricAvailability"), content);
     m_utilizationCard = new MetricCard(QStringLiteral("平均利用率"), QStringLiteral("metricUtilization"), content);
-    m_revenueCard = new MetricCard(QStringLiteral("近 7 日营收"), QStringLiteral("metricRevenue"), content);
+    m_revenueCard = new RevenueMetricCard(content);
     m_revenueCard->setObjectName(QStringLiteral("revenueCard"));
+    connect(m_revenueCard, &RevenueMetricCard::detailsRequested, this,
+            &OverviewPage::revenueDetailsRequested);
+    connect(m_revenueCard, &RevenueMetricCard::retryRequested,
+            this, &OverviewPage::refresh);
 
     auto *metricsLayout = new QHBoxLayout;
     metricsLayout->setSpacing(12);
@@ -235,12 +243,25 @@ void OverviewPage::refresh()
         });
 }
 
+void OverviewPage::invalidatePendingLoads()
+{
+    // 注销/退出: 使旧 generation 回调全部作废; 清三路结果与计数, 营收卡复位
+    ++m_loadGeneration;
+    m_pendingFetches = 0;
+    m_lastOverview = ev::OverviewResult();
+    m_lastPiles = ev::ListResult<ev::PileInfo>();
+    m_lastStations = ev::ListResult<ev::StationInfo>();
+    m_revenueCard->reset();
+    m_stateStack->showState(StateStack::State::Loading,
+                            QStringLiteral("正在加载概览数据…"));
+}
+
 void OverviewPage::onAllReady()
 {
     if (!m_lastOverview.ok) {
         m_stateStack->showState(StateStack::State::Error,
                                 QStringLiteral("%1（%2）")
-                                    .arg(kSimulatedErrorDisplay, m_lastOverview.error));
+                                    .arg(kLoadErrorDisplay, m_lastOverview.error));
         return;
     }
     if (!m_lastOverview.hasData) {
@@ -252,7 +273,7 @@ void OverviewPage::onAllReady()
     if (!m_lastPiles.ok || !m_lastStations.ok) {
         const QString detail = m_lastPiles.ok ? m_lastStations.error : m_lastPiles.error;
         m_stateStack->showState(StateStack::State::Error,
-                                QStringLiteral("%1（%2）").arg(kSimulatedErrorDisplay, detail));
+                                QStringLiteral("%1（%2）").arg(kLoadErrorDisplay, detail));
         return;
     }
 
@@ -271,11 +292,8 @@ void OverviewPage::renderContent()
     m_availabilityCard->setValue(QString::number(rate * 100.0, 'f', 1) + QStringLiteral("%"));
     m_utilizationCard->setValue(
         QString::number(stats.avgStationUtilization * 100.0, 'f', 0) + QStringLiteral("%"));
-    m_revenueCard->setValue(ev::formatYuanCents(stats.revenueCents));
-    // A-02 近 30 日汇总（hint 小字；趋势/时间维度切换由 Web 大屏承担，
-    // Qt 侧统一 UI 无趋势图设计，今日/本月/总口径待 9/4 评审定裁）
-    m_revenueCard->setHint(
-        QStringLiteral("近 30 日 %1").arg(ev::formatYuanCents(stats.revenue30dCents)));
+    // 第四卡: 营收融合卡(7/30 日金额主次 + 迷你折线; 详情/重试信号由卡内发出)
+    m_revenueCard->setStatistics(stats);
 
     // 需关注列表：故障/离线桩（同一五态语义；"需关注"= 故障 + 离线）
     int attentionCount = 0;

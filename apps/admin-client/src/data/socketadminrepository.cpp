@@ -389,6 +389,7 @@ void SocketAdminRepository::fetchOverview(
         OverviewStats stats7;
         qint64 revenue30dCents = 0;
         bool hasData = true;      // 7d 主体 has_data(空库=false, 服务端权威)
+        RevenueSeries series30;   // 30d 完整序列(7d 序列随 stats7 保存)
     };
     auto state = std::make_shared<MergeState>();
 
@@ -413,6 +414,7 @@ void SocketAdminRepository::fetchOverview(
         result.errorCode = kCodeOk;
         result.stats = state->stats7;
         result.stats.revenue30dCents = state->revenue30dCents;
+        result.stats.revenue30dSeries = state->series30;
         // has_data(冻结 2026-09-07, main getStatistics): 服务端显式区分空库(false)
         // 与"有数据但指标为 0"(true); 以 7d 主体响应为准(两 range 同库同刻一致),
         // 空库场景由概览页走"暂无概览数据"空态, 不展示 0 值指标页
@@ -449,11 +451,20 @@ void SocketAdminRepository::fetchOverview(
                             return;
                         }
                         --state->remaining;
+                        // 该 range 的完整逐日序列(严格解析, 图表专用): 序列坏只令该序列
+                        // available=false(营收卡显示重试入口), 不清掉正常摘要——整页失败
+                        // 仅限信封/结构级错误(见上 parseStatisticsPayload 失败分支)。
+                        const auto series = socketparse::parseRevenueSeries(
+                            env.payload.value(QStringLiteral("statistics")).toObject(),
+                            range);
                         if (range == QLatin1String("7d")) {
+                            stats.revenue7dSeries = series;
                             state->stats7 = stats; // 主体: 五态/利用率/updated_at 取 7d
                             state->hasData = hasData; // has_data 以主体为准
                         } else {
-                            // 30d 响应聚合 revenue_cents = 30 条 revenue_daily 之和
+                            // 30d 响应聚合 revenue_cents = 30 条 revenue_daily 之和;
+                            // 序列与摘要各自保留(两 range 快照时间可能不同, 不宣称同快照)
+                            state->series30 = series;
                             state->revenue30dCents = stats.revenueCents;
                         }
                         maybeDeliver();

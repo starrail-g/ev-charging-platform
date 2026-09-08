@@ -127,6 +127,45 @@ QJsonObject loginResultPayload()
                        {QStringLiteral("token"), kSessionToken}};
 }
 
+// 服务端形状 statistics 对象(database.cpp getStatistics 构造点): range/revenue_daily
+// 均在 statistics 内; 行值由调用方给定, revenue_cents = 逐日之和(与真实服务端同口径)。
+QJsonObject statisticsBody(const QString &range, const QString &updatedAt,
+                           const QList<qint64> &dayValues)
+{
+    const QDateTime snapshot = QDateTime::fromString(updatedAt, Qt::ISODate);
+    const QDate end = snapshot.toUTC().date();
+    QJsonArray daily;
+    qint64 sum = 0;
+    for (int i = 0; i < dayValues.size(); ++i) {
+        daily.append(QJsonObject{
+            {QStringLiteral("date"),
+             end.addDays(i + 1 - dayValues.size()).toString(Qt::ISODate)},
+            {QStringLiteral("revenue_cents"), dayValues.at(i)}});
+        sum += dayValues.at(i);
+    }
+    return QJsonObject{
+        {QStringLiteral("range"), range},
+        {QStringLiteral("revenue_cents"), sum},
+        {QStringLiteral("revenue_daily"), daily},
+        {QStringLiteral("pile_idle"), 1},
+        {QStringLiteral("pile_reserved"), 1},
+        {QStringLiteral("pile_charging"), 2},
+        {QStringLiteral("pile_fault"), 1},
+        {QStringLiteral("pile_offline"), 1},
+        {QStringLiteral("avg_station_utilization"), 0.42},
+        {QStringLiteral("updated_at"), updatedAt},
+        {QStringLiteral("has_data"), true}};
+}
+
+QJsonObject statisticsBody(const QString &range, const QString &updatedAt)
+{
+    const int count = range == QStringLiteral("7d") ? 7 : 30;
+    QList<qint64> values;
+    for (int i = 0; i < count; ++i)
+        values.append(qint64(i + 1) * 1000); // 7d 和 = 28000; 30d 和 = 465000
+    return statisticsBody(range, updatedAt, values);
+}
+
 } // namespace
 
 class TestSocketAdapter : public QObject
@@ -138,6 +177,9 @@ private slots:
     void loginRejectedWith1100();
     void fetchOverviewMapsStatisticsPayload();
     void fetchOverviewMapsEmptyHasDataFlag();
+    void fetchOverviewSeriesSurviveResponseOrderSwap();
+    void fetchOverviewKeepsSummaryWhenRevenueSeriesCorrupt();
+    void fetchOverviewKeepsPerSeriesSnapshotsAcrossSettlement();
     void authenticatedRequestsCarrySessionToken(); // Q6 冻结契约(2026-09-06)
     void unauthorizedClearsSessionState();
     void fetchPilesAggregatesCursorPages();
@@ -207,29 +249,93 @@ void TestSocketAdapter::fetchOverviewMapsStatisticsPayload()
 {
     // Q3 冻结(2026-09-05, B 1f157de): statistics 无独立 30d 合计键 → fetchOverview
     // 双请求(7d+30d): 7d 为主体(五态/利用率/updated_at), 30d 响应的聚合
-    // revenue_cents 填入 revenue30dCents(营收卡副行)
+    // revenue_cents 填入 revenue30dCents(营收卡副行)。fixture 对齐真实服务端
+    // (database.cpp getStatistics): range 与 revenue_daily 均位于 statistics 内。
     FakeAdminServer server;
     QVERIFY(server.listen());
     server.onRequest = [](const ev::protocol::Message &request, QTcpSocket *socket) {
         if (request.type == QStringLiteral("admin.statistics.get")) {
             const QString range =
                 request.payload.value(QLatin1String("range")).toString();
-            QJsonObject body{
-                {QStringLiteral("revenue_cents"), 286540},
-                {QStringLiteral("pile_idle"), 1},
-                {QStringLiteral("pile_reserved"), 1},
-                {QStringLiteral("pile_charging"), 2},
-                {QStringLiteral("pile_fault"), 1},
-                {QStringLiteral("pile_offline"), 1},
-                {QStringLiteral("avg_station_utilization"), 0.42},
-                {QStringLiteral("updated_at"), QStringLiteral("2026-09-01T10:15:00Z")},
-                {QStringLiteral("has_data"), true}, // 冻结 2026-09-07: main 显式返回
-            };
-            if (range == QLatin1String("30d"))
-                body.insert(QStringLiteral("revenue_cents"), 983840); // 30 日聚合值
+            const QString updatedAt = range == QLatin1String("7d")
+                ? QStringLiteral("2026-09-01T10:15:00Z")
+                : QStringLiteral("2026-09-01T10:16:00Z");
             reply(socket, request.id, QStringLiteral("admin.statistics.get.result"),
-                  QJsonObject{{QStringLiteral("statistics"), body},
-                              {QStringLiteral("range"), range}});
+                  QJsonObject{{QStringLiteral("statistics"),
+                               statisticsBody(range, updatedAt)}});
+        }
+    };
+
+    ev::SocketAdminRepository repository(QStringLiteral("127.0.0.1"), server.port());
+    bool done = false;
+    int deliveries = 0;
+    ev::OverviewResult result;
+    repository.fetchOverview(&repository, [&](const ev::OverviewResult &out) {
+        result = out;
+        ++deliveries;
+        done = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(done, 3000);
+    QVERIFY(result.ok);
+    QCOMPARE(deliveries, 1); // 双请求合并后整页只派发一次
+    // 摘要: 7d 主体(五态/利用率/更新时间取 7d 响应)
+    QCOMPARE(result.stats.revenueCents, qint64(28000));     // 7d 序列和
+    QCOMPARE(result.stats.revenue30dCents, qint64(465000)); // 30d 序列和
+    QCOMPARE(result.stats.pileIdle, 1);
+    QCOMPARE(result.stats.pileFault, 1);
+    QCOMPARE(result.stats.pileOffline, 1);
+    QCOMPARE(result.stats.avgStationUtilization, 0.42);
+    QCOMPARE(result.stats.updatedAt, QStringLiteral("2026-09-01T10:15:00Z"));
+    QVERIFY(result.hasData); // statistics.has_data: true → 有数据(非空库)
+    // 完整序列: 条数/可用/合计与各自响应一致; 两 range 的 updatedAt 各自保留
+    const auto &seven = result.stats.revenue7dSeries;
+    const auto &thirty = result.stats.revenue30dSeries;
+    QVERIFY(seven.available);
+    QVERIFY(thirty.available);
+    QCOMPARE(seven.days.size(), 7);
+    QCOMPARE(thirty.days.size(), 30);
+    QCOMPARE(seven.totalCents, result.stats.revenueCents);
+    QCOMPARE(thirty.totalCents, result.stats.revenue30dCents);
+    QCOMPARE(seven.updatedAt, QStringLiteral("2026-09-01T10:15:00Z"));
+    QCOMPARE(thirty.updatedAt, QStringLiteral("2026-09-01T10:16:00Z"));
+    QCOMPARE(seven.days.last().date, QDate(2026, 9, 1));
+    QCOMPARE(thirty.days.first().date, QDate(2026, 8, 3));
+    // 双请求: range 7d + 30d 各一次
+    QCOMPARE(server.m_requests.size(), 2);
+    bool saw7d = false;
+    bool saw30d = false;
+    for (const ev::protocol::Message &req : server.m_requests) {
+        const QString r = req.payload.value(QLatin1String("range")).toString();
+        saw7d = saw7d || r == QLatin1String("7d");
+        saw30d = saw30d || r == QLatin1String("30d");
+    }
+    QVERIFY(saw7d && saw30d);
+}
+
+void TestSocketAdapter::fetchOverviewSeriesSurviveResponseOrderSwap()
+{
+    // 两次响应顺序互换(30d 先回、7d 延迟 80ms 后到): 合并仍正确——整页一次、
+    // 序列各归各 range、各自 updatedAt 不混淆。
+    FakeAdminServer server;
+    QVERIFY(server.listen());
+    server.onRequest = [](const ev::protocol::Message &request, QTcpSocket *socket) {
+        if (request.type != QStringLiteral("admin.statistics.get"))
+            return;
+        const QString range = request.payload.value(QLatin1String("range")).toString();
+        const QString updatedAt = range == QLatin1String("7d")
+            ? QStringLiteral("2026-09-01T10:15:00Z")
+            : QStringLiteral("2026-09-01T10:16:00Z");
+        const auto payload = QJsonObject{
+            {QStringLiteral("statistics"), statisticsBody(range, updatedAt)}};
+        if (range == QLatin1String("30d")) {
+            reply(socket, request.id, QStringLiteral("admin.statistics.get.result"),
+                  payload);
+        } else {
+            // 7d 后到(80ms 远小于 10s 请求超时); socket 由 server 持有, 延迟安全
+            QTimer::singleShot(80, socket, [socket, request, payload] {
+                reply(socket, request.id,
+                      QStringLiteral("admin.statistics.get.result"), payload);
+            });
         }
     };
 
@@ -242,24 +348,118 @@ void TestSocketAdapter::fetchOverviewMapsStatisticsPayload()
     });
     QTRY_VERIFY_WITH_TIMEOUT(done, 3000);
     QVERIFY(result.ok);
-    QCOMPARE(result.stats.revenueCents, qint64(286540));      // 7d 主体
-    QCOMPARE(result.stats.revenue30dCents, qint64(983840));   // 30d 请求聚合值
-    QCOMPARE(result.stats.pileIdle, 1);
-    QCOMPARE(result.stats.pileFault, 1);
-    QCOMPARE(result.stats.pileOffline, 1);
-    QCOMPARE(result.stats.avgStationUtilization, 0.42);
-    QCOMPARE(result.stats.updatedAt, QStringLiteral("2026-09-01T10:15:00Z"));
-    QVERIFY(result.hasData); // statistics.has_data: true → 有数据(非空库)
-    // 双请求: range 7d + 30d 各一次
+    QCOMPARE(result.stats.revenueCents, qint64(28000));     // 7d 主体值不被 30d 覆盖
+    QCOMPARE(result.stats.revenue30dCents, qint64(465000)); // 30d 聚合各归其位
+    QCOMPARE(result.stats.revenue7dSeries.updatedAt,
+             QStringLiteral("2026-09-01T10:15:00Z"));
+    QCOMPARE(result.stats.revenue30dSeries.updatedAt,
+             QStringLiteral("2026-09-01T10:16:00Z"));
+    QCOMPARE(result.stats.revenue7dSeries.days.size(), 7);
+    QCOMPARE(result.stats.revenue30dSeries.days.size(), 30);
+    QVERIFY(result.stats.revenue7dSeries.available);
+    QVERIFY(result.stats.revenue30dSeries.available);
     QCOMPARE(server.m_requests.size(), 2);
-    bool saw7d = false;
-    bool saw30d = false;
-    for (const ev::protocol::Message &req : server.m_requests) {
-        const QString r = req.payload.value(QLatin1String("range")).toString();
-        saw7d = saw7d || r == QLatin1String("7d");
-        saw30d = saw30d || r == QLatin1String("30d");
-    }
-    QVERIFY(saw7d && saw30d);
+}
+
+void TestSocketAdapter::fetchOverviewKeepsSummaryWhenRevenueSeriesCorrupt()
+{
+    // 7d 序列损坏(缺 revenue_daily)只影响该序列: 摘要正常、整页 ok、错误序列可展示
+    // 重试入口, 正确 range(30d)仍可用。
+    FakeAdminServer server;
+    QVERIFY(server.listen());
+    server.onRequest = [](const ev::protocol::Message &request, QTcpSocket *socket) {
+        if (request.type != QStringLiteral("admin.statistics.get"))
+            return;
+        const QString range = request.payload.value(QLatin1String("range")).toString();
+        QJsonObject body = statisticsBody(range, QStringLiteral("2026-09-01T10:15:00Z"));
+        if (range == QLatin1String("7d")) {
+            body.remove(QStringLiteral("revenue_daily")); // 缺序列(服务端漂移/坏数据)
+            body.insert(QStringLiteral("revenue_cents"), 123456); // 摘要级合计仍在
+        }
+        reply(socket, request.id, QStringLiteral("admin.statistics.get.result"),
+              QJsonObject{{QStringLiteral("statistics"), body}});
+    };
+
+    ev::SocketAdminRepository repository(QStringLiteral("127.0.0.1"), server.port());
+    bool done = false;
+    int deliveries = 0;
+    ev::OverviewResult result;
+    repository.fetchOverview(&repository, [&](const ev::OverviewResult &out) {
+        result = out;
+        ++deliveries;
+        done = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(done, 3000);
+    QVERIFY(result.ok); // 信封/结构合法 → 整页成功(非网络/协议级失败)
+    QCOMPARE(deliveries, 1);
+    QCOMPARE(result.stats.revenueCents, qint64(123456)); // 摘要不受序列损坏影响
+    QVERIFY(!result.stats.revenue7dSeries.available);
+    QVERIFY(!result.stats.revenue7dSeries.error.isEmpty());
+    QVERIFY(result.stats.revenue7dSeries.days.isEmpty());
+    QVERIFY(result.stats.revenue30dSeries.available); // 正确 range 序列仍可用
+    QCOMPARE(result.stats.revenue30dCents, qint64(465000));
+    QCOMPARE(server.m_requests.size(), 2);
+}
+
+void TestSocketAdapter::fetchOverviewKeepsPerSeriesSnapshotsAcrossSettlement()
+{
+    // 7d/30d 两次响应跨结算更新: 各自序列只要求自洽(末日 = 各自 updated_at 当日),
+    // 不要求 7d 尾部金额 == 30d 尾部金额; 页面展示各自快照时间, 不宣称同一快照。
+    FakeAdminServer server;
+    QVERIFY(server.listen());
+    server.onRequest = [](const ev::protocol::Message &request, QTcpSocket *socket) {
+        if (request.type != QStringLiteral("admin.statistics.get"))
+            return;
+        const QString range = request.payload.value(QLatin1String("range")).toString();
+        if (range == QLatin1String("7d")) {
+            // 快照 10:15: 末 7 日金额 = 1000 + i*500
+            QList<qint64> values;
+            for (int i = 0; i < 7; ++i)
+                values.append(qint64(1000) + i * 500);
+            reply(socket, request.id, QStringLiteral("admin.statistics.get.result"),
+                  QJsonObject{{QStringLiteral("statistics"),
+                               statisticsBody(range,
+                                              QStringLiteral("2026-09-01T10:15:00Z"),
+                                              values)}});
+        } else {
+            // 快照 10:16(晚 1 分钟, 结算已推进): 前 23 日 = 2000 + i*100,
+            // 末 7 日 = 3000 + i*500(≠ 7d 尾部金额)
+            QList<qint64> values;
+            for (int i = 0; i < 23; ++i)
+                values.append(qint64(2000) + i * 100);
+            for (int i = 0; i < 7; ++i)
+                values.append(qint64(3000) + i * 500);
+            reply(socket, request.id, QStringLiteral("admin.statistics.get.result"),
+                  QJsonObject{{QStringLiteral("statistics"),
+                               statisticsBody(range,
+                                              QStringLiteral("2026-09-01T10:16:00Z"),
+                                              values)}});
+        }
+    };
+
+    ev::SocketAdminRepository repository(QStringLiteral("127.0.0.1"), server.port());
+    bool done = false;
+    ev::OverviewResult result;
+    repository.fetchOverview(&repository, [&](const ev::OverviewResult &out) {
+        result = out;
+        done = true;
+    });
+    QTRY_VERIFY_WITH_TIMEOUT(done, 3000);
+    QVERIFY(result.ok);
+    const auto &seven = result.stats.revenue7dSeries;
+    const auto &thirty = result.stats.revenue30dSeries;
+    QVERIFY(seven.available && thirty.available);
+    QCOMPARE(seven.days.size(), 7);
+    QCOMPARE(thirty.days.size(), 30);
+    // 跨快照: 两份序列尾部金额不同(结算在两次快照间推进), 不强制一致
+    QVERIFY(seven.days.last().revenueCents != thirty.days.last().revenueCents);
+    QCOMPARE(seven.days.last().date, thirty.days.last().date); // 各自末日 = 快照当日
+    // 每序列自洽: 合计 == 该序列逐日之和(与各自响应 revenue_cents 同源)
+    QCOMPARE(seven.totalCents, qint64(17500));  // 7*1000 + 500*21
+    QCOMPARE(thirty.totalCents, qint64(102800)); // 23*2000+100*253 + 7*3000+500*21
+    QCOMPARE(seven.updatedAt, QStringLiteral("2026-09-01T10:15:00Z"));
+    QCOMPARE(thirty.updatedAt, QStringLiteral("2026-09-01T10:16:00Z"));
+    QCOMPARE(server.m_requests.size(), 2);
 }
 
 void TestSocketAdapter::fetchOverviewMapsEmptyHasDataFlag()
