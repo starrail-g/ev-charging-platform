@@ -424,6 +424,20 @@ void TestUi::revenueChartWidgetLifecycle()
     auto *clearedLine =
         qobject_cast<QLineSeries *>(mini.chart()->series().first());
     QVERIFY(clearedLine->points().isEmpty());
+
+    // clearSeries 后轴状态一并复位: 类目(旧日期标签)清空 + X/Y 量程回初始
+    // (修前只清折线点, 轴残留上次日期/网格 → 评审 B-3)
+    full.clearSeries();
+    QCOMPARE(full.pointCount(), 0);
+    QCOMPARE(xAxis->count(), 0);
+    QVERIFY(xAxis->categoriesLabels().isEmpty());
+    QCOMPARE(xAxis->min(), 0.0);
+    QCOMPARE(xAxis->max(), 1.0);
+    auto *clearedFullY =
+        qobject_cast<QValueAxis *>(full.chart()->axes(Qt::Vertical).first());
+    QVERIFY(clearedFullY);
+    QCOMPARE(clearedFullY->min(), 0.0);
+    QCOMPARE(clearedFullY->max(), 1.0);
 }
 
 void TestUi::revenueMetricCardSwapsFixedRowsOnClick()
@@ -590,6 +604,10 @@ void TestUi::revenuePageShowsSummaryChartAndDailyTable()
     // 本地切 30 日: 无新请求, 图/表/卡一致
     combo->setCurrentIndex(1);
     QTRY_COMPARE_WITH_TIMEOUT(chart->pointCount(), 30, 3000);
+    auto *pageX =
+        qobject_cast<QCategoryAxis *>(chart->chart()->axes(Qt::Horizontal).first());
+    QVERIFY(pageX);
+    QCOMPARE(pageX->count(), 30); // 页面路径同样每点一类(修前空 label 重复只剩 7)
     QCOMPARE(repo.fetchCount, 1);
     QCOMPARE(page.selectedDays(), 30);
     QCOMPARE(table->rowCount(), 30);

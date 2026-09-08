@@ -196,6 +196,11 @@ void RevenueChartWidget::clearSeries()
 {
     m_data = RevenueSeries();
     m_line->replace(QList<QPointF>());
+    // 轴状态一并清空: 分类(旧日期标签)与 X/Y 量程, 防"折线没了但上次的日期轴/
+    // 网格仍在"的半残留图(评审 B-3); 下次 setSeries 前轴呈干净初始态
+    clearXAxisCategories();
+    m_xAxis->setRange(0.0, 1.0);
+    m_yAxis->setRange(0.0, 1.0);
     QToolTip::hideText();
     m_hasData = false;
     m_yMin = 0.0;
