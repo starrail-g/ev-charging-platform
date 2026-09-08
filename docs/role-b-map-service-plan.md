@@ -73,6 +73,8 @@ JSON、缓存命中、过期和 stale 降级；无真实 Key 也能运行测试�
 - 以 `(provider, provider_poi_id)` 去重站点。
 - 首次站点导入与桩生成使用一个 `BEGIN IMMEDIATE` 事务。
 - 实现 SHA-256 + PCG32 的确定性生成规则。
+- 用契约中的固定算法和三组测试向量验证字节序、PCG 初始化、无偏随机映射、
+  初始状态概率和生成顺序；不得使用语言运行时随机数。
 - 将地图审计记录和 `request_records` 区分开：前者审计每次请求，后者只
   保存带副作用搜索的成功响应重放。
 - 相同 request ID/fingerprint 必须原样重放，不得重复写站点或桩。
@@ -101,7 +103,8 @@ JSON、缓存命中、过期和 stale 降级；无真实 Key 也能运行测试�
 - 按固定 seed、tick 和 pile ID 生成 deterministic proposal；
 - 维护调度、心跳、重试和服务健康状态；
 - 提交 `simulator_id + tick_id + expected_versions + changes`；
-- 对 rejected/stale proposal 使用同一 tick ID 重试，不能换 ID 造成重复。
+- 发送后响应丢失时，使用同一 `tick_id` 原样重试；明确收到 stale/version
+  conflict 后，重新读取快照、重新计算并使用新 `tick_id`；永久业务拒绝不自动重试。
 
 B server gateway 职责：
 

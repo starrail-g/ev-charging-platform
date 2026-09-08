@@ -10,13 +10,14 @@
 `user.profile.update`、`wallet.recharge`、`station.list`、
 `pile.list`、`order.active.get`、`order.history.list`、预约生命周期和充电
 开始/停止/结算，以及已合入当前 `main` 的 `admin.login`、统计、管理员桩/站/用户操作。
-管理端 `AdminRepository` 仍使用 Mock；真实 Socket adapter 尚未接入，需按下方
-wire 映射契约完成客户端联调。
+管理端同时保留 Mock 和已实现的 `SocketAdminRepository`；Socket 适配层已覆盖
+登录、概览、站点、全量桩游标聚合、用户和管理动作。Mock 仍是可选的本地回退，
+不得被当作真实 Socket 验收证据。
 
-主分支协作约定仍适用：C 端的管理员登录、概览统计和桩状态接口是第一阶段
-联调闸门，目标时间为 9 月 7 日 18:00；在真实 Socket adapter 验证前，A/C
-保留 Mock 或离线回退，不得把 Mock 结果当作真实 Socket 验收证据。B 端用户接口、
-B 端用户接口、充电生命周期和当前 `main` 的管理员接口均按下文 v1 契约提供。
+主分支协作约定仍适用：C 端的管理员登录、概览统计和桩状态接口已进入第一阶段
+联调与发布证据收集；A/C 可保留 Mock 或离线回退，但不得把 Mock 结果当作真实
+Socket 验收证据。B 端用户接口、充电生命周期和当前 `main` 的管理员接口均按下文
+v1 契约提供。
 
 每个状态修改请求都必须使用客户端生成的 `id`（1 至 64 字符）。相同操作和
 标识性 payload 重放同一 ID 会返回第一次成功响应，即使客户端已重连；同一 ID

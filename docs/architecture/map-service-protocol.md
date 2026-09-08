@@ -190,6 +190,24 @@ exist. Results are ordered by `distance_meters ASC, provider_poi_id ASC` for
 stable continuation. It may reduce the requested page size to fit the frame
 limit.
 
+### Cache and live business snapshot rule
+
+Station-search cache entries contain only external map data: normalized query,
+resolved origin, provider POI identity, name, address, coordinates, distance,
+provider continuation, fetch/expiry metadata, and sanitized upstream outcome.
+They must not contain `status`, any `pile_*` count, pile price/power, or
+`pile_snapshot_version`.
+
+For every ordinary live, fresh-cache, stale-cache, or server-mock response, the
+server resolves the returned internal station IDs and re-aggregates station
+status, pile counts, and snapshot versions from SQLite in the response
+transaction immediately before serialization. A cache hit therefore reuses
+only map data and never reuses a prior business snapshot. The only exception
+is a successful `map.station.search` request-ID replay: it returns the exact
+stored `request_records` response by design, including its historical
+snapshot. It performs no new upstream request, map-cache read, or business
+aggregation.
+
 ## 4. `map.route.plan`
 
 ### Request
@@ -285,9 +303,8 @@ station metadata or refresh the station-specific `pile.list` view.
 First import and generation occur in one `BEGIN IMMEDIATE` transaction.
 
 - A station receives 4–12 piles.
-- The deterministic input is `seed_id + "\\0" + provider + "\\0" +
-  provider_poi_id`, hashed with SHA-256; the first eight bytes seed a specified
-  PCG32 generator. This fixes cross-language reproducibility.
+- The deterministic input and generator are fixed by the algorithm below;
+  implementations may not substitute a language runtime random generator.
 - The generator chooses a pile count first, then assigns exactly the rounded
   `60%` fast-pile target, clamped to leave at least one fast and one slow pile.
 - Fast power is one of 60, 120, or 180 kW; slow power is one of 7, 11, or
@@ -298,6 +315,51 @@ First import and generation occur in one `BEGIN IMMEDIATE` transaction.
 - Codes are `M<station_id>-<two-digit sequence>` and are unique per station.
 - An existing station with at least one pile is never regenerated, even if the
   configured seed changes.
+
+### Deterministic generator algorithm and vectors
+
+All text is UTF-8 after Unicode NFC normalization. Let `M` be
+`seed_id + 0x00 + provider + 0x00 + provider_poi_id`; `H = SHA-256(M)` is the
+32-byte digest. Interpret `H[0..7]` and `H[8..15]` as unsigned 64-bit
+little-endian integers `initstate` and `initseq`.
+
+Use PCG XSH RR 64/32 with unsigned wraparound modulo `2^64`:
+
+```text
+state = 0
+inc = (initseq << 1) | 1
+next32(); state = state + initstate; next32()
+
+next32():
+  old = state
+  state = old * 6364136223846793005 + inc mod 2^64
+  xorshifted = (((old >> 18) xor old) >> 27) & 0xffffffff
+  rot = old >> 59
+  return ((xorshifted >> rot) | (xorshifted << ((-rot) & 31))) & 0xffffffff
+
+below(n):
+  threshold = (2^32 - n) mod n
+  repeat r = next32() until r >= threshold
+  return r mod n
+```
+
+Generate piles in sequence order without shuffling: `count = 4 + below(9)`;
+`fast_count = clamp(round_half_up(count * 60 / 100), 1, count - 1)`. For each
+sequence `1..count`, choose type by whether it is within `fast_count`, then
+consume exactly three `below` values in this order: power index (`3` choices),
+base-price index (`3` choices), status bucket (`10` choices: `0..7=idle`,
+`8=fault`, `9=offline`). Fast piles add 20 fen/kWh. If the resulting active
+station has no idle pile, replace the final pile status with `idle` without
+consuming another random value.
+
+The generator implementation must contain these test vectors; rows list
+`type/power_kw/price_fen/status` in sequence order:
+
+| `seed_id`, provider, POI | SHA-256 | count / fast | expected piles |
+|---|---|---:|---|
+| `demo-2026-09`, `tencent`, `poi-001` | `4387d8ad9230ac66c58ece8cad123e5bcf9cad2a225a3436c35d471325b029c2` | 4 / 2 | `fast/60/130/idle`, `fast/120/130/fault`, `slow/11/130/idle`, `slow/11/130/idle` |
+| `demo-2026-09`, `tencent`, `poi-002` | `470d337567a7fd7e862871d0473d4f50f163e870fe29ac0a68636e4f365cf23e` | 4 / 2 | `fast/180/150/idle`, `fast/60/130/idle`, `slow/22/130/idle`, `slow/11/90/idle` |
+| `test-seed`, `tencent`, `shenyang-42` | `f91b6b81a4b211b546bdfeadc6f4e97ad08d992bc7ad44a0a3e26c1c3dde9675` | 7 / 4 | `fast/60/110/idle`, `fast/180/150/idle`, `fast/120/110/idle`, `fast/60/130/idle`, `slow/11/130/offline`, `slow/7/130/offline`, `slow/22/110/idle` |
 
 ## 8. Simulation state machine
 
@@ -319,10 +381,28 @@ zero only in an explicitly labelled test/demo environment.
 
 Business transactions and administrator restart transactions win over a
 simulation proposal. A stale proposal is rejected when its expected station
-snapshot version no longer matches; the simulator retries the next tick.
+snapshot version no longer matches. Retry handling is defined in the cloud
+gateway contract below.
 Successful ticks increment each changed station snapshot once and append one
 `pile_status_events` row per changed pile. No-op ticks do not increment the
 version.
+
+For cloud proposals, each eligible pile consumes one deterministic `below(100)`
+draw from a PCG32 stream seeded by `seed_id + 0x00 + decimal(tick_id) + 0x00 +
+decimal(pile_id)` (same SHA-256/PCG rules as the generation algorithm). The
+transition buckets are: `idle`: 0–89 idle, 90–94 fault, 95–99 offline;
+`fault`: 0–59 fault, 60–94 idle, 95–99 offline; `offline`: 0–59 offline,
+60–94 idle, 95–99 fault. Piles are evaluated in ascending ID order and the
+minimum-idle rule is applied after the complete batch. These rules are the
+deterministic state-transition contract, not merely an implementation hint.
+
+Tick test vectors (before minimum-idle filtering) are:
+
+| seed, tick, pile, current | SHA-256 | draw | proposed state |
+|---|---|---:|---|
+| `demo-2026-09`, 1842, 4201, `idle` | `7ac28b1569f714d07a0a46696656a499cb866a508cb5546dc13a5fe4f0eff403` | 58 | `idle` |
+| `demo-2026-09`, 1842, 4202, `fault` | `d4630da054e8d3400cc72680c568c98514e8b496b2bd6fd7559f795c1ce7b95b` | 34 | `fault` |
+| `test-seed`, 7, 101, `offline` | `2284bd68114105e4c6326790a372471e4fdcaddfb272dfa95ff53a0dc775825a` | 39 | `offline` |
 
 ## 9. Independent cloud simulator contract
 
@@ -349,14 +429,20 @@ the logical message is fixed:
 
 Gateway rules:
 
-- `simulator_id`, `tick_id` is an idempotency key; replaying a completed tick
-  returns the original result without applying it twice.
+- `simulator_id`, `tick_id` is an idempotency key. Replaying an accepted tick,
+  or retrying after the sender lost its response, returns the original result
+  without applying it twice.
 - The server checks the seed, expected station versions, current pile state,
   active orders, `simulated` flag, and minimum-idle invariant again.
 - Accepted changes are committed by the server in the same transaction as
   snapshot/version/event updates.
-- A rejected or stale proposal changes nothing and returns a structured
-  conflict; it is not retried with a new tick ID.
+- A stale/version conflict changes nothing. Once the simulator receives that
+  conflict, it reads a new snapshot, recomputes the proposal, and uses a new
+  `tick_id`; the old ID remains a permanent record of the rejected proposal.
+- A permanent business rejection (for example invalid service identity, a
+  non-simulated pile, an active order, or a prohibited transition) is not
+  automatically retried. A transient transport failure before any response is
+  retried unchanged with the same `tick_id`.
 - The gateway authenticates the simulator with mTLS/service identity,
   authorizes only the simulation operation, rate-limits ticks, and records
   heartbeat/last-seen data. Credentials are not stored in Git.
