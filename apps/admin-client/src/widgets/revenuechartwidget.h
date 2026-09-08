@@ -10,6 +10,7 @@
 #include "models/adminmodels.h"
 
 class QCategoryAxis;
+class QGraphicsTextItem;
 class QLineSeries;
 class QPainter;
 class QValueAxis;
@@ -67,6 +68,7 @@ private:
     QCategoryAxis *m_xAxis = nullptr; // 儒略日数值位置 + 稀疏日期标签
     QValueAxis *m_yAxis = nullptr;
     std::function<void(QPainter *, const QRectF &)> m_foregroundPainter;
+    QGraphicsTextItem *m_yTitleItem = nullptr; // 纵轴 ¥ 标题 item(定位后隐藏, 自绘正立)
     qreal m_yMin = 0.0;   // 当前 Y 显示范围(手绘网格/绘制共用)
     qreal m_yMax = 1.0;
     bool m_hasData = false;

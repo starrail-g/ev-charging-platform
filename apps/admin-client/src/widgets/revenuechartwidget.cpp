@@ -13,6 +13,8 @@
 
 #include "theme/generated/theme_tokens.h"
 
+#include <QGraphicsTextItem>
+
 namespace ev {
 namespace {
 
@@ -85,7 +87,8 @@ RevenueChartWidget::RevenueChartWidget(Mode mode, QWidget *parent)
     m_yAxis->setGridLineColor(ev::theme::kDayDecorativeStructure);
     m_yAxis->setLabelFormat(QStringLiteral("%.0f"));
     if (mode == Mode::Full)
-        m_yAxis->setTitleText(QStringLiteral("¥")); // 纵轴金额单位(人民币符号)
+        m_yAxis->setTitleText(QStringLiteral("¥")); // 纵轴金额单位; QtCharts 会把纵轴
+    // 标题转 270° 横躺 —— 标题占位保留, 实际字形由 drawForeground 自绘正立替代
 
     chart->addAxis(m_xAxis, Qt::AlignBottom);
     chart->addAxis(m_yAxis, Qt::AlignLeft);
@@ -269,6 +272,32 @@ void RevenueChartWidget::drawForeground(QPainter *painter, const QRectF &rect)
 {
     // 前景层: 金额文字画在折线/网格之上(Mini; Full 无前景回调)
     QGraphicsView::drawForeground(painter, rect);
+    if (m_mode == Mode::Full) {
+        // 纵轴人民币符号: QtCharts 纵轴标题固定转 270°(¥ 横躺, 用户反馈)且每次布局
+        // 重设 —— 保留标题占位(轴宽/plotArea 不抖动), 隐藏原字形, 在占位中心自绘
+        // 正立符号。首次绘制时在场景中定位标题 item, 命中后缓存。
+        QGraphicsTextItem *titleItem = m_yTitleItem;
+        if (!titleItem && chart()->scene()) {
+            const auto items = chart()->scene()->items();
+            for (QGraphicsItem *it : items) {
+                auto *txt = dynamic_cast<QGraphicsTextItem *>(it);
+                if (txt && txt->toPlainText() == QStringLiteral("¥")) {
+                    titleItem = txt;
+                    break;
+                }
+            }
+            m_yTitleItem = titleItem;
+        }
+        if (titleItem) {
+            titleItem->setVisible(false);
+            const QRectF r = titleItem->sceneBoundingRect();
+            painter->save();
+            painter->setPen(m_yAxis->titleBrush().color());
+            painter->setFont(m_yAxis->titleFont());
+            painter->drawText(r, Qt::AlignCenter, QStringLiteral("¥"));
+            painter->restore();
+        }
+    }
     if (m_foregroundPainter) {
         painter->save();
         // rect 是局部重绘区域，金额排版必须使用完整视口的场景坐标。
