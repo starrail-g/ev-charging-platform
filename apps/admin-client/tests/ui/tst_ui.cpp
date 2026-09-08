@@ -713,6 +713,20 @@ void TestUi::revenuePageCorruptSeriesAllowsRangeSwitch()
     QVERIFY(!errorLabel->isVisible());
     QCOMPARE(table->rowCount(), 30);
     QCOMPARE(page.selectedDays(), 30);
+
+    // 顺序反转: 30 日已画过 → 切回损坏的 7 日 → 错误提示出现且轴零残留
+    // (修前 clearSeries 只清点不清轴, 30 日日期标签/量程仍挂图上)
+    combo->setCurrentIndex(0);
+    QTRY_VERIFY_WITH_TIMEOUT(errorLabel->isVisible(), 3000);
+    QCOMPARE(chart->pointCount(), 0);
+    QCOMPARE(table->rowCount(), 0);
+    auto *corruptX =
+        qobject_cast<QCategoryAxis *>(chart->chart()->axes(Qt::Horizontal).first());
+    QVERIFY(corruptX);
+    QCOMPARE(corruptX->count(), 0);           // 旧 30 日类目已清
+    QVERIFY(corruptX->categoriesLabels().isEmpty());
+    QCOMPARE(corruptX->min(), 0.0);           // X 量程复位
+    QCOMPARE(corruptX->max(), 1.0);
 }
 
 void TestUi::revenuePageDropsStaleRefreshResults()
