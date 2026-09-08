@@ -326,6 +326,10 @@ void TestUi::revenueChartWidgetLifecycle()
     ev::RevenueChartWidget mini(ev::RevenueChartWidget::Mode::Mini);
     mini.setSeries(seven);
     QCOMPARE(mini.pointCount(), 7);
+    auto *miniX =
+        qobject_cast<QCategoryAxis *>(mini.chart()->axes(Qt::Horizontal).first());
+    QVERIFY(miniX);
+    QCOMPARE(miniX->count(), 7); // 每点一类(修前空 label 重复被拒只剩 1 类)
     QCOMPARE(mini.displayedRange(), QStringLiteral("7d"));
     auto *line = qobject_cast<QLineSeries *>(mini.chart()->series().first());
     QVERIFY(line);
@@ -358,11 +362,33 @@ void TestUi::revenueChartWidgetLifecycle()
     auto *xAxis =
         qobject_cast<QCategoryAxis *>(full.chart()->axes(Qt::Horizontal).first());
     QVERIFY(xAxis);
+    // 类目结构完整: 每点一类(重复空 label 曾被静默拒绝 → 实测 30 类只剩 7 类,
+    // 日期标签随之错位)。隐藏位为唯一空格串: 30 类齐 + 真日期稀疏标签 6 个含首尾。
+    QCOMPARE(xAxis->count(), 30);
+    QVERIFY(!xAxis->truncateLabels()); // 默认 true 会把 M/d 截成 '...'(30 类配额不足)
     QStringList labels = xAxis->categoriesLabels();
-    // 只含非空标签: 30 日约 5-7 个(空标签不绘制、不入列), 必须含首尾
-    QVERIFY(labels.size() >= 5 && labels.size() <= 7);
-    QCOMPARE(labels.first(), QStringLiteral("8/3"));  // 含首
-    QCOMPARE(labels.last(), QStringLiteral("9/1"));   // 含尾
+    QCOMPARE(labels.size(), 30);
+    QStringList visibleLabels;
+    for (const QString &l : labels) {
+        if (!l.trimmed().isEmpty())
+            visibleLabels.append(l);
+    }
+    QCOMPARE(visibleLabels.size(), 6); // 稀疏位 6 个(0,6,12,18,24,29, 含首尾)
+    QCOMPARE(visibleLabels.first(), QStringLiteral("8/3")); // 含首
+    QCOMPARE(visibleLabels.last(), QStringLiteral("9/1"));  // 含尾
+    // 隐藏占位全唯一(QSet 去重后仍 30)
+    QCOMPARE(QSet<QString>(labels.begin(), labels.end()).size(), 30);
+    // 类边界几何: 首类起点 = 首日儒略日 - xPad(30d 稀疏留白 1.5 天, 防 QtCharts
+    // 边缘 forceHide 整条首标签; 默认 0 会把首标签甩出可视区); 末类终点 = 末日
+    // 儒略日 + 0.5; 相邻真标签跨度 = 步长 × 1 天
+    const QDate firstDate(2026, 8, 3);
+    const QDate lastDate(2026, 9, 1);
+    QCOMPARE(xAxis->startValue(visibleLabels.first()),
+             qreal(firstDate.toJulianDay()) - 1.5);
+    QCOMPARE(xAxis->endValue(visibleLabels.last()),
+             qreal(lastDate.toJulianDay()) + 0.5);
+    QCOMPARE(xAxis->endValue(visibleLabels.at(1)) - xAxis->endValue(visibleLabels.first()),
+             6.0); // 8/9 与 8/3 类终点差 6 天(每类 1 天宽)
     // Full 30 点 Y 上限按 30 日峰值(468 元)放 15%
     auto *fullY = qobject_cast<QValueAxis *>(full.chart()->axes(Qt::Vertical).first());
     QVERIFY(fullY);
@@ -374,6 +400,7 @@ void TestUi::revenueChartWidgetLifecycle()
     QCOMPARE(mini.chart()->series().size(), 1);
     QCOMPARE(mini.pointCount(), 30);
     QCOMPARE(mini.displayedRange(), QStringLiteral("30d"));
+    QCOMPARE(miniX->count(), 30); // 旧类清空后重建 30 类, 不累积
 
     // 全零序列: 合法零线, 轴不退化
     ev::RevenueSeries zeros;

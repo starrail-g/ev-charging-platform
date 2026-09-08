@@ -57,6 +57,10 @@ protected:
     void drawForeground(QPainter *painter, const QRectF &rect) override;
 
 private:
+    // 清空 X 分类轴全部 category(label 唯一后逐个 remove 安全); setSeries 重建
+    // 与 clearSeries 共用同一出口, 避免轴状态残留
+    void clearXAxisCategories();
+
     Mode m_mode;
     ev::RevenueSeries m_data;
     QLineSeries *m_line = nullptr;

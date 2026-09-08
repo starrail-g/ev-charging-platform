@@ -68,6 +68,10 @@ RevenueChartWidget::RevenueChartWidget(Mode mode, QWidget *parent)
 
     m_xAxis = new QCategoryAxis(chart);
     m_xAxis->setLabelsVisible(mode == Mode::Full);
+    // QtCharts 默认 truncateLabels=true: 30 类时按 31 tick 均分每标签配额仅
+    // ~19px, 'M/d' 日期被截成 '...' 且变宽后首尾标签被裁剪/重叠判定隐藏 ——
+    // 稀疏标签间距 5-6 天远大于文本宽, 无需截断, 显式关闭
+    m_xAxis->setTruncateLabels(false);
     m_xAxis->setGridLineVisible(false);
     m_xAxis->setLineVisible(false);
     m_xAxis->setLabelsColor(ev::theme::kDayMutedText);
@@ -141,22 +145,27 @@ void RevenueChartWidget::setSeries(const ev::RevenueSeries &series)
     }
     m_line->replace(points);
 
-    // X 分类轴: 每个儒略日占一个单位宽的类目(标签居中在点上); 旧标签全删再加
-    // (QCategoryAxis::remove 只收单标签, 逐个删)
-    const QStringList oldLabels = m_xAxis->categoriesLabels();
-    for (const QString &label : oldLabels)
-        m_xAxis->remove(label);
+    // X 分类轴: 每个儒略日占一个单位宽的类目(标签居中在点上); 旧标签全删再加。
+    // QCategoryAxis 要求 label 唯一(重复 label 被静默拒绝、不建类目)——
+    // 空串做隐藏位会因重复被拒导致类目缺失、后续标签错位(实测 30 类只成 7 类),
+    // 隐藏位改用递增空格串: 唯一、绘制零字形。
+    clearXAxisCategories();
     const int count = m_data.days.size();
+    // X 轴水平留白: Mini 0.3 天(折线视觉贴边); Full 稀疏标签需把首尾类加宽到
+    // 超过标签文本宽, 否则 QtCharts 对贴 plotArea 边缘的窄类 forceHide 整条标签
+    // (30 类时 1 天宽 ≈28px < 'M/d' ≈38px → 8/3 与 9/1 被静默隐藏, 实测)
+    const qreal xPad = m_mode == Mode::Mini ? 0.3 : (count > 10 ? 1.5 : 0.5);
+    const qreal xMin = static_cast<qreal>(m_data.days.first().date.toJulianDay()) - xPad;
+    const qreal xMax = static_cast<qreal>(m_data.days.last().date.toJulianDay()) + xPad;
+    m_xAxis->setStartValue(xMin); // 空轴时设定首类真实起点(默认 0 会把首标签甩出可视区)
     const int step = labelStep(count);
     for (int i = 0; i < count; ++i) {
         const QDate date = m_data.days.at(i).date;
         const bool labeled = m_mode == Mode::Full && (i % step == 0 || i == count - 1);
-        m_xAxis->append(labeled ? dayLabel(date) : QString(),
+        m_xAxis->append(labeled ? dayLabel(date) : QString(i + 1, QLatin1Char(' ')),
                         static_cast<qreal>(date.toJulianDay()) + 0.5);
     }
-    const qreal xPad = m_mode == Mode::Mini ? 0.3 : 0.5;
-    m_xAxis->setRange(static_cast<qreal>(m_data.days.first().date.toJulianDay()) - xPad,
-                      static_cast<qreal>(m_data.days.last().date.toJulianDay()) + xPad);
+    m_xAxis->setRange(xMin, xMax);
 
     // Y 量程: Full 自 0(真实零基线); Mini 聚焦数据带(上下各 15% 余量)让折线
     // 垂直居中于卡片(0 基线会把线压到顶部/底部边缘, 造成"偏移"观感)。
@@ -173,6 +182,14 @@ void RevenueChartWidget::setSeries(const ev::RevenueSeries &series)
     m_hasData = true;
 
     viewport()->update();
+}
+
+void RevenueChartWidget::clearXAxisCategories()
+{
+    // QCategoryAxis::remove 只收单 label 逐个删; 修复后 label 全唯一, 循环安全
+    const QStringList oldLabels = m_xAxis->categoriesLabels();
+    for (const QString &label : oldLabels)
+        m_xAxis->remove(label);
 }
 
 void RevenueChartWidget::clearSeries()
