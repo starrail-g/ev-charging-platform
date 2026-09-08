@@ -14,7 +14,8 @@
 ``` text
 ┌────────────────────────────────────────────────┐
 │ 页面层 (src/pages)                             │
-│  login / overview / pile / station / user      │
+│  login / overview / revenue / pile / station   │
+│  / user                                        │
 │  只做：输入校验、状态表现、交互反馈            │
 └───────────────┬────────────────────────────────┘
                 │ 调用（不感知数据来源）
@@ -37,12 +38,23 @@
 | 页面 | 类 | 职责 | 对应需求 |
 |---|---|---|---|
 | 登录页 | `LoginPage` | 账号/密码输入校验、提交中状态、错误提示、成功跳转 | C-S1-001 |
-| 概览页 | `OverviewPage` | 营收摘要、桩状态摘要、站点利用率摘要、更新时间 | C-S1-003 |
+| 概览页 | `OverviewPage` | 营收摘要（第四张卡 = `RevenueMetricCard` 近 7/近 30 日融合卡，详情入口带当前范围跳销售业绩页）、桩状态摘要、站点利用率摘要、更新时间 | C-S1-003 |
+| 销售业绩页 | `RevenuePage` | 近 7/30 日营收：两张合计卡 + Full 趋势图 + 每日营收表 + 选中范围更新时间；数据来自同一 `fetchOverview` 摘要，范围切换只重渲染、不新增请求 | A-02（7/30 日部分）/ C-S1-003 |
 | 桩管理页 | `PilePage` | 桩列表、状态筛选、刷新、重启模拟 | C-S1-004/005 |
 | 站点管理页 | `StationPage` | 站点查询和管理 | C-S1-006 |
 | 用户管理页 | `UserPage` | 用户查询、冻结/解冻 | C-S1-007 |
 
-主窗口 `MainWindow`（`src/app/`）：主导航、登录↔业务页切换、未登录禁止进入业务页、退出登录。
+主窗口 `MainWindow`（`src/app/`）：主导航、登录↔业务页切换、未登录禁止进入业务页、退出登录。2026-09-08 起导航为五项（概览/销售业绩/充电桩/充电站/用户管理），页面索引用命名枚举 `PageIndex`（`OverviewIndex`…`UserIndex`，替换裸数字）；登出时对概览/销售页调用 `invalidatePendingLoads()` 作废在途请求（旧 generation 迟到回包丢弃）。
+
+### 3.1 营收组件职责（2026-09-08 新增，feature/admin-revenue 本地产物）
+
+| 组件 | 文件 | 职责 |
+|---|---|---|
+| `RevenueMetricCard` | `src/widgets/revenuemetriccard.*` | 概览第四张营收融合卡（对象名 `revenueCard` 承接原样式与自动化定位）：近 7/近 30 两行金额可点击切换（透明热区 `revenue7dButton`/`revenue30dButton` 承担点击/键盘/tooltip/焦点环），200ms 字号动画（`QVariantAnimation` 单点驱动，只动字号/透明度、不给金额插值），内嵌 Mini 趋势图；选中序列不可用 → 「趋势暂不可用」+ 重试；向外发 `rangeChanged(days)`/`detailsRequested(days)`/`retryRequested()` |
+| `RevenueChartWidget` | `src/widgets/revenuechartwidget.*` | 共用 QChart 折线组件（QChartView，Mini/Full 两模式），数据由调用方传入 `ev::RevenueSeries`，**不发起任何网络请求**；Mini = 低透明度背景层折线 + 手绘轻量网格（轴对象隐藏、plotArea≈视口）+ 前景金额回调；Full = Y 自 0、UTC 儒略日稀疏日期轴、hover 精确金额；非法序列由调用方先判 `available` 再 `setSeries`，`clearSeries` 一次清空 |
+| `RevenuePage` | `src/pages/revenuepage.*` | 销售业绩页：两张合计 `MetricCard`（近 7/近 30 日）+ Full 趋势图 + 「每日营收」只读表（UTC 日期 + 营收元）+ 选中范围更新时间；repository 由 `MainWindow` 注入；同一 `OverviewResult` 渲染，7/30 切换不新增请求；`setRange(days)` 供概览详情入口预选范围；支持加载中/空（暂无营收统计数据）/接口错误+重试/序列坏（摘要照常、图表区提示）/零营收五态 |
+
+数据方向不变：三个组件都不建 Socket、不写 SQL、不持有统计计算；只经 `AdminRepository` 抽象取数（Mock 或 Socket），页面从 `OverviewStats.revenue7dSeries/revenue30dSeries` 取完整序列渲染。视觉层级决策见 `docs/ui/README.md` §6.1。
 
 ## 4. 统一状态表现
 
@@ -61,6 +73,9 @@
 - `SocketAdminRepository` 已接入真实管理员接口；默认仍可通过工厂切换到 Mock 演示。其
   `fetchPiles` 使用 `admin.pile.list` 的 `next_after_id` 游标页顺序聚合全部站点（含 inactive）桩；
   每个 wire 响应保持在协议 1 MiB 上限内，任一页失败时整页报错。
+- `fetchOverview`（2026-09-08 扩展）：对 `7d`/`30d` 各发一次 `admin.statistics.get`，各自保留完整
+  `RevenueSeries` 与各自 updatedAt（两快照时间可能不同，不宣称同快照）；序列经 socketparse 严格解析，
+  坏序列仅令该序列 `available=false`（营收卡重试入口），不清除正常摘要。
 
 ## 6. 测试
 

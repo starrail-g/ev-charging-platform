@@ -15,6 +15,7 @@ Linux + Qt Widgets 的充电桩管理应用：管理员登录、概览、桩/站
 | 组件 | 版本 | 路径 |
 |---|---|---|
 | Qt | 6.2.4 (MinGW 64-bit) | `D:/Qt/6.2.4/mingw_64` |
+| Qt Charts 模块 | 6.2.4（2026-09-08 经 `aqt install -m qtcharts` 安装） | 同上（头文件 / `mkspecs/modules/qt_lib_charts.pri` / `lib/libQt6Charts.a` 三处已验证） |
 | 编译器 | MinGW 13.1.0 64-bit | `D:/Qt/Tools/mingw1310_64/bin` |
 | 构建工具 | mingw32-make（随编译器） | 同上 |
 | 其他 | git 2.53.0；python3 3.14.3 | 系统 PATH |
@@ -28,6 +29,21 @@ export PATH="/d/Qt/6.2.4/mingw_64/bin:/d/Qt/Tools/mingw1310_64/bin:$PATH"
 ### 验收环境（Ubuntu 22.04 虚拟机）
 
 - Qt 6（qmake6）、g++、make、git、python3；版本记录见 9/7 干净环境验证（本文件届时补充）。
+- **Qt Charts 依赖（2026-09-08 起营收图表需要）**：Ubuntu 需先 `sudo apt install qt6-charts-dev`
+  （Debian/Ubuntu 包名，qmake6 自动发现）；未安装前 VM 构建会因 `QT += charts` 失败。
+  VM 双平台构建/测试/GUI 目检**尚未执行**（待验证，见 `tests/integration/role-c-regression.md` §5）。
+
+## 页面与组件（2026-09-08 增补）
+
+营收图表依赖 Qt Charts；src / tests / ui / loginflow 四个 `.pro` 均 `QT += charts` 并加入新源文件
+（`src/pages/revenuepage.*`、`src/widgets/revenuemetriccard.*`、`src/widgets/revenuechartwidget.*`）。
+
+- 概览第四张营收卡改为 `RevenueMetricCard` 融合卡：近 7 日/近 30 日两行金额可点击切换（200ms 字号
+  动画）+ 内嵌 Mini 折线 + 标题行"详情"入口携带当前范围跳销售业绩页。
+- 新增**销售业绩页**（`RevenuePage`，导航第二项，位于概览与充电桩之间）：近 7/近 30 日合计两张
+  `MetricCard` + Full 趋势图 + "每日营收"明细表 + 更新时间；范围切换只重渲染、不新增请求。
+- 共用 `RevenueChartWidget`（QChart，Mini/Full 两模式）：Mini=概览卡低透明度背景折线；Full=销售页
+  Y 自 0 + 稀疏日期轴 + hover 精确金额。数据一律经 `AdminRepository` 抽象取得，组件不建 Socket。
 
 ## 工作区路径
 

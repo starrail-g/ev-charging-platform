@@ -11,7 +11,7 @@
 |---|---|---|---|---|---|---|---|
 | C-S1-001 | 管理员登录页面（输入校验、错误提示、成功跳转） | `apps/admin-client/src/pages/loginpage.*` + `src/data/*` | C | B：认证接口草案 | 9/2 | Qt Test `tst_loginflow` 通过（9/2 已实现：成功/密码错误 1100/服务不可用/空输入 3 组全部通过，Totals 6 passed；空输入断言 Repository 未被调用） | 已确认 |
 | C-S1-002 | 主窗口导航：登录页↔业务页切换，业务页未登录不可进入 | `apps/admin-client/src/app/mainwindow.*` | C | 无 | 9/1 | 启动冒烟测试通过（9/1 骨架 + 9/2 防回退断言，4 场景绿） | 已确认 |
-| C-S1-003 | 概览页：营收摘要、桩状态摘要、站点利用率摘要、更新时间 | `apps/admin-client/src/pages/overviewpage.*` | C | B：统计字段口径 | 9/3 | Mock 数据三态显示（正常/空/失败） | 已确认 |
+| C-S1-003 | 概览页：营收摘要、桩状态摘要、站点利用率摘要、更新时间 | `apps/admin-client/src/pages/overviewpage.*`（2026-09-08 起营收摘要另含 `pages/revenuepage.*`、`widgets/revenuemetriccard.*`、`widgets/revenuechartwidget.*`） | C | B：统计字段口径 | 9/3 | Mock 数据三态显示（正常/空/失败）。**2026-09-08（feature/admin-revenue 分支，本地产物未提交）**：营收摘要扩展近 7/30 日——概览营收卡 `RevenueMetricCard`（近 7/近 30 两行金额点击切换 + Mini 折线 + 详情入口带范围跳销售业绩页）+ 新增销售业绩页 `RevenuePage`（合计卡/Full 趋势图/每日营收表/更新时间）；本次范围**仅近 7/30 日**，今日/本月/总营收明确排除（A-02 仅部分完成，不标全量通过）；Windows 本地实测 tst_ui 33 / tst_launchsmoke 6 / tst_loginflow 7 / tst_socketparse 12 / tst_socketadapter 19（逐字记录见 `tests/integration/role-c-regression.md` §5） | 已确认 |
 | C-S1-004 | 桩列表页：状态查询、筛选、刷新 | `apps/admin-client/src/pages/pilepage.*` | C | B：桩状态枚举 | 9/4 | `tst_mockrepository` 通过 | 已确认 |
 | C-S1-005 | 桩远程重启（第一阶段为服务端确认后的状态模拟） | `apps/admin-client/src/pages/pilepage.*` | C | B：操作接口 | 9/5 | 9/4 提前实现：`AdminRepository::restartPile`（仅 fault/offline 可重启，其余 1201 CONFLICT）+ Mock 状态模拟（重启后转 idle）+ 桩页"重启选中桩"按钮 + tst_ui 锁定（mockActionsEnforcePileRestartStateRules / pilePageRestartButtonAppliesSimulatedRestart） | 已确认 |
 | C-S1-006 | 站点查询和管理页 | `apps/admin-client/src/pages/stationpage.*` | C | B：站点字段 | 9/4 | Mock 查询演示（9/4 表格断言：5 列、在线率 66.7%） | 已确认 |
