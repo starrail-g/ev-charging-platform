@@ -29,8 +29,10 @@ export PATH="/d/Qt/6.2.4/mingw_64/bin:/d/Qt/Tools/mingw1310_64/bin:$PATH"
 ### 验收环境（Ubuntu 22.04 虚拟机）
 
 - Qt 6（qmake6）、g++、make、git、python3；版本记录见 9/7 干净环境验证（本文件届时补充）。
-- **Qt Charts 依赖（2026-09-08 起营收图表需要）**：Ubuntu 需先 `sudo apt install qt6-charts-dev`
-  （Debian/Ubuntu 包名，qmake6 自动发现）；未安装前 VM 构建会因 `QT += charts` 失败。
+- **Qt Charts 依赖（2026-09-08 起营收图表需要）**：Ubuntu 22.04 (jammy) 需先
+  `sudo apt install libqt6charts6-dev`（jammy/Debian 的二进制开发包名；`qt6-charts`
+  只是源码包名，直接装会报 Unable to locate package；Qt 6.2.4 即此包版本）；
+  安装后 qmake6 自动发现。未安装前 VM 构建会因 `QT += charts` 失败。
   VM 双平台构建/测试/GUI 目检**尚未执行**（待验证，见 `tests/integration/role-c-regression.md` §5）。
 
 ## 页面与组件（2026-09-08 增补）
