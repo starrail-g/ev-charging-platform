@@ -7,6 +7,8 @@
 namespace ev::protocol {
 
 QByteArray encodeFrame(const Message &message);
+QByteArray encodePayload(const Message &message);
+bool payloadFitsLimit(const Message &message);
 
 class FrameDecoder {
 public:

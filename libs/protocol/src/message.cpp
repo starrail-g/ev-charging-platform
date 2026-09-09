@@ -68,9 +68,32 @@ QString errorCodeName(ErrorCode code)
     case ErrorCode::Conflict: return QStringLiteral("CONFLICT");
     case ErrorCode::InsufficientBalance: return QStringLiteral("INSUFFICIENT_BALANCE");
     case ErrorCode::DatabaseError: return QStringLiteral("DATABASE_ERROR");
+    case ErrorCode::MapDisabled: return QStringLiteral("MAP_DISABLED");
+    case ErrorCode::MapNotConfigured: return QStringLiteral("MAP_NOT_CONFIGURED");
+    case ErrorCode::MapUpstreamTimeout: return QStringLiteral("MAP_UPSTREAM_TIMEOUT");
+    case ErrorCode::MapUpstreamUnavailable: return QStringLiteral("MAP_UPSTREAM_UNAVAILABLE");
+    case ErrorCode::MapQuotaExceeded: return QStringLiteral("MAP_QUOTA_EXCEEDED");
+    case ErrorCode::MapPermissionDenied: return QStringLiteral("MAP_PERMISSION_DENIED");
+    case ErrorCode::MapNoResult: return QStringLiteral("MAP_NO_RESULT");
+    case ErrorCode::MapResponseInvalid: return QStringLiteral("MAP_RESPONSE_INVALID");
+    case ErrorCode::MapRateLimited: return QStringLiteral("MAP_RATE_LIMITED");
+    case ErrorCode::MapResponseTooLarge: return QStringLiteral("MAP_RESPONSE_TOO_LARGE");
+    case ErrorCode::MapServerMock: return QStringLiteral("MAP_SERVER_MOCK");
     case ErrorCode::InternalError: return QStringLiteral("INTERNAL_ERROR");
     }
     return QStringLiteral("INTERNAL_ERROR");
+}
+
+bool isRetryable(ErrorCode code)
+{
+    switch (code) {
+    case ErrorCode::MapUpstreamTimeout:
+    case ErrorCode::MapUpstreamUnavailable:
+    case ErrorCode::MapRateLimited:
+        return true;
+    default:
+        return false;
+    }
 }
 
 } // namespace ev::protocol

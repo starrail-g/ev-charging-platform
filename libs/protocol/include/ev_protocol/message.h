@@ -20,6 +20,17 @@ enum class ErrorCode {
     Conflict = 1201,
     InsufficientBalance = 1202,
     DatabaseError = 1300,
+    MapDisabled = 1400,
+    MapNotConfigured = 1401,
+    MapUpstreamTimeout = 1402,
+    MapUpstreamUnavailable = 1403,
+    MapQuotaExceeded = 1404,
+    MapPermissionDenied = 1405,
+    MapNoResult = 1406,
+    MapResponseInvalid = 1407,
+    MapRateLimited = 1408,
+    MapResponseTooLarge = 1409,
+    MapServerMock = 1410,
     InternalError = 1500
 };
 
@@ -37,5 +48,6 @@ struct Message {
 
 QJsonObject errorPayload(ErrorCode code, const QString &message);
 QString errorCodeName(ErrorCode code);
+bool isRetryable(ErrorCode code);
 
 } // namespace ev::protocol

@@ -24,7 +24,7 @@ ml（智能分析，扩展项）
 |---|---|
 | [README.md](README.md) | 本页：系统组成与文档索引 |
 | [admin-client.md](admin-client.md) | 管理端：页面层、Repository 抽象、Mock/Socket 双实现、数据方向 |
-| [database.md](database.md) | 数据库设计、v0.3 迁移和事务边界（B 负责） |
+| [database.md](database.md) | 数据库设计、v0.3→v0.4 迁移和事务边界（B 负责） |
 | [protocol.md](protocol.md) | Socket 协议 v1、错误码和用户生命周期接口（B 负责） |
 | [map-service-protocol.md](map-service-protocol.md) | 服务端腾讯地图、站点导入、桩模拟和云端模拟器契约（B 负责） |
 
@@ -33,5 +33,5 @@ B 端地图与模拟器的分阶段实施、测试和上线边界见
 
 ## 管理端/大屏在系统中的位置
 
-- **管理端**：PC 端管理界面，经 `AdminRepository` 抽象访问数据；第一阶段默认 Mock，9/7 18:00 闸门后接入 Socket。边界见 [admin-client.md](admin-client.md)。
+- **管理端**：PC 端管理界面，经 `AdminRepository` 抽象访问数据；Socket 管理端适配器已实现，Mock 仍可作为显式本地回退。边界见 [admin-client.md](admin-client.md)。
 - **大屏**：Web 可视化，本地 HTTP 静态服务加载固定 JSON 演示数据；不直接访问 SQLite，数据口径与管理端 Mock 保持一致。说明见 `dashboard/README.md`。

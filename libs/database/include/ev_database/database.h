@@ -7,6 +7,7 @@
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QString>
+#include <QVector>
 
 namespace ev::database {
 
@@ -19,6 +20,22 @@ enum class ErrorKind {
     Conflict,
     InsufficientBalance,
     Database
+};
+
+struct MapPoi {
+    QString providerPoiId;
+    QString name;
+    QString address;
+    double latitude = 0.0;
+    double longitude = 0.0;
+    qint64 distanceMeters = 0;
+};
+
+struct SimulationChange {
+    qint64 pileId = 0;
+    QString fromStatus;
+    QString toStatus;
+    QString reason;
 };
 
 // Owns one SQLite connection. Instances must only be used from their owning
@@ -75,6 +92,61 @@ public:
                      QString *error = nullptr, ErrorKind *kind = nullptr);
     bool listAdminUsers(const QString &phoneQuery, QJsonArray *users,
                         QString *error = nullptr, ErrorKind *kind = nullptr);
+    bool findRequestReplay(const QString &requestId, const QString &operation,
+                           const QString &fingerprint, QJsonObject *response,
+                           bool *found, QString *error = nullptr,
+                           ErrorKind *kind = nullptr);
+
+    // Map search persistence. The method owns the import transaction: a POI,
+    // its first deterministic pile set, audit row, and successful replay row
+    // either all commit or none do. `mapOnlyPayload` is deliberately separate
+    // from the returned business snapshot so cache callers cannot persist pile
+    // status by accident.
+    bool importMapStations(const QString &requestId, qint64 userId,
+                           const QJsonObject &normalizedQuery,
+                           const QJsonObject &resolvedOrigin,
+                           const QVector<MapPoi> &pois,
+                           const QString &dataSource,
+                           const QJsonObject &warning,
+                           bool hasMore, const QString &nextPageToken,
+                           QJsonObject *response,
+                           QString *error = nullptr, ErrorKind *kind = nullptr);
+    bool readMapCache(const QString &cacheKey, QJsonObject *mapOnlyPayload,
+                      bool *fresh, bool *stale,
+                      QString *error = nullptr, ErrorKind *kind = nullptr);
+    bool writeMapCache(const QString &cacheKey, const QString &operation,
+                       const QJsonObject &mapOnlyPayload,
+                       const QString &providerCursor,
+                       const QDateTime &fetchedAt, const QDateTime &expiresAt,
+                       const QDateTime &staleUntil,
+                       QString *error = nullptr, ErrorKind *kind = nullptr);
+    bool getStationMapDestination(qint64 stationId, QJsonObject *destination,
+                                  QString *error = nullptr, ErrorKind *kind = nullptr);
+    bool recordMapRequest(const QString &requestId, const QString &operation,
+                          qint64 userId, const QJsonObject &normalizedQuery,
+                          const QString &cacheKey, const QString &resultStatus,
+                          const QString &dataSource, int errorCode, int warningCode,
+                          qint64 *logId, QString *error = nullptr,
+                          ErrorKind *kind = nullptr);
+    bool recordMapUpstreamCall(qint64 mapRequestLogId, const QString &callType,
+                               const QString &resultStatus, int httpStatus,
+                               qint64 latencyMs, int errorCode,
+                               QString *error = nullptr, ErrorKind *kind = nullptr);
+    bool listMapAudit(const QString &operation, const QString &resultStatus,
+                      const QString &beforeCreatedAt, qint64 beforeId,
+                      qint64 limit, QJsonArray *records,
+                      bool *hasMore, QString *error = nullptr,
+                      ErrorKind *kind = nullptr);
+
+    // Authoritative simulator gateway operation. The simulator only submits a
+    // proposal; this method validates and persists it in one transaction.
+    bool applySimulationProposal(const QString &simulatorId, const QString &seedId,
+                                 qint64 tickId,
+                                 const QHash<qint64, qint64> &expectedVersions,
+                                 const QVector<SimulationChange> &changes,
+                                 QJsonObject *result,
+                                 QString *error = nullptr,
+                                 ErrorKind *kind = nullptr);
     bool setUserStatus(const QString &requestId, qint64 administratorId, qint64 userId, const QString &status,
                        QJsonObject *user, QString *error = nullptr,
                        ErrorKind *kind = nullptr);
@@ -98,8 +170,11 @@ public:
 
 private:
     bool initializeSchema(QString *error);
+    bool migrateV03ToV04(QString *error);
     bool executeSchemaScript(const QString &script, QString *error);
     bool ensureRequestTable(QString *error);
+    bool bumpPileStationSnapshot(qint64 pileId, QSqlQuery *query,
+                                 QString *error, ErrorKind *kind);
     bool readUser(QSqlQuery &query, QJsonObject *user, QString *error) const;
     bool readOrder(QSqlQuery &query, QJsonObject *order, QString *error);
     bool readPile(QSqlQuery &query, QJsonObject *pile, QString *error) const;

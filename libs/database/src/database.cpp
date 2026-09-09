@@ -1,4 +1,5 @@
 #include "ev_database/database.h"
+#include "ev_database/pile_generator.h"
 
 #include <QDate>
 #include <QDateTime>
@@ -10,8 +11,10 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRegularExpression>
+#include <QSet>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QTime>
 #include <QVariant>
 #include <QUuid>
@@ -176,8 +179,15 @@ bool Database::initializeSchema(QString *error)
         setError(error, QStringLiteral("read schema version failed: %1").arg(queryError(query)));
         return false;
     }
-    if (!query.next() || query.value(0).toString() != QStringLiteral("0.3")) {
-        setError(error, QStringLiteral("unsupported or missing schema version (expected 0.3; migrate v0.2 databases first)"));
+    if (!query.next()) {
+        setError(error, QStringLiteral("unsupported or missing schema version"));
+        return false;
+    }
+    const QString schemaVersion = query.value(0).toString();
+    if (schemaVersion == QStringLiteral("0.3")) {
+        if (!migrateV03ToV04(error)) return false;
+    } else if (schemaVersion != QStringLiteral("0.4")) {
+        setError(error, QStringLiteral("unsupported or missing schema version (expected 0.3 or 0.4; migrate older databases first)"));
         return false;
     }
     if (!ensureRequestTable(error)) return false;
@@ -188,6 +198,60 @@ bool Database::initializeSchema(QString *error)
             return false;
         }
         if (!executeSchemaScript(QString::fromUtf8(seedFile.readAll()), error)) return false;
+    }
+    return true;
+}
+
+bool Database::migrateV03ToV04(QString *error)
+{
+    // Keep the server self-starting for deployed v0.3 databases. The same
+    // statements are published in database/migrations/003_v0.3_to_v0.4.sql;
+    // this inline path is used when the server is launched without the Python
+    // migration helper. Every statement runs in one IMMEDIATE transaction.
+    QSqlQuery query(connection_);
+    if (!query.exec(QStringLiteral("BEGIN IMMEDIATE"))) {
+        setError(error, QStringLiteral("begin v0.4 migration failed: %1").arg(queryError(query)));
+        return false;
+    }
+    const QStringList statements = {
+        QStringLiteral("ALTER TABLE stations ADD COLUMN provider TEXT NOT NULL DEFAULT 'internal'"),
+        QStringLiteral("ALTER TABLE stations ADD COLUMN provider_poi_id TEXT"),
+        QStringLiteral("ALTER TABLE stations ADD COLUMN map_synced_at TEXT"),
+        QStringLiteral("ALTER TABLE stations ADD COLUMN map_content_hash TEXT"),
+        QStringLiteral("ALTER TABLE charging_piles ADD COLUMN simulated INTEGER NOT NULL DEFAULT 0 CHECK (simulated IN (0, 1))"),
+        QStringLiteral("ALTER TABLE charging_piles ADD COLUMN status_source TEXT NOT NULL DEFAULT 'seed' CHECK (status_source IN ('seed', 'business', 'simulation', 'admin'))"),
+        QStringLiteral("ALTER TABLE charging_piles ADD COLUMN status_updated_at TEXT NOT NULL DEFAULT ''"),
+        QStringLiteral("UPDATE charging_piles SET status_updated_at = updated_at WHERE status_updated_at = ''"),
+        QStringLiteral("CREATE UNIQUE INDEX ux_stations_provider_poi ON stations(provider, provider_poi_id) WHERE provider_poi_id IS NOT NULL"),
+        QStringLiteral("CREATE TABLE map_request_logs (id INTEGER PRIMARY KEY, request_id TEXT NOT NULL CHECK (length(request_id) BETWEEN 1 AND 64), operation TEXT NOT NULL CHECK (operation IN ('map.station.search', 'map.route.plan')), user_id INTEGER REFERENCES users(id), normalized_query_json TEXT NOT NULL CHECK (length(normalized_query_json) > 0), cache_key TEXT, result_status TEXT NOT NULL CHECK (result_status IN ('success', 'error', 'degraded', 'mock')), data_source TEXT CHECK (data_source IS NULL OR data_source IN ('tencent_live', 'tencent_cache', 'tencent_stale', 'server_mock')), error_code INTEGER, warning_code INTEGER, created_at TEXT NOT NULL, completed_at TEXT)"),
+        QStringLiteral("CREATE INDEX ix_map_request_logs_created ON map_request_logs(created_at DESC, id DESC)"),
+        QStringLiteral("CREATE INDEX ix_map_request_logs_operation_status ON map_request_logs(operation, result_status, created_at DESC, id DESC)"),
+        QStringLiteral("CREATE TABLE map_upstream_call_logs (id INTEGER PRIMARY KEY, map_request_log_id INTEGER NOT NULL REFERENCES map_request_logs(id) ON DELETE CASCADE, call_type TEXT NOT NULL CHECK (call_type IN ('geocode', 'poi_search', 'poi_detail', 'driving', 'walking')), result_status TEXT NOT NULL CHECK (result_status IN ('success', 'error')), http_status INTEGER, latency_ms INTEGER CHECK (latency_ms IS NULL OR latency_ms >= 0), error_code INTEGER, created_at TEXT NOT NULL)"),
+        QStringLiteral("CREATE INDEX ix_map_upstream_logs_request ON map_upstream_call_logs(map_request_log_id, id)"),
+        QStringLiteral("CREATE INDEX ix_map_upstream_logs_created ON map_upstream_call_logs(created_at)"),
+        QStringLiteral("CREATE TABLE map_cache_entries (cache_key TEXT PRIMARY KEY CHECK (length(cache_key) BETWEEN 1 AND 512), operation TEXT NOT NULL CHECK (operation IN ('map.station.search', 'map.route.plan')), payload_json TEXT NOT NULL CHECK (length(payload_json) > 0), provider_cursor TEXT, fetched_at TEXT NOT NULL, expires_at TEXT NOT NULL, stale_until TEXT NOT NULL, updated_at TEXT NOT NULL, CHECK (stale_until >= expires_at))"),
+        QStringLiteral("CREATE INDEX ix_map_cache_expiry ON map_cache_entries(expires_at, stale_until)"),
+        QStringLiteral("CREATE TABLE pile_status_events (id INTEGER PRIMARY KEY, pile_id INTEGER NOT NULL REFERENCES charging_piles(id) ON DELETE CASCADE, station_id INTEGER NOT NULL REFERENCES stations(id) ON DELETE CASCADE, from_status TEXT NOT NULL CHECK (from_status IN ('idle', 'reserved', 'charging', 'fault', 'offline')), to_status TEXT NOT NULL CHECK (to_status IN ('idle', 'reserved', 'charging', 'fault', 'offline')), source TEXT NOT NULL CHECK (source IN ('business', 'simulation', 'admin', 'seed')), reason TEXT, tick_id INTEGER, created_at TEXT NOT NULL)"),
+        QStringLiteral("CREATE INDEX ix_pile_status_events_pile_created ON pile_status_events(pile_id, created_at DESC, id DESC)"),
+        QStringLiteral("CREATE INDEX ix_pile_status_events_created ON pile_status_events(created_at)"),
+        QStringLiteral("CREATE TABLE simulation_state (station_id INTEGER PRIMARY KEY REFERENCES stations(id) ON DELETE CASCADE, seed_id TEXT NOT NULL CHECK (length(seed_id) BETWEEN 1 AND 128), last_tick_id INTEGER, last_run_at TEXT, snapshot_version INTEGER NOT NULL DEFAULT 0 CHECK (snapshot_version >= 0))"),
+        QStringLiteral("CREATE TABLE simulation_tick_records (simulator_id TEXT NOT NULL CHECK (length(simulator_id) BETWEEN 1 AND 128), tick_id INTEGER NOT NULL CHECK (tick_id >= 0), fingerprint TEXT NOT NULL CHECK (length(fingerprint) > 0), result_status TEXT NOT NULL CHECK (result_status IN ('accepted', 'conflict', 'rejected')), response_json TEXT NOT NULL CHECK (length(response_json) > 0), created_at TEXT NOT NULL, PRIMARY KEY (simulator_id, tick_id))"),
+        QStringLiteral("CREATE INDEX ix_simulation_tick_records_created ON simulation_tick_records(created_at)"),
+        QStringLiteral("UPDATE schema_meta SET value = '0.4' WHERE key = 'schema_version'")
+    };
+    for (const QString &statement : statements) {
+        if (!query.exec(statement)) {
+            QSqlQuery rollback(connection_);
+            rollback.exec(QStringLiteral("ROLLBACK"));
+            setError(error, QStringLiteral("v0.4 migration failed: %1").arg(queryError(query)));
+            return false;
+        }
+    }
+    if (!query.exec(QStringLiteral("COMMIT"))) {
+        QSqlQuery rollback(connection_);
+        rollback.exec(QStringLiteral("ROLLBACK"));
+        setError(error, QStringLiteral("commit v0.4 migration failed: %1").arg(queryError(query)));
+        return false;
     }
     return true;
 }
@@ -207,6 +271,26 @@ bool Database::ensureRequestTable(QString *error)
     }
     setError(error, QStringLiteral("initialize request records failed: %1").arg(queryError(query)));
     return false;
+}
+
+bool Database::bumpPileStationSnapshot(qint64 pileId, QSqlQuery *query,
+                                       QString *error, ErrorKind *kind)
+{
+    if (!query || pileId <= 0) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("snapshot update arguments are invalid"));
+        return false;
+    }
+    query->prepare(QStringLiteral(
+        "UPDATE simulation_state SET snapshot_version = snapshot_version + 1 "
+        "WHERE station_id = (SELECT station_id FROM charging_piles WHERE id = :pile_id)"));
+    query->bindValue(QStringLiteral(":pile_id"), pileId);
+    if (!query->exec()) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("update station snapshot failed: %1").arg(queryError(*query)));
+        return false;
+    }
+    return true;
 }
 
 bool Database::executeSchemaScript(const QString &script, QString *error)
@@ -561,7 +645,6 @@ bool Database::rechargeWallet(const QString &requestId, qint64 userId,
                    QStringLiteral("update wallet balance failed"));
         return false;
     }
-
     query.prepare(QStringLiteral(
         "INSERT INTO wallet_transactions(user_id, transaction_type, amount_cents, "
         "balance_after_cents, idempotency_key, created_at) "
@@ -703,6 +786,18 @@ bool Database::readPile(QSqlQuery &query, QJsonObject *pile, QString *error) con
                         {QStringLiteral("restart_count"), query.value(9).toLongLong()},
                         {QStringLiteral("last_restart_at"), query.value(10).isNull()
                             ? QJsonValue(QJsonValue::Null) : QJsonValue(query.value(10).toString())}};
+    const int simulatedIndex = query.record().indexOf(QStringLiteral("simulated"));
+    const int sourceIndex = query.record().indexOf(QStringLiteral("status_source"));
+    const int updatedIndex = query.record().indexOf(QStringLiteral("status_updated_at"));
+    // v0.3 rows are still readable by low-level tooling. Once opened through
+    // Database they are migrated to v0.4, and these additive fields are
+    // emitted for all public pile responses.
+    pile->insert(QStringLiteral("simulated"), simulatedIndex >= 0
+                 ? query.value(simulatedIndex).toInt() != 0 : false);
+    pile->insert(QStringLiteral("status_source"), sourceIndex >= 0
+                 ? query.value(sourceIndex).toString() : QStringLiteral("seed"));
+    pile->insert(QStringLiteral("status_updated_at"), updatedIndex >= 0
+                 ? query.value(updatedIndex).toString() : query.value(10).toString());
     return true;
 }
 
@@ -811,7 +906,8 @@ bool Database::listPiles(qint64 stationId, QJsonArray *piles, QString *error, Er
     }
     query.prepare(QStringLiteral(
         "SELECT id, station_id, pile_code, pile_type, power_kw, unit_price_cents_per_kwh, "
-        "status, total_charge_count, total_charge_seconds, restart_count, last_restart_at "
+        "status, total_charge_count, total_charge_seconds, restart_count, last_restart_at, "
+        "simulated, status_source, status_updated_at "
         "FROM charging_piles WHERE station_id = :station_id ORDER BY id"));
     query.bindValue(QStringLiteral(":station_id"), stationId);
     if (!query.exec()) {
@@ -1349,7 +1445,8 @@ bool Database::listAdminPiles(qint64 afterId, qint64 limit, QJsonArray *piles,
     query.prepare(QStringLiteral(
             "SELECT id, station_id, pile_code, pile_type, power_kw, "
             "unit_price_cents_per_kwh, status, total_charge_count, "
-            "total_charge_seconds, restart_count, last_restart_at "
+            "total_charge_seconds, restart_count, last_restart_at, "
+            "simulated, status_source, status_updated_at "
             "FROM charging_piles WHERE id > :after_id ORDER BY id LIMIT :limit"));
     query.bindValue(QStringLiteral(":after_id"), afterId);
     query.bindValue(QStringLiteral(":limit"), limit + 1);
@@ -1428,8 +1525,8 @@ bool Database::createStation(const QString &requestId, qint64 administratorId,
     const qint64 stationId = query.lastInsertId().toLongLong();
     query.prepare(QStringLiteral(
         "INSERT INTO charging_piles(station_id, pile_code, pile_type, power_kw, "
-        "unit_price_cents_per_kwh, status, created_at, updated_at) "
-        "VALUES (:station_id, :pile_code, 'fast', 60.0, 120, 'idle', :created_at, :updated_at)"));
+        "unit_price_cents_per_kwh, status, status_source, status_updated_at, created_at, updated_at) "
+        "VALUES (:station_id, :pile_code, 'fast', 60.0, 120, 'idle', 'business', :created_at, :created_at, :updated_at)"));
     query.bindValue(QStringLiteral(":station_id"), stationId);
     query.bindValue(QStringLiteral(":created_at"), timestamp);
     query.bindValue(QStringLiteral(":updated_at"), timestamp);
@@ -1488,7 +1585,8 @@ bool Database::restartPile(const QString &requestId, qint64 administratorId, qin
     QSqlQuery query(connection_);
     query.prepare(QStringLiteral(
         "SELECT id, station_id, pile_code, pile_type, power_kw, unit_price_cents_per_kwh, "
-        "status, total_charge_count, total_charge_seconds, restart_count, last_restart_at "
+        "status, total_charge_count, total_charge_seconds, restart_count, last_restart_at, "
+        "simulated, status_source, status_updated_at "
         "FROM charging_piles WHERE id = :id"));
     query.bindValue(QStringLiteral(":id"), pileId);
     if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, queryError(query)); return false; }
@@ -1513,7 +1611,8 @@ bool Database::restartPile(const QString &requestId, qint64 administratorId, qin
     }
     query.prepare(QStringLiteral(
         "UPDATE charging_piles SET status = 'idle', restart_count = restart_count + 1, "
-        "last_restart_at = :updated_at, updated_at = :updated_at WHERE id = :id"));
+        "last_restart_at = :updated_at, status_source = 'admin', "
+        "status_updated_at = :updated_at, updated_at = :updated_at WHERE id = :id"));
     query.bindValue(QStringLiteral(":updated_at"), timestamp);
     query.bindValue(QStringLiteral(":id"), pileId);
     if (!query.exec() || query.numRowsAffected() != 1) {
@@ -1523,8 +1622,23 @@ bool Database::restartPile(const QString &requestId, qint64 administratorId, qin
         return false;
     }
     query.prepare(QStringLiteral(
+        "INSERT INTO pile_status_events(pile_id, station_id, from_status, to_status, source, reason, created_at) "
+        "SELECT id, station_id, :from_status, 'idle', 'admin', 'restart', :created_at "
+        "FROM charging_piles WHERE id = :pile_id"));
+    query.bindValue(QStringLiteral(":from_status"), oldStatus);
+    query.bindValue(QStringLiteral(":created_at"), timestamp);
+    query.bindValue(QStringLiteral(":pile_id"), pileId);
+    if (!query.exec()) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("record restart pile event failed: %1").arg(queryError(query)));
+        return false;
+    }
+    if (!bumpPileStationSnapshot(pileId, &query, error, kind)) { rollback(); return false; }
+    query.prepare(QStringLiteral(
         "SELECT id, station_id, pile_code, pile_type, power_kw, unit_price_cents_per_kwh, "
-        "status, total_charge_count, total_charge_seconds, restart_count, last_restart_at "
+        "status, total_charge_count, total_charge_seconds, restart_count, last_restart_at, "
+        "simulated, status_source, status_updated_at "
         "FROM charging_piles WHERE id = :id"));
     query.bindValue(QStringLiteral(":id"), pileId);
     if (!query.exec() || !query.next() || !readPile(query, pile, error)) {
@@ -1581,6 +1695,21 @@ bool Database::listAdminUsers(const QString &phoneQuery, QJsonArray *users,
                 ? QJsonValue(QJsonValue::Null) : QJsonValue(query.value(7).toString())}});
     }
     return true;
+}
+
+bool Database::findRequestReplay(const QString &requestId, const QString &operation,
+                                 const QString &fingerprint, QJsonObject *response,
+                                 bool *found, QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!response || !found || requestId.isEmpty() || operation.isEmpty()
+        || fingerprint.isEmpty()) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("request replay arguments are invalid"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    return loadRequest(requestId, operation, fingerprint, response, found, error, kind);
 }
 
 bool Database::setUserStatus(const QString &requestId, qint64 administratorId, qint64 userId,
@@ -1687,10 +1816,18 @@ bool Database::createReservation(const QString &requestId, qint64 userId, qint64
     query.bindValue(QStringLiteral(":updated_at"), timestamp);
     if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("create reservation failed: %1").arg(queryError(query))); return false; }
     const qint64 orderId = query.lastInsertId().toLongLong();
-    query.prepare(QStringLiteral("UPDATE charging_piles SET status = 'reserved', updated_at = :updated_at WHERE id = :id AND status = 'idle'"));
+    query.prepare(QStringLiteral("UPDATE charging_piles SET status = 'reserved', status_source = 'business', status_updated_at = :updated_at, updated_at = :updated_at WHERE id = :id AND status = 'idle'"));
     query.bindValue(QStringLiteral(":updated_at"), timestamp);
     query.bindValue(QStringLiteral(":id"), pileId);
     if (!query.exec() || query.numRowsAffected() != 1) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("pile was claimed by another request")); return false; }
+    query.prepare(QStringLiteral(
+        "INSERT INTO pile_status_events(pile_id, station_id, from_status, to_status, source, reason, created_at) "
+        "SELECT id, station_id, 'idle', 'reserved', 'business', 'reservation', :created_at "
+        "FROM charging_piles WHERE id = :pile_id"));
+    query.bindValue(QStringLiteral(":created_at"), timestamp);
+    query.bindValue(QStringLiteral(":pile_id"), pileId);
+    if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("record reservation pile event failed: %1").arg(queryError(query))); return false; }
+    if (!bumpPileStationSnapshot(pileId, &query, error, kind)) { rollback(); return false; }
     query.prepare(QStringLiteral(
         "SELECT id, order_no, user_id, pile_id, status, reserved_at, started_at, ended_at, energy_wh, "
         "unit_price_cents_per_kwh, service_fee_cents, total_amount_cents, settled_at, created_at, updated_at "
@@ -1699,7 +1836,8 @@ bool Database::createReservation(const QString &requestId, qint64 userId, qint64
     if (!query.exec() || !query.next() || !readOrder(query, order, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read reservation failed")); return false; }
     query.prepare(QStringLiteral(
         "SELECT id, station_id, pile_code, pile_type, power_kw, unit_price_cents_per_kwh, status, "
-        "total_charge_count, total_charge_seconds, restart_count, last_restart_at FROM charging_piles WHERE id = :id"));
+        "total_charge_count, total_charge_seconds, restart_count, last_restart_at, "
+        "simulated, status_source, status_updated_at FROM charging_piles WHERE id = :id"));
     query.bindValue(QStringLiteral(":id"), pileId);
     if (!query.exec() || !query.next() || !readPile(query, pile, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read reserved pile failed")); return false; }
     if (!saveRequest(requestId, QStringLiteral("reservation.create"), fingerprint,
@@ -1779,7 +1917,7 @@ bool Database::cancelReservation(const QString &requestId, qint64 userId, qint64
     query.bindValue(QStringLiteral(":updated_at"), timestamp); query.bindValue(QStringLiteral(":id"), orderId);
     if (!query.exec() || query.numRowsAffected() != 1) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("reservation changed concurrently")); return false; }
     query.prepare(QStringLiteral(
-        "UPDATE charging_piles SET status = 'idle', updated_at = :updated_at "
+        "UPDATE charging_piles SET status = 'idle', status_source = 'business', status_updated_at = :updated_at, updated_at = :updated_at "
         "WHERE id = :pile_id AND status = 'reserved' AND EXISTS ("
         "SELECT 1 FROM charging_orders WHERE id = :order_id AND pile_id = :pile_id "
         "AND user_id = :user_id AND status = 'cancelled')"));
@@ -1788,10 +1926,18 @@ bool Database::cancelReservation(const QString &requestId, qint64 userId, qint64
     query.bindValue(QStringLiteral(":order_id"), orderId);
     query.bindValue(QStringLiteral(":user_id"), userId);
     if (!query.exec() || query.numRowsAffected() != 1) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("reserved pile is not available")); return false; }
+    query.prepare(QStringLiteral(
+        "INSERT INTO pile_status_events(pile_id, station_id, from_status, to_status, source, reason, created_at) "
+        "SELECT id, station_id, 'reserved', 'idle', 'business', 'reservation_cancelled', :created_at "
+        "FROM charging_piles WHERE id = :pile_id"));
+    query.bindValue(QStringLiteral(":created_at"), timestamp);
+    query.bindValue(QStringLiteral(":pile_id"), pileId);
+    if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("record cancellation pile event failed: %1").arg(queryError(query))); return false; }
+    if (!bumpPileStationSnapshot(pileId, &query, error, kind)) { rollback(); return false; }
     query.prepare(QStringLiteral("SELECT id, order_no, user_id, pile_id, status, reserved_at, started_at, ended_at, energy_wh, unit_price_cents_per_kwh, service_fee_cents, total_amount_cents, settled_at, created_at, updated_at FROM charging_orders WHERE id = :id"));
     query.bindValue(QStringLiteral(":id"), orderId);
     if (!query.exec() || !query.next() || !readOrder(query, order, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read cancelled order failed")); return false; }
-    query.prepare(QStringLiteral("SELECT id, station_id, pile_code, pile_type, power_kw, unit_price_cents_per_kwh, status, total_charge_count, total_charge_seconds, restart_count, last_restart_at FROM charging_piles WHERE id = :id"));
+    query.prepare(QStringLiteral("SELECT id, station_id, pile_code, pile_type, power_kw, unit_price_cents_per_kwh, status, total_charge_count, total_charge_seconds, restart_count, last_restart_at, simulated, status_source, status_updated_at FROM charging_piles WHERE id = :id"));
     query.bindValue(QStringLiteral(":id"), pileId);
     if (!query.exec() || !query.next() || !readPile(query, pile, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read released pile failed")); return false; }
     if (!saveRequest(requestId, QStringLiteral("reservation.cancel"), fingerprint,
@@ -1853,7 +1999,7 @@ bool Database::startCharging(const QString &requestId, qint64 userId, qint64 ord
         selectedOrder = query.lastInsertId().toLongLong();
     }
     const QString expectedPileStatus = orderId > 0 ? QStringLiteral("reserved") : QStringLiteral("idle");
-    query.prepare(QStringLiteral("UPDATE charging_piles SET status = 'charging', updated_at = :updated_at WHERE id = :id AND status = :expected_status"));
+    query.prepare(QStringLiteral("UPDATE charging_piles SET status = 'charging', status_source = 'business', status_updated_at = :updated_at, updated_at = :updated_at WHERE id = :id AND status = :expected_status"));
     query.bindValue(QStringLiteral(":updated_at"), timestamp); query.bindValue(QStringLiteral(":id"), selectedPile);
     query.bindValue(QStringLiteral(":expected_status"), expectedPileStatus);
     if (!query.exec() || query.numRowsAffected() != 1) {
@@ -1864,6 +2010,15 @@ bool Database::startCharging(const QString &requestId, qint64 userId, qint64 ord
                        : QStringLiteral("pile is not reserved"));
         return false;
     }
+    query.prepare(QStringLiteral(
+        "INSERT INTO pile_status_events(pile_id, station_id, from_status, to_status, source, reason, created_at) "
+        "SELECT id, station_id, :from_status, 'charging', 'business', 'charging_started', :created_at "
+        "FROM charging_piles WHERE id = :pile_id"));
+    query.bindValue(QStringLiteral(":from_status"), expectedPileStatus);
+    query.bindValue(QStringLiteral(":created_at"), timestamp);
+    query.bindValue(QStringLiteral(":pile_id"), selectedPile);
+    if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("record charging pile event failed: %1").arg(queryError(query))); return false; }
+    if (!bumpPileStationSnapshot(selectedPile, &query, error, kind)) { rollback(); return false; }
     if (orderId > 0) {
         query.prepare(QStringLiteral("UPDATE charging_orders SET status = 'charging', started_at = :started_at, updated_at = :updated_at WHERE id = :id AND status = 'reserved'"));
         query.bindValue(QStringLiteral(":started_at"), timestamp); query.bindValue(QStringLiteral(":updated_at"), timestamp); query.bindValue(QStringLiteral(":id"), selectedOrder);
@@ -1871,7 +2026,7 @@ bool Database::startCharging(const QString &requestId, qint64 userId, qint64 ord
     }
     query.prepare(QStringLiteral("SELECT id, order_no, user_id, pile_id, status, reserved_at, started_at, ended_at, energy_wh, unit_price_cents_per_kwh, service_fee_cents, total_amount_cents, settled_at, created_at, updated_at FROM charging_orders WHERE id = :id")); query.bindValue(QStringLiteral(":id"), selectedOrder);
     if (!query.exec() || !query.next() || !readOrder(query, order, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read started order failed")); return false; }
-    query.prepare(QStringLiteral("SELECT id, station_id, pile_code, pile_type, power_kw, unit_price_cents_per_kwh, status, total_charge_count, total_charge_seconds, restart_count, last_restart_at FROM charging_piles WHERE id = :id")); query.bindValue(QStringLiteral(":id"), selectedPile);
+    query.prepare(QStringLiteral("SELECT id, station_id, pile_code, pile_type, power_kw, unit_price_cents_per_kwh, status, total_charge_count, total_charge_seconds, restart_count, last_restart_at, simulated, status_source, status_updated_at FROM charging_piles WHERE id = :id")); query.bindValue(QStringLiteral(":id"), selectedPile);
     if (!query.exec() || !query.next() || !readPile(query, pile, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read charging pile failed")); return false; }
     if (!saveRequest(requestId, QStringLiteral("charging.start"), fingerprint,
                      QJsonObject{{QStringLiteral("order"), *order},
@@ -1938,7 +2093,7 @@ bool Database::stopCharging(const QString &requestId, qint64 userId, qint64 orde
     updateQuery.bindValue(QStringLiteral(":ended_at"), finish); updateQuery.bindValue(QStringLiteral(":energy_wh"), energyWh); updateQuery.bindValue(QStringLiteral(":total"), total); updateQuery.bindValue(QStringLiteral(":updated_at"), finish); updateQuery.bindValue(QStringLiteral(":id"), orderId);
     if (!updateQuery.exec() || updateQuery.numRowsAffected() != 1) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("order changed concurrently: %1").arg(queryError(updateQuery))); return false; }
     QSqlQuery pileQuery(connection_);
-    pileQuery.prepare(QStringLiteral("UPDATE charging_piles SET status='idle', updated_at=:updated_at WHERE id=:id AND status='charging'"));
+    pileQuery.prepare(QStringLiteral("UPDATE charging_piles SET status='idle', status_source='business', status_updated_at=:updated_at, updated_at=:updated_at WHERE id=:id AND status='charging'"));
     pileQuery.bindValue(QStringLiteral(":updated_at"), finish);
     pileQuery.bindValue(QStringLiteral(":id"), pileId);
     if (!pileQuery.exec() || pileQuery.numRowsAffected() != 1) {
@@ -1946,6 +2101,14 @@ bool Database::stopCharging(const QString &requestId, qint64 userId, qint64 orde
         setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("charging pile is not active"));
         return false;
     }
+    pileQuery.prepare(QStringLiteral(
+        "INSERT INTO pile_status_events(pile_id, station_id, from_status, to_status, source, reason, created_at) "
+        "SELECT id, station_id, 'charging', 'idle', 'business', 'charging_stopped', :created_at "
+        "FROM charging_piles WHERE id = :pile_id"));
+    pileQuery.bindValue(QStringLiteral(":created_at"), finish);
+    pileQuery.bindValue(QStringLiteral(":pile_id"), pileId);
+    if (!pileQuery.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("record stop pile event failed: %1").arg(queryError(pileQuery))); return false; }
+    if (!bumpPileStationSnapshot(pileId, &pileQuery, error, kind)) { rollback(); return false; }
     QSqlQuery readQuery(connection_);
     readQuery.prepare(QStringLiteral("SELECT id, order_no, user_id, pile_id, status, reserved_at, started_at, ended_at, energy_wh, unit_price_cents_per_kwh, service_fee_cents, total_amount_cents, settled_at, created_at, updated_at FROM charging_orders WHERE id=?")); readQuery.bindValue(0, orderId);
     if (!readQuery.exec() || !readQuery.next() || !readOrder(readQuery, order, error)) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read stopped order failed: %1").arg(queryError(readQuery))); return false; }
@@ -2010,6 +2173,732 @@ bool Database::settleCharging(const QString &requestId, qint64 userId, qint64 or
         return false;
     }
     return commit(error, kind);
+}
+
+namespace {
+
+QJsonValue nullableText(const QVariant &value)
+{
+    return value.isNull() ? QJsonValue(QJsonValue::Null) : QJsonValue(value.toString());
+}
+
+QString mapAuditStatus(const QString &dataSource, const QJsonObject &warning)
+{
+    if (dataSource == QStringLiteral("server_mock")) return QStringLiteral("mock");
+    if (dataSource == QStringLiteral("tencent_stale") || !warning.isEmpty())
+        return QStringLiteral("degraded");
+    return QStringLiteral("success");
+}
+
+bool isSafeMapOnly(const QJsonValue &value)
+{
+    static const QSet<QString> forbidden = {
+        QStringLiteral("status"), QStringLiteral("pile_total"),
+        QStringLiteral("pile_idle"), QStringLiteral("pile_reserved"),
+        QStringLiteral("pile_charging"), QStringLiteral("pile_fault"),
+        QStringLiteral("pile_offline"), QStringLiteral("pile_snapshot_version"),
+        QStringLiteral("price_cents"), QStringLiteral("power_kw")};
+    if (value.isObject()) {
+        const QJsonObject object = value.toObject();
+        for (auto iterator = object.constBegin(); iterator != object.constEnd(); ++iterator) {
+            if (forbidden.contains(iterator.key()) || !isSafeMapOnly(iterator.value())) return false;
+        }
+    } else if (value.isArray()) {
+        for (const QJsonValue &item : value.toArray()) {
+            if (!isSafeMapOnly(item)) return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+bool Database::importMapStations(const QString &requestId, qint64 userId,
+                                 const QJsonObject &normalizedQuery,
+                                 const QJsonObject &resolvedOrigin,
+                                 const QVector<MapPoi> &pois,
+                                 const QString &dataSource,
+                                 const QJsonObject &warning,
+                                 bool hasMore, const QString &nextPageToken,
+                                 QJsonObject *response, QString *error,
+                                 ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!response || requestId.isEmpty() || userId <= 0 || resolvedOrigin.isEmpty()
+        || (dataSource != QStringLiteral("tencent_live")
+            && dataSource != QStringLiteral("tencent_cache")
+            && dataSource != QStringLiteral("tencent_stale")
+            && dataSource != QStringLiteral("server_mock"))) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("map import arguments are invalid"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    if (!begin(error, kind)) return false;
+    const QString fingerprint = jsonFingerprint(normalizedQuery);
+    QJsonObject replay;
+    bool found = false;
+    if (!loadRequest(requestId, QStringLiteral("map.station.search"), fingerprint,
+                     &replay, &found, error, kind)) {
+        rollback();
+        return false;
+    }
+    if (found) {
+        *response = replay;
+        return commit(error, kind);
+    }
+    const QString provider = normalizedQuery.value(QStringLiteral("provider"))
+        .toString(QStringLiteral("tencent"));
+    const QString timestamp = utcNow();
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "INSERT INTO map_request_logs(request_id, operation, user_id, normalized_query_json, "
+        "cache_key, result_status, data_source, warning_code, created_at, completed_at) "
+        "VALUES (:request_id, 'map.station.search', :user_id, :query, :cache_key, :result_status, "
+        ":data_source, :warning_code, :created_at, :completed_at)"));
+    query.bindValue(QStringLiteral(":request_id"), requestId);
+    query.bindValue(QStringLiteral(":user_id"), userId);
+    query.bindValue(QStringLiteral(":query"), QString::fromUtf8(
+        QJsonDocument(normalizedQuery).toJson(QJsonDocument::Compact)));
+    query.bindValue(QStringLiteral(":cache_key"), normalizedQuery.value(QStringLiteral("cache_key")).toString());
+    query.bindValue(QStringLiteral(":result_status"), mapAuditStatus(dataSource, warning));
+    query.bindValue(QStringLiteral(":data_source"), dataSource);
+    query.bindValue(QStringLiteral(":warning_code"), warning.value(QStringLiteral("code")).toInt());
+    query.bindValue(QStringLiteral(":created_at"), timestamp);
+    query.bindValue(QStringLiteral(":completed_at"), timestamp);
+    if (!query.exec()) {
+        rollback();
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("write map request log failed: %1").arg(queryError(query)));
+        return false;
+    }
+    const qint64 logId = query.lastInsertId().toLongLong();
+
+    QHash<QString, qint64> stationIds;
+    for (const MapPoi &poi : pois) {
+        if (poi.providerPoiId.trimmed().isEmpty() || poi.name.trimmed().isEmpty()
+            || poi.address.trimmed().isEmpty() || !std::isfinite(poi.latitude)
+            || !std::isfinite(poi.longitude) || poi.latitude < -90.0 || poi.latitude > 90.0
+            || poi.longitude < -180.0 || poi.longitude > 180.0 || poi.distanceMeters < 0) {
+            rollback();
+            setFailure(error, kind, ErrorKind::InvalidArgument,
+                       QStringLiteral("map provider returned an invalid POI"));
+            return false;
+        }
+        const QString poiKey = provider + QLatin1Char('\0') + poi.providerPoiId;
+        if (stationIds.contains(poiKey)) continue;
+        query.prepare(QStringLiteral(
+            "SELECT id FROM stations WHERE provider = :provider AND provider_poi_id = :poi_id"));
+        query.bindValue(QStringLiteral(":provider"), provider);
+        query.bindValue(QStringLiteral(":poi_id"), poi.providerPoiId);
+        if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("lookup map station failed: %1").arg(queryError(query))); return false; }
+        qint64 stationId = 0;
+        const bool exists = query.next();
+        if (exists) stationId = query.value(0).toLongLong();
+        const QByteArray content = QCryptographicHash::hash(
+            (poi.name + QLatin1Char('\0') + poi.address).toUtf8(), QCryptographicHash::Sha256).toHex();
+        if (exists) {
+            query.prepare(QStringLiteral(
+                "UPDATE stations SET name = :name, address = :address, latitude = :latitude, "
+                "longitude = :longitude, map_synced_at = :synced_at, map_content_hash = :hash, "
+                "updated_at = :updated_at WHERE id = :id"));
+            query.bindValue(QStringLiteral(":id"), stationId);
+        } else {
+            query.prepare(QStringLiteral(
+                "INSERT INTO stations(name, address, latitude, longitude, status, created_at, "
+                "updated_at, provider, provider_poi_id, map_synced_at, map_content_hash) "
+                "VALUES (:name, :address, :latitude, :longitude, 'active', :created_at, "
+                ":updated_at, :provider, :poi_id, :synced_at, :hash)"));
+        }
+        query.bindValue(QStringLiteral(":name"), poi.name.normalized(QString::NormalizationForm_C).trimmed());
+        query.bindValue(QStringLiteral(":address"), poi.address.normalized(QString::NormalizationForm_C).trimmed());
+        query.bindValue(QStringLiteral(":latitude"), poi.latitude);
+        query.bindValue(QStringLiteral(":longitude"), poi.longitude);
+        query.bindValue(QStringLiteral(":synced_at"), timestamp);
+        query.bindValue(QStringLiteral(":hash"), QString::fromLatin1(content));
+        query.bindValue(QStringLiteral(":updated_at"), timestamp);
+        if (!exists) {
+            query.bindValue(QStringLiteral(":created_at"), timestamp);
+            query.bindValue(QStringLiteral(":provider"), provider);
+            query.bindValue(QStringLiteral(":poi_id"), poi.providerPoiId);
+        }
+        if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("upsert map station failed: %1").arg(queryError(query))); return false; }
+        if (!exists) stationId = query.lastInsertId().toLongLong();
+        stationIds.insert(poiKey, stationId);
+
+        query.prepare(QStringLiteral("SELECT COUNT(*) FROM charging_piles WHERE station_id = :station_id"));
+        query.bindValue(QStringLiteral(":station_id"), stationId);
+        if (!query.exec() || !query.next()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("inspect imported piles failed")); return false; }
+        if (query.value(0).toLongLong() == 0) {
+            const QString generationSeed = qEnvironmentVariable(
+                "EV_PILE_SIMULATION_SEED", QStringLiteral("demo-2026-09"));
+            const QVector<GeneratedPile> generated = PileGenerator::generate(
+                generationSeed, provider, poi.providerPoiId, true);
+            int sequence = 1;
+            for (const GeneratedPile &pile : generated) {
+                query.prepare(QStringLiteral(
+                    "INSERT INTO charging_piles(station_id, pile_code, pile_type, power_kw, "
+                    "unit_price_cents_per_kwh, status, simulated, status_source, status_updated_at, "
+                    "created_at, updated_at) VALUES (:station_id, :code, :type, :power, :price, "
+                    ":status, 1, 'seed', :status_updated_at, :created_at, :updated_at)"));
+                query.bindValue(QStringLiteral(":station_id"), stationId);
+                query.bindValue(QStringLiteral(":code"), QStringLiteral("M%1-%2").arg(stationId).arg(sequence++, 2, 10, QLatin1Char('0')));
+                query.bindValue(QStringLiteral(":type"), pile.type);
+                query.bindValue(QStringLiteral(":power"), pile.powerKw);
+                query.bindValue(QStringLiteral(":price"), pile.priceFenPerKwh);
+                query.bindValue(QStringLiteral(":status"), pile.status);
+                query.bindValue(QStringLiteral(":status_updated_at"), timestamp);
+                query.bindValue(QStringLiteral(":created_at"), timestamp);
+                query.bindValue(QStringLiteral(":updated_at"), timestamp);
+                if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("generate imported piles failed: %1").arg(queryError(query))); return false; }
+            }
+            query.prepare(QStringLiteral(
+                "INSERT INTO simulation_state(station_id, seed_id, snapshot_version) "
+                "VALUES (:station_id, :seed_id, 0)"));
+            query.bindValue(QStringLiteral(":station_id"), stationId);
+            query.bindValue(QStringLiteral(":seed_id"), generationSeed);
+            if (!query.exec()) {
+                rollback();
+                setFailure(error, kind, ErrorKind::Database,
+                           QStringLiteral("initialize simulation snapshot failed: %1")
+                               .arg(queryError(query)));
+                return false;
+            }
+        }
+    }
+
+    QJsonArray stations;
+    for (const MapPoi &poi : pois) {
+        const qint64 stationId = stationIds.value(provider + QLatin1Char('\0') + poi.providerPoiId);
+        if (stationId <= 0) continue;
+        query.prepare(QStringLiteral(
+            "SELECT s.id, s.name, s.address, s.latitude, s.longitude, s.status, s.provider, "
+            "s.provider_poi_id, s.map_synced_at, COUNT(p.id), "
+            "COALESCE(SUM(p.status = 'idle'), 0), COALESCE(SUM(p.status = 'reserved'), 0), "
+            "COALESCE(SUM(p.status = 'charging'), 0), COALESCE(SUM(p.status = 'fault'), 0), "
+            "COALESCE(SUM(p.status = 'offline'), 0), "
+            "COALESCE((SELECT snapshot_version FROM simulation_state ss WHERE ss.station_id = s.id), 0) "
+            "FROM stations s LEFT JOIN charging_piles p ON p.station_id = s.id "
+            "WHERE s.id = :id GROUP BY s.id"));
+        query.bindValue(QStringLiteral(":id"), stationId);
+        if (!query.exec() || !query.next()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("aggregate imported station failed")); return false; }
+        stations.append(QJsonObject{
+            {QStringLiteral("id"), query.value(0).toLongLong()},
+            {QStringLiteral("provider"), query.value(6).toString()},
+            {QStringLiteral("provider_poi_id"), query.value(7).toString()},
+            {QStringLiteral("name"), query.value(1).toString()},
+            {QStringLiteral("address"), query.value(2).toString()},
+            {QStringLiteral("latitude"), query.value(3).toDouble()},
+            {QStringLiteral("longitude"), query.value(4).toDouble()},
+            {QStringLiteral("distance_meters"), poi.distanceMeters},
+            {QStringLiteral("status"), query.value(5).toString()},
+            {QStringLiteral("pile_total"), query.value(9).toLongLong()},
+            {QStringLiteral("pile_idle"), query.value(10).toLongLong()},
+            {QStringLiteral("pile_reserved"), query.value(11).toLongLong()},
+            {QStringLiteral("pile_charging"), query.value(12).toLongLong()},
+            {QStringLiteral("pile_fault"), query.value(13).toLongLong()},
+            {QStringLiteral("pile_offline"), query.value(14).toLongLong()},
+            {QStringLiteral("map_synced_at"), nullableText(query.value(8))},
+            {QStringLiteral("pile_snapshot_version"), query.value(15).toLongLong()}});
+    }
+    const QDateTime fetchedAt = QDateTime::fromString(timestamp, Qt::ISODate);
+    const QString expires = fetchedAt.addSecs(86400).toString(Qt::ISODate);
+    QJsonObject mapPayload{{QStringLiteral("provider"), provider},
+                           {QStringLiteral("data_source"), dataSource},
+                           {QStringLiteral("resolved_origin"), resolvedOrigin},
+                           {QStringLiteral("stations"), stations},
+                           {QStringLiteral("has_more"), hasMore},
+                           {QStringLiteral("next_page_token"), hasMore ? QJsonValue(nextPageToken) : QJsonValue(QJsonValue::Null)},
+                           {QStringLiteral("fetched_at"), timestamp},
+                           {QStringLiteral("expires_at"), expires},
+                           {QStringLiteral("map_request_log_id"), logId},
+                           {QStringLiteral("warning"), warning.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(warning)}};
+    *response = mapPayload;
+    if (!saveRequest(requestId, QStringLiteral("map.station.search"), fingerprint,
+                     mapPayload, error, kind)) { rollback(); return false; }
+    return commit(error, kind);
+}
+
+bool Database::readMapCache(const QString &cacheKey, QJsonObject *mapOnlyPayload,
+                            bool *fresh, bool *stale, QString *error,
+                            ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!mapOnlyPayload || !fresh || !stale || cacheKey.isEmpty()) {
+        setFailure(error, kind, ErrorKind::InvalidArgument, QStringLiteral("map cache arguments are invalid"));
+        return false;
+    }
+    *mapOnlyPayload = QJsonObject(); *fresh = false; *stale = false;
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral("SELECT payload_json, expires_at, stale_until FROM map_cache_entries WHERE cache_key = :cache_key"));
+    query.bindValue(QStringLiteral(":cache_key"), cacheKey);
+    if (!query.exec()) { setFailure(error, kind, ErrorKind::Database, QStringLiteral("read map cache failed: %1").arg(queryError(query))); return false; }
+    if (!query.next()) return true;
+    QJsonParseError parseError;
+    const QJsonDocument payload = QJsonDocument::fromJson(query.value(0).toString().toUtf8(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !payload.isObject()
+        || !isSafeMapOnly(payload.object())) {
+        setFailure(error, kind, ErrorKind::Database, QStringLiteral("map cache contains invalid or business state data"));
+        return false;
+    }
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    const QDateTime expires = QDateTime::fromString(query.value(1).toString(), Qt::ISODate);
+    const QDateTime staleUntil = QDateTime::fromString(query.value(2).toString(), Qt::ISODate);
+    if (now <= expires) { *fresh = true; *mapOnlyPayload = payload.object(); }
+    else if (now <= staleUntil) { *stale = true; *mapOnlyPayload = payload.object(); }
+    return true;
+}
+
+bool Database::writeMapCache(const QString &cacheKey, const QString &operation,
+                             const QJsonObject &mapOnlyPayload,
+                             const QString &providerCursor,
+                             const QDateTime &fetchedAt, const QDateTime &expiresAt,
+                             const QDateTime &staleUntil, QString *error,
+                             ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (cacheKey.isEmpty() || cacheKey.size() > 512
+        || (operation != QStringLiteral("map.station.search")
+            && operation != QStringLiteral("map.route.plan"))
+        || mapOnlyPayload.isEmpty() || !isSafeMapOnly(mapOnlyPayload)
+        || !fetchedAt.isValid() || !expiresAt.isValid() || !staleUntil.isValid()
+        || staleUntil < expiresAt) {
+        setFailure(error, kind, ErrorKind::InvalidArgument, QStringLiteral("map cache entry is invalid"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "INSERT INTO map_cache_entries(cache_key, operation, payload_json, provider_cursor, "
+        "fetched_at, expires_at, stale_until, updated_at) VALUES (:key, :operation, :payload, "
+        ":cursor, :fetched, :expires, :stale, :updated) "
+        "ON CONFLICT(cache_key) DO UPDATE SET operation=excluded.operation, "
+        "payload_json=excluded.payload_json, provider_cursor=excluded.provider_cursor, "
+        "fetched_at=excluded.fetched_at, expires_at=excluded.expires_at, "
+        "stale_until=excluded.stale_until, updated_at=excluded.updated_at"));
+    query.bindValue(QStringLiteral(":key"), cacheKey);
+    query.bindValue(QStringLiteral(":operation"), operation);
+    query.bindValue(QStringLiteral(":payload"), QString::fromUtf8(QJsonDocument(mapOnlyPayload).toJson(QJsonDocument::Compact)));
+    query.bindValue(QStringLiteral(":cursor"), providerCursor);
+    query.bindValue(QStringLiteral(":fetched"), fetchedAt.toUTC().toString(Qt::ISODate));
+    query.bindValue(QStringLiteral(":expires"), expiresAt.toUTC().toString(Qt::ISODate));
+    query.bindValue(QStringLiteral(":stale"), staleUntil.toUTC().toString(Qt::ISODate));
+    query.bindValue(QStringLiteral(":updated"), utcNow());
+    if (!query.exec()) { setFailure(error, kind, ErrorKind::Database, QStringLiteral("write map cache failed: %1").arg(queryError(query))); return false; }
+    return true;
+}
+
+bool Database::getStationMapDestination(qint64 stationId, QJsonObject *destination,
+                                        QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!destination || stationId <= 0) { setFailure(error, kind, ErrorKind::InvalidArgument, QStringLiteral("station_id must be positive")); return false; }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral("SELECT id, name, address, latitude, longitude, status, provider, provider_poi_id FROM stations WHERE id = :id"));
+    query.bindValue(QStringLiteral(":id"), stationId);
+    if (!query.exec()) { setFailure(error, kind, ErrorKind::Database, QStringLiteral("read route destination failed: %1").arg(queryError(query))); return false; }
+    if (!query.next()) { setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("station not found")); return false; }
+    *destination = QJsonObject{{QStringLiteral("id"), query.value(0).toLongLong()},
+                               {QStringLiteral("name"), query.value(1).toString()},
+                               {QStringLiteral("address"), query.value(2).toString()},
+                               {QStringLiteral("latitude"), query.value(3).toDouble()},
+                               {QStringLiteral("longitude"), query.value(4).toDouble()},
+                               {QStringLiteral("status"), query.value(5).toString()},
+                               {QStringLiteral("provider"), query.value(6).toString()},
+                               {QStringLiteral("provider_poi_id"), query.value(7).toString()}};
+    return true;
+}
+
+bool Database::recordMapRequest(const QString &requestId, const QString &operation,
+                                qint64 userId, const QJsonObject &normalizedQuery,
+                                const QString &cacheKey, const QString &resultStatus,
+                                const QString &dataSource, int errorCode, int warningCode,
+                                qint64 *logId, QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!logId || requestId.isEmpty() || (operation != QStringLiteral("map.station.search")
+        && operation != QStringLiteral("map.route.plan")) || normalizedQuery.isEmpty()
+        || (resultStatus != QStringLiteral("success") && resultStatus != QStringLiteral("error")
+            && resultStatus != QStringLiteral("degraded") && resultStatus != QStringLiteral("mock"))) {
+        setFailure(error, kind, ErrorKind::InvalidArgument, QStringLiteral("map audit arguments are invalid"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "INSERT INTO map_request_logs(request_id, operation, user_id, normalized_query_json, cache_key, "
+        "result_status, data_source, error_code, warning_code, created_at, completed_at) "
+        "VALUES (:request_id, :operation, :user_id, :query, :cache_key, :status, :source, :error, :warning, :created_at, :completed_at)"));
+    query.bindValue(QStringLiteral(":request_id"), requestId);
+    query.bindValue(QStringLiteral(":operation"), operation);
+    if (userId > 0) query.bindValue(QStringLiteral(":user_id"), userId); else query.bindValue(QStringLiteral(":user_id"), QVariant());
+    query.bindValue(QStringLiteral(":query"), QString::fromUtf8(QJsonDocument(normalizedQuery).toJson(QJsonDocument::Compact)));
+    query.bindValue(QStringLiteral(":cache_key"), cacheKey);
+    query.bindValue(QStringLiteral(":status"), resultStatus);
+    if (dataSource.isEmpty()) query.bindValue(QStringLiteral(":source"), QVariant()); else query.bindValue(QStringLiteral(":source"), dataSource);
+    if (errorCode) query.bindValue(QStringLiteral(":error"), errorCode); else query.bindValue(QStringLiteral(":error"), QVariant());
+    if (warningCode) query.bindValue(QStringLiteral(":warning"), warningCode); else query.bindValue(QStringLiteral(":warning"), QVariant());
+    query.bindValue(QStringLiteral(":created_at"), utcNow());
+    query.bindValue(QStringLiteral(":completed_at"), utcNow());
+    if (!query.exec()) { setFailure(error, kind, ErrorKind::Database, QStringLiteral("write map audit failed: %1").arg(queryError(query))); return false; }
+    *logId = query.lastInsertId().toLongLong();
+    return true;
+}
+
+bool Database::recordMapUpstreamCall(qint64 mapRequestLogId, const QString &callType,
+                                     const QString &resultStatus, int httpStatus,
+                                     qint64 latencyMs, int errorCode, QString *error,
+                                     ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (mapRequestLogId <= 0 || (callType != QStringLiteral("geocode")
+        && callType != QStringLiteral("poi_search") && callType != QStringLiteral("poi_detail")
+        && callType != QStringLiteral("driving") && callType != QStringLiteral("walking"))
+        || (resultStatus != QStringLiteral("success") && resultStatus != QStringLiteral("error"))
+        || latencyMs < 0) {
+        setFailure(error, kind, ErrorKind::InvalidArgument, QStringLiteral("upstream audit arguments are invalid"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral("INSERT INTO map_upstream_call_logs(map_request_log_id, call_type, result_status, http_status, latency_ms, error_code, created_at) VALUES (:log_id, :type, :status, :http, :latency, :error, :created_at)"));
+    query.bindValue(QStringLiteral(":log_id"), mapRequestLogId);
+    query.bindValue(QStringLiteral(":type"), callType);
+    query.bindValue(QStringLiteral(":status"), resultStatus);
+    if (httpStatus > 0) query.bindValue(QStringLiteral(":http"), httpStatus); else query.bindValue(QStringLiteral(":http"), QVariant());
+    query.bindValue(QStringLiteral(":latency"), latencyMs);
+    if (errorCode) query.bindValue(QStringLiteral(":error"), errorCode); else query.bindValue(QStringLiteral(":error"), QVariant());
+    query.bindValue(QStringLiteral(":created_at"), utcNow());
+    if (!query.exec()) { setFailure(error, kind, ErrorKind::Database, QStringLiteral("write upstream audit failed: %1").arg(queryError(query))); return false; }
+    return true;
+}
+
+bool Database::listMapAudit(const QString &operation, const QString &resultStatus,
+                            const QString &beforeCreatedAt, qint64 beforeId,
+                            qint64 limit, QJsonArray *records,
+                            bool *hasMore, QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!records || !hasMore || beforeId < 0 || limit <= 0 || limit > 100
+        || (!operation.isEmpty() && operation != QStringLiteral("map.station.search")
+            && operation != QStringLiteral("map.route.plan"))
+        || (!resultStatus.isEmpty() && resultStatus != QStringLiteral("success")
+            && resultStatus != QStringLiteral("error") && resultStatus != QStringLiteral("degraded")
+            && resultStatus != QStringLiteral("mock"))) {
+        setFailure(error, kind, ErrorKind::InvalidArgument, QStringLiteral("map audit page arguments are invalid"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    QSqlQuery query(connection_);
+    QString sql = QStringLiteral(
+        "SELECT id, request_id, operation, user_id, result_status, data_source, error_code, warning_code, created_at, completed_at "
+        "FROM map_request_logs WHERE 1=1 ");
+    if (beforeId > 0)
+        sql += QStringLiteral("AND (created_at < :before_created_at OR (created_at = :before_created_at AND id < :before_id)) ");
+    if (!operation.isEmpty()) sql += QStringLiteral("AND operation = :operation ");
+    if (!resultStatus.isEmpty()) sql += QStringLiteral("AND result_status = :result_status ");
+    sql += QStringLiteral("ORDER BY created_at DESC, id DESC LIMIT :limit");
+    query.prepare(sql);
+    if (beforeId > 0) {
+        query.bindValue(QStringLiteral(":before_created_at"), beforeCreatedAt);
+        query.bindValue(QStringLiteral(":before_id"), beforeId);
+    }
+    if (!operation.isEmpty()) query.bindValue(QStringLiteral(":operation"), operation);
+    if (!resultStatus.isEmpty())
+        query.bindValue(QStringLiteral(":result_status"), resultStatus);
+    query.bindValue(QStringLiteral(":limit"), limit + 1);
+    if (!query.exec()) { setFailure(error, kind, ErrorKind::Database, QStringLiteral("list map audit failed: %1").arg(queryError(query))); return false; }
+    *records = QJsonArray(); *hasMore = false;
+    while (query.next()) {
+        if (records->size() == limit) { *hasMore = true; break; }
+        QJsonObject row{{QStringLiteral("id"), query.value(0).toLongLong()},
+                        {QStringLiteral("request_id"), query.value(1).toString()},
+                        {QStringLiteral("operation"), query.value(2).toString()},
+                        {QStringLiteral("user_id"), query.value(3).isNull() ? QJsonValue(QJsonValue::Null) : QJsonValue(query.value(3).toLongLong())},
+                        {QStringLiteral("result_status"), query.value(4).toString()},
+                        {QStringLiteral("data_source"), nullableText(query.value(5))},
+                        {QStringLiteral("error_code"), query.value(6).isNull() ? QJsonValue(QJsonValue::Null) : QJsonValue(query.value(6).toInt())},
+                        {QStringLiteral("warning_code"), query.value(7).isNull() ? QJsonValue(QJsonValue::Null) : QJsonValue(query.value(7).toInt())},
+                        {QStringLiteral("created_at"), query.value(8).toString()},
+                        {QStringLiteral("completed_at"), nullableText(query.value(9))}};
+        records->append(row);
+    }
+    return true;
+}
+
+bool Database::applySimulationProposal(const QString &simulatorId, const QString &seedId,
+                                       qint64 tickId,
+                                       const QHash<qint64, qint64> &expectedVersions,
+                                       const QVector<SimulationChange> &changes,
+                                       QJsonObject *result, QString *error,
+                                       ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!result || simulatorId.trimmed().isEmpty() || seedId.trimmed().isEmpty()
+        || tickId < 0) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("simulation proposal is invalid"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    if (!begin(error, kind)) return false;
+
+    QJsonArray expected;
+    QList<qint64> expectedStationIds = expectedVersions.keys();
+    std::sort(expectedStationIds.begin(), expectedStationIds.end());
+    for (const qint64 stationId : expectedStationIds) {
+        expected.append(QJsonObject{{QStringLiteral("station_id"), stationId},
+                                    {QStringLiteral("version"), expectedVersions.value(stationId)}});
+    }
+    QJsonArray requestedChanges;
+    for (const SimulationChange &change : changes) {
+        requestedChanges.append(QJsonObject{{QStringLiteral("pile_id"), change.pileId},
+                                            {QStringLiteral("from"), change.fromStatus},
+                                            {QStringLiteral("to"), change.toStatus},
+                                            {QStringLiteral("reason"), change.reason}});
+    }
+    const QJsonObject fingerprintObject{{QStringLiteral("simulator_id"), simulatorId},
+                                        {QStringLiteral("seed_id"), seedId},
+                                        {QStringLiteral("tick_id"), tickId},
+                                        {QStringLiteral("expected_versions"), expected},
+                                        {QStringLiteral("changes"), requestedChanges}};
+    const QString fingerprint = jsonFingerprint(fingerprintObject);
+    QSqlQuery query(connection_);
+    query.prepare(QStringLiteral(
+        "SELECT fingerprint, result_status, response_json FROM simulation_tick_records "
+        "WHERE simulator_id = :simulator_id AND tick_id = :tick_id"));
+    query.bindValue(QStringLiteral(":simulator_id"), simulatorId);
+    query.bindValue(QStringLiteral(":tick_id"), tickId);
+    if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("read simulation tick failed: %1").arg(queryError(query))); return false; }
+    if (query.next()) {
+        if (query.value(0).toString() != fingerprint) {
+            rollback();
+            setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("tick id was already used with different proposal"));
+            return false;
+        }
+        const QString replayStatus = query.value(1).toString();
+        QJsonParseError parseError;
+        const QJsonDocument replay = QJsonDocument::fromJson(query.value(2).toString().toUtf8(), &parseError);
+        if (parseError.error != QJsonParseError::NoError || !replay.isObject()) {
+            rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("simulation tick result is invalid")); return false;
+        }
+        *result = replay.object();
+        if (!commit(error, kind)) return false;
+        if (replayStatus == QStringLiteral("accepted")) return true;
+        setFailure(error, kind, ErrorKind::Conflict,
+                   replayStatus == QStringLiteral("conflict")
+                       ? QStringLiteral("stale or conflicting simulation proposal")
+                       : QStringLiteral("simulation proposal was rejected"));
+        return false;
+    }
+
+    auto recordOutcome = [&](const QString &status, const QJsonObject &outcome,
+                             ErrorKind outcomeKind, const QString &message) -> bool {
+        QSqlQuery record(connection_);
+        record.prepare(QStringLiteral(
+            "INSERT INTO simulation_tick_records(simulator_id, tick_id, fingerprint, result_status, response_json, created_at) "
+            "VALUES (:simulator_id, :tick_id, :fingerprint, :status, :response_json, :created_at)"));
+        record.bindValue(QStringLiteral(":simulator_id"), simulatorId);
+        record.bindValue(QStringLiteral(":tick_id"), tickId);
+        record.bindValue(QStringLiteral(":fingerprint"), fingerprint);
+        record.bindValue(QStringLiteral(":status"), status);
+        record.bindValue(QStringLiteral(":response_json"), QString::fromUtf8(QJsonDocument(outcome).toJson(QJsonDocument::Compact)));
+        record.bindValue(QStringLiteral(":created_at"), utcNow());
+        if (!record.exec()) {
+            rollback();
+            setFailure(error, kind, ErrorKind::Database, QStringLiteral("record simulation outcome failed: %1").arg(queryError(record)));
+            return false;
+        }
+        *result = outcome;
+        if (!commit(error, kind)) return false;
+        if (outcomeKind != ErrorKind::None)
+            setFailure(error, kind, outcomeKind, message);
+        return outcomeKind == ErrorKind::None;
+    };
+
+    QHash<qint64, qint64> validatedVersions;
+    for (auto iterator = expectedVersions.constBegin();
+         iterator != expectedVersions.constEnd(); ++iterator) {
+        query.prepare(QStringLiteral(
+            "SELECT s.status, ss.seed_id, COALESCE(ss.snapshot_version, 0) "
+            "FROM stations s LEFT JOIN simulation_state ss ON ss.station_id = s.id "
+            "WHERE s.id = :station_id"));
+        query.bindValue(QStringLiteral(":station_id"), iterator.key());
+        if (!query.exec()) {
+            rollback();
+            setFailure(error, kind, ErrorKind::Database,
+                       QStringLiteral("read simulation snapshot failed: %1").arg(queryError(query)));
+            return false;
+        }
+        if (!query.next() || query.value(0).toString() != QStringLiteral("active")) {
+            return recordOutcome(QStringLiteral("rejected"),
+                                 QJsonObject{{QStringLiteral("accepted"), false},
+                                             {QStringLiteral("reason"), QStringLiteral("station not found or inactive")},
+                                             {QStringLiteral("station_id"), iterator.key()}},
+                                 ErrorKind::NotFound, QStringLiteral("station not found or inactive"));
+        }
+        const QString currentSeed = query.value(1).isNull() ? seedId : query.value(1).toString();
+        const qint64 currentVersion = query.value(2).toLongLong();
+        if (currentSeed != seedId || iterator.value() != currentVersion) {
+            return recordOutcome(QStringLiteral("conflict"),
+                                 QJsonObject{{QStringLiteral("accepted"), false},
+                                             {QStringLiteral("reason"), QStringLiteral("stale station snapshot")},
+                                             {QStringLiteral("station_id"), iterator.key()},
+                                             {QStringLiteral("current_version"), currentVersion}},
+                                 ErrorKind::Conflict, QStringLiteral("stale station snapshot"));
+        }
+        validatedVersions.insert(iterator.key(), currentVersion);
+    }
+
+    if (changes.isEmpty()) {
+        QJsonObject versions;
+        for (auto iterator = validatedVersions.constBegin();
+             iterator != validatedVersions.constEnd(); ++iterator)
+            versions.insert(QString::number(iterator.key()), iterator.value());
+        return recordOutcome(QStringLiteral("accepted"),
+                             QJsonObject{{QStringLiteral("accepted"), true},
+                                         {QStringLiteral("simulator_id"), simulatorId},
+                                         {QStringLiteral("tick_id"), tickId},
+                                         {QStringLiteral("changes"), QJsonArray()},
+                                         {QStringLiteral("snapshot_versions"), versions}},
+                             ErrorKind::None, {});
+    }
+
+    QHash<qint64, qint64> stationVersions;
+    QHash<qint64, QHash<qint64, QString>> proposed;
+    QHash<qint64, QString> originalStatuses;
+    QHash<qint64, QHash<QString, int>> stateCounts;
+    const QString timestamp = utcNow();
+    for (const SimulationChange &change : changes) {
+        if (change.pileId <= 0 || (change.fromStatus != QStringLiteral("idle")
+            && change.fromStatus != QStringLiteral("fault")
+            && change.fromStatus != QStringLiteral("offline"))
+            || (change.toStatus != QStringLiteral("idle")
+                && change.toStatus != QStringLiteral("fault")
+                && change.toStatus != QStringLiteral("offline"))
+            || change.fromStatus == change.toStatus) {
+            return recordOutcome(QStringLiteral("rejected"),
+                                 QJsonObject{{QStringLiteral("accepted"), false},
+                                             {QStringLiteral("reason"), QStringLiteral("invalid simulation transition")}},
+                                 ErrorKind::Conflict, QStringLiteral("invalid simulation transition"));
+        }
+        query.prepare(QStringLiteral(
+            "SELECT p.station_id, p.status, p.simulated, "
+            "EXISTS(SELECT 1 FROM charging_orders o WHERE o.pile_id = p.id AND o.status IN "
+            "('pending_reservation','reserved','charging','pending_settlement')) "
+            "FROM charging_piles p WHERE p.id = :pile_id"));
+        query.bindValue(QStringLiteral(":pile_id"), change.pileId);
+        if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("inspect simulated pile failed: %1").arg(queryError(query))); return false; }
+        if (!query.next()) {
+            return recordOutcome(QStringLiteral("rejected"),
+                                 QJsonObject{{QStringLiteral("accepted"), false},
+                                             {QStringLiteral("reason"), QStringLiteral("pile not found")}},
+                                 ErrorKind::NotFound, QStringLiteral("pile not found"));
+        }
+        const qint64 stationId = query.value(0).toLongLong();
+        const QString current = query.value(1).toString();
+        if (query.value(2).toInt() == 0 || query.value(3).toInt() != 0
+            || current != change.fromStatus) {
+            return recordOutcome(QStringLiteral("rejected"),
+                                 QJsonObject{{QStringLiteral("accepted"), false},
+                                             {QStringLiteral("reason"), QStringLiteral("pile state is not eligible")}},
+                                 ErrorKind::Conflict, QStringLiteral("pile state is not eligible"));
+        }
+        if (proposed[stationId].contains(change.pileId)) {
+            return recordOutcome(QStringLiteral("rejected"),
+                                 QJsonObject{{QStringLiteral("accepted"), false},
+                                             {QStringLiteral("reason"), QStringLiteral("pile appears more than once")}},
+                                 ErrorKind::Conflict, QStringLiteral("pile appears more than once"));
+        }
+        proposed[stationId].insert(change.pileId, change.toStatus);
+        originalStatuses.insert(change.pileId, change.fromStatus);
+    }
+
+    for (auto stationIterator = proposed.constBegin(); stationIterator != proposed.constEnd(); ++stationIterator) {
+        const qint64 stationId = stationIterator.key();
+        if (!validatedVersions.contains(stationId)) {
+            return recordOutcome(QStringLiteral("conflict"),
+                                 QJsonObject{{QStringLiteral("accepted"), false},
+                                             {QStringLiteral("reason"), QStringLiteral("stale station snapshot")},
+                                             {QStringLiteral("station_id"), stationId}},
+                                 ErrorKind::Conflict, QStringLiteral("stale station snapshot"));
+        }
+        const qint64 currentVersion = validatedVersions.value(stationId);
+        stationVersions.insert(stationId, currentVersion);
+        query.prepare(QStringLiteral(
+            "SELECT status, COUNT(*) FROM charging_piles WHERE station_id = :station_id GROUP BY status"));
+        query.bindValue(QStringLiteral(":station_id"), stationId);
+        if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("count simulation station state failed: %1").arg(queryError(query))); return false; }
+        while (query.next()) stateCounts[stationId].insert(query.value(0).toString(), query.value(1).toInt());
+        for (auto changeIterator = stationIterator.value().constBegin(); changeIterator != stationIterator.value().constEnd(); ++changeIterator) {
+            stateCounts[stationId][originalStatuses.value(changeIterator.key())] -= 1;
+            stateCounts[stationId][changeIterator.value()] += 1;
+        }
+        query.prepare(QStringLiteral("SELECT status FROM stations WHERE id = :station_id AND status = 'active'"));
+        query.bindValue(QStringLiteral(":station_id"), stationId);
+        if (!query.exec() || !query.next()) { rollback(); setFailure(error, kind, ErrorKind::NotFound, QStringLiteral("station not found or inactive")); return false; }
+        bool minIdleOk = false;
+        const int configuredMinIdle = qEnvironmentVariableIntValue(
+            "EV_PILE_SIMULATION_MIN_IDLE", &minIdleOk);
+        const int minIdle = qMax(0, minIdleOk ? configuredMinIdle : 1);
+        if (stateCounts[stationId].value(QStringLiteral("idle"), 0) < minIdle) {
+            return recordOutcome(QStringLiteral("rejected"),
+                                 QJsonObject{{QStringLiteral("accepted"), false},
+                                             {QStringLiteral("reason"), QStringLiteral("minimum idle invariant would be violated")},
+                                             {QStringLiteral("station_id"), stationId}},
+                                 ErrorKind::Conflict, QStringLiteral("minimum idle invariant would be violated"));
+        }
+    }
+
+    QJsonArray applied;
+    for (const SimulationChange &change : changes) {
+        query.prepare(QStringLiteral(
+            "UPDATE charging_piles SET status = :status, status_source = 'simulation', "
+            "status_updated_at = :updated_at, updated_at = :updated_at WHERE id = :id AND status = :from"));
+        query.bindValue(QStringLiteral(":status"), change.toStatus);
+        query.bindValue(QStringLiteral(":updated_at"), timestamp);
+        query.bindValue(QStringLiteral(":id"), change.pileId);
+        query.bindValue(QStringLiteral(":from"), change.fromStatus);
+        if (!query.exec() || query.numRowsAffected() != 1) { rollback(); setFailure(error, kind, ErrorKind::Conflict, QStringLiteral("pile changed while applying simulation")); return false; }
+        query.prepare(QStringLiteral(
+            "INSERT INTO pile_status_events(pile_id, station_id, from_status, to_status, source, reason, tick_id, created_at) "
+            "SELECT id, station_id, :from, :to, 'simulation', :reason, :tick_id, :created_at FROM charging_piles WHERE id = :pile_id"));
+        query.bindValue(QStringLiteral(":from"), change.fromStatus);
+        query.bindValue(QStringLiteral(":to"), change.toStatus);
+        query.bindValue(QStringLiteral(":reason"), change.reason.isEmpty() ? QStringLiteral("simulation") : change.reason);
+        query.bindValue(QStringLiteral(":tick_id"), tickId);
+        query.bindValue(QStringLiteral(":created_at"), timestamp);
+        query.bindValue(QStringLiteral(":pile_id"), change.pileId);
+        if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("write simulation event failed: %1").arg(queryError(query))); return false; }
+        applied.append(QJsonObject{{QStringLiteral("pile_id"), change.pileId},
+                                   {QStringLiteral("from"), change.fromStatus},
+                                   {QStringLiteral("to"), change.toStatus}});
+    }
+    QJsonObject versions;
+    for (auto iterator = stationVersions.constBegin(); iterator != stationVersions.constEnd(); ++iterator) {
+        const qint64 stationId = iterator.key();
+        const qint64 nextVersion = iterator.value() + 1;
+        query.prepare(QStringLiteral(
+            "INSERT INTO simulation_state(station_id, seed_id, last_tick_id, last_run_at, snapshot_version) "
+            "VALUES (:station_id, :seed_id, :tick_id, :last_run_at, :version) "
+            "ON CONFLICT(station_id) DO UPDATE SET seed_id=excluded.seed_id, "
+            "last_tick_id=excluded.last_tick_id, last_run_at=excluded.last_run_at, snapshot_version=excluded.snapshot_version"));
+        query.bindValue(QStringLiteral(":station_id"), stationId);
+        query.bindValue(QStringLiteral(":seed_id"), seedId);
+        query.bindValue(QStringLiteral(":tick_id"), tickId);
+        query.bindValue(QStringLiteral(":last_run_at"), timestamp);
+        query.bindValue(QStringLiteral(":version"), nextVersion);
+        if (!query.exec()) { rollback(); setFailure(error, kind, ErrorKind::Database, QStringLiteral("update simulation snapshot failed: %1").arg(queryError(query))); return false; }
+        versions.insert(QString::number(stationId), nextVersion);
+    }
+    const QJsonObject accepted{{QStringLiteral("accepted"), true},
+                               {QStringLiteral("simulator_id"), simulatorId},
+                               {QStringLiteral("tick_id"), tickId},
+                               {QStringLiteral("changes"), applied},
+                               {QStringLiteral("snapshot_versions"), versions}};
+    return recordOutcome(QStringLiteral("accepted"), accepted, ErrorKind::None, {});
 }
 
 void Database::close()

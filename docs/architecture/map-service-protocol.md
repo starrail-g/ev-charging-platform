@@ -2,10 +2,15 @@
 
 ## Status and relationship to the current mainline
 
-This document is the corrected, implementation-ready extension of Socket
-Protocol v1 proposed by PR #14. It describes a target capability; it does not
-claim that the handlers, Schema v0.4 migration, or simulator are already
-implemented.
+This document is the corrected extension of Socket Protocol v1 proposed by
+PR #14. Schema v0.4, deterministic generation, map-only cache/audit
+persistence, the three public handlers on the explicit server-mock path, and
+the internal simulator proposal boundary are implemented. The deterministic
+server-mock path and production
+Tencent HTTP adapter is now wired to the same handlers and uses Tencent's
+official `nearby(...)` boundary syntax for place search. Event-loop worker
+isolation, cache-miss coalescing, and the private mTLS simulator transport
+remain deployment work.
 
 The existing user, order, wallet, administrator, and `admin.pile.list`
 contracts remain authoritative. PR #13 has now been merged to `main`
@@ -498,7 +503,30 @@ retained for 30 UTC days. Cleanup must not delete stations, piles, orders, or
 wallet records. Long-term precise user locations, raw Tencent JSON, complete
 URLs, and credentials are forbidden.
 
-## 11. Configuration and non-functional requirements
+## 11. Tencent HTTP adapter
+
+When `EV_MAP_SERVER_MOCK` is not `1`, `MapService` selects the production
+`HttpTencentClient`. It requires `TENCENT_MAP_ENABLED=1` and a non-empty
+`TENCENT_MAP_KEY`; the key is added to HTTPS query parameters at runtime and
+is never written to logs, audit rows, cache entries, or responses. The default
+base URL is `https://apis.map.qq.com`. `TENCENT_MAP_BASE_URL` is available only
+for loopback fake HTTP tests. Requests use Qt `QUrlQuery` and a bounded timeout
+(`TENCENT_MAP_TIMEOUT_MS`, default 5000 ms).
+
+The adapter calls `/ws/geocoder/v1/`, `/ws/place/v1/search`,
+`/ws/direction/v1/driving/`, or `/ws/direction/v1/walking/`. Tencent `status`
+and HTTP failures are mapped to the canonical map error codes: timeout,
+unavailable, quota, permission, no result, or invalid response. Route distance
+is metres; Tencent route duration (minutes) is converted to protocol seconds.
+Tencent's compressed polyline is decoded from `[lat0,lng0,deltaLat1,deltaLng1,...]`,
+with coordinate/range validation and a maximum of 4096 retained points.
+For POI search the adapter requests Tencent's maximum `page_size=20`, reads the
+provider `count` when present, and drains subsequent `page_index` values until
+all provider records are received (or a short page ends a response without a
+count). The service then applies the client-facing `page_size`/opaque token;
+provider pages are never mistaken for the complete result set.
+
+## 12. Configuration and non-functional requirements
 
 ```text
 TENCENT_MAP_KEY=<server-only local secret>

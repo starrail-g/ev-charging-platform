@@ -12,7 +12,7 @@ B 不负责 Qt 地图页面或管理端页面；A 负责用户端地图适配，
 
 ## 2. 交付阶段
 
-### B0：契约和基线冻结
+### B0：契约和基线冻结（已完成）
 
 输出：协议/数据库文档、字段表、错误码表和测试矩阵。
 
@@ -25,7 +25,7 @@ B 不负责 Qt 地图页面或管理端页面；A 负责用户端地图适配，
 验收：文档与所有现有 operation/status/error 字段无冲突，旧客户端仍能
 忽略新增字段。
 
-### B1：Protocol 和统一响应保护
+### B1：Protocol 和统一响应保护（已完成）
 
 范围：`libs/protocol`、server response helper。
 
@@ -37,7 +37,7 @@ B 不负责 Qt 地图页面或管理端页面；A 负责用户端地图适配，
 验收：qmake6 构建；协议单测覆盖 0/1 MiB/超 1 MiB、错误码、token 和
 完整 envelope 大小。
 
-### B2：Schema v0.4 和 Database API
+### B2：Schema v0.4 和 Database API（主体完成）
 
 范围：`database/schema`、`database/migrations`、`libs/database`。
 
@@ -49,25 +49,33 @@ B 不负责 Qt 地图页面或管理端页面；A 负责用户端地图适配，
   的数据库方法。
 - 迁移失败必须整体回滚；现有 v0.3 站点和桩不可丢失。
 
-验收：新库初始化、v0.3 升级、重复升级、坏数据回滚、foreign-key check、
-清理任务和并发写测试全部通过。
+验收：新库初始化、v0.3 升级、重复升级、坏数据回滚和 foreign-key check
+已覆盖；30 天清理任务和更强并发写压测仍待补齐。
 
-### B3：腾讯地图适配和缓存
+### B3：腾讯地图适配和缓存（已完成基础 HTTP adapter）
 
 范围：server map service。
 
-- 实现 geocoder、POI search/detail、driving/walking 调用。
+- 实现确定性 Mock geocoder、POI search、driving/walking 边界；生产
+  `HttpTencentClient` 已接入腾讯 WebService geocoder、place search、driving/
+  walking direction。
+- 生产 key 只从 `TENCENT_MAP_KEY` 运行时环境读取；官方 HTTPS 地址为默认值，
+  `TENCENT_MAP_BASE_URL` 仅允许 loopback fake HTTP 测试。
+- 路线 `duration` 分钟转协议秒，腾讯压缩 polyline 严格校验、解码并限制为
+  4096 点；上游 HTTP、配额、权限、超时、坏 JSON 和无结果映射为统一地图错误码。
 - 实现坐标、字段、折线和上游状态校验。
 - 实现 live/cache/stale/mock 四种数据源。
 - 按规范化 origin、radius、page size、page token、station、mode 生成 cache
   key。
-- 实现同 key 的并发 miss 合并、TTL、stale 上限和缓存清理。
+- 实现 TTL/stale 上限和 map-only cache；同 key 的并发 miss 合并、缓存清理
+  和异步 worker 尚待完成。
 - 所有上游调用记录脱敏审计，不记录 Key、完整 URL 或原始 JSON。
 
-验收：使用 fake Tencent adapter 覆盖成功、超时、配额、权限、无结果、坏
-JSON、缓存命中、过期和 stale 降级；无真实 Key 也能运行测试。
+验收：`server/tests/tencent_client.pro` 覆盖 fake HTTP 成功、超时、配额、权限、
+坏 JSON、畸形 polyline 和超大响应；`server/tests/map_live.py` 覆盖生产选择链的
+地址解析、POI upsert、实时桩聚合和路线。无真实 Key 也能运行全部回归。
 
-### B4：站点 upsert、幂等和桩生成
+### B4：站点 upsert、幂等和桩生成（已完成）
 
 - 实现 `map.station.search` 的地址/坐标规范化和分页。
 - 以 `(provider, provider_poi_id)` 去重站点。
@@ -82,18 +90,19 @@ JSON、缓存命中、过期和 stale 降级；无真实 Key 也能运行测试�
 验收：重复 POI、重复 request ID、参数冲突、首次导入失败、桩生成失败、
 种子复现和大响应分页测试。
 
-### B5：路线和管理员审计 handler
+### B5：路线和管理员审计 handler（主体完成）
 
 - 实现 `map.route.plan`，终点只从数据库读取。
-- 实现路线缓存和折线抽稀；逐步缩减到完整 envelope 可发送。
+- 实现路线缓存和完整 envelope 检查；生产多点折线抽稀仍待接入真实
+  provider 返回后补齐。
 - 实现 `admin.map.audit.list` 的 Token 鉴权、过滤、分页和稳定排序。
-- 所有 handler 都在 Socket event loop 外执行慢 HTTP/数据库工作，并通过
-  request ID 回传结果。
+- 当前 handler 可运行但数据库工作仍同步于 Socket event loop；需在生产化
+  前迁移至有界 worker。
 
 验收：客户端断开、请求超时、重复只读请求、管理员 Token 失效、audit 分页、
 路线过大和并发请求测试。
 
-### B6：独立云端 `pile-simulator`
+### B6：独立云端 `pile-simulator`（规划骨架与内部验证完成）
 
 建议部署为独立无状态服务，配套一个小型持久化运行状态存储或从服务端
 恢复 tick/seed；它不连接业务 SQLite。
@@ -120,7 +129,8 @@ B server gateway 职责：
 - 重放同一 tick 不重复修改数据库；
 - 业务事务抢先更新时，旧 proposal 被拒绝；
 - 网络中断、服务重启、重复投递和时钟漂移不会破坏桩状态；
-- 未授权服务不能调用模拟 gateway；
+- 未授权服务不能调用模拟 gateway（mTLS listener 尚未接入，当前 gateway
+  仅作为 internal-only C++ boundary）；
 - simulator heartbeat、last-seen、失败率和延迟可观测。
 
 ### B7：端到端集成和交付
