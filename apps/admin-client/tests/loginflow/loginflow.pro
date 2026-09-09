@@ -1,4 +1,4 @@
-QT += core gui widgets testlib
+QT += core gui widgets testlib charts
 
 TEMPLATE = app
 TARGET = tst_loginflow
@@ -12,6 +12,7 @@ SOURCES += \
     ../../src/app/mainwindow.cpp \
     ../../src/pages/loginpage.cpp \
     ../../src/pages/overviewpage.cpp \
+    ../../src/pages/revenuepage.cpp \
     ../../src/pages/pilepage.cpp \
     ../../src/pages/stationpage.cpp \
     ../../src/pages/userpage.cpp \
@@ -25,12 +26,15 @@ SOURCES += \
     ../../src/widgets/stationtopologywidget.cpp \
     ../../src/widgets/statusglyphwidget.cpp \
     ../../src/widgets/statuspulsewidget.cpp \
-    ../../src/widgets/statustag.cpp
+    ../../src/widgets/statustag.cpp \
+    ../../src/widgets/revenuechartwidget.cpp \
+    ../../src/widgets/revenuemetriccard.cpp
 
 HEADERS += \
     ../../src/app/mainwindow.h \
     ../../src/pages/loginpage.h \
     ../../src/pages/overviewpage.h \
+    ../../src/pages/revenuepage.h \
     ../../src/pages/pilepage.h \
     ../../src/pages/stationpage.h \
     ../../src/pages/userpage.h \
@@ -45,4 +49,6 @@ HEADERS += \
     ../../src/widgets/stationtopologywidget.h \
     ../../src/widgets/statusglyphwidget.h \
     ../../src/widgets/statuspulsewidget.h \
-    ../../src/widgets/statustag.h
+    ../../src/widgets/statustag.h \
+    ../../src/widgets/revenuechartwidget.h \
+    ../../src/widgets/revenuemetriccard.h

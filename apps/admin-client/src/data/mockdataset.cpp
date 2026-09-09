@@ -1,5 +1,6 @@
 #include "mockdataset.h"
 
+#include <QDate>
 #include <QHash>
 
 namespace ev {
@@ -7,6 +8,27 @@ namespace mockdata {
 
 namespace {
 const QString kSimulatedError = QStringLiteral("mock: simulated interface error");
+
+// 与 dashboard/data/demo.json revenue30dCents 逐值一致（30 元素，末 7 位 = 7d 数组；
+// 和 = 983840 / 286540 分）。运行时不读取 dashboard 目录，双端同口径由测试锁定。
+const QList<qint64> kRevenueCents30 = {
+    25400, 27100, 28900, 26600, 31200, 33500, 29800, 24300, 26200, 28100,
+    30500, 32800, 35200, 31400, 27500, 29600, 31800, 34300, 36900, 33100,
+    28800, 30900, 33400, 35600, 41200, 38240, 44700, 46800, 40200, 39800};
+
+RevenueSeries mockRevenue(int count)
+{
+    RevenueSeries result;
+    result.range = count == 7 ? QStringLiteral("7d") : QStringLiteral("30d");
+    result.updatedAt = QStringLiteral("2026-09-01T10:15:00Z");
+    const QDate end(2026, 9, 1);
+    for (int i = 30 - count; i < 30; ++i) {
+        result.days.append({end.addDays(i - 29), kRevenueCents30.at(i)});
+        result.totalCents += kRevenueCents30.at(i);
+    }
+    result.available = true;
+    return result;
+}
 }
 
 MockResult<PileInfo> piles(DataMode mode)
@@ -100,10 +122,12 @@ OverviewResult overview(DataMode mode)
     if (mode != DataMode::Normal)
         return result; // Empty：ok=true，指标全零
 
-    result.stats.revenueCents = 286540;             // 2865.40 元（近 7 日）
-    // 近 30 日合计（分）与 dashboard/data/demo.json revenue30dCents 数组和一致；
-    // 完整 30 日序列以 demo.json 为源（末 7 日 = revenueCents 对应日序列）
-    result.stats.revenue30dCents = 983840;          // 9838.40 元（近 30 日）
+    // 两份逐日序列来自同一 30 日源（末 7 日派生 7 日序列，同 demo.json）；
+    // 卡面合计从 totalCents 派生，避免三份手写合计漂移（tst_ui 锁定一致）。
+    result.stats.revenue7dSeries = mockRevenue(7);
+    result.stats.revenue30dSeries = mockRevenue(30);
+    result.stats.revenueCents = result.stats.revenue7dSeries.totalCents;    // 2865.40 元（近 7 日）
+    result.stats.revenue30dCents = result.stats.revenue30dSeries.totalCents; // 9838.40 元（近 30 日）
     result.stats.pileIdle = 1;
     result.stats.pileReserved = 1;
     result.stats.pileCharging = 2;

@@ -16,6 +16,7 @@ class QListWidget;
 class QLabel;
 class LoginPage;
 class OverviewPage;
+class RevenuePage;
 class PilePage;
 class StationPage;
 class UserPage;
@@ -31,6 +32,15 @@ public:
     explicit MainWindow(ev::AdminRepository *repository = nullptr,
                         QWidget *parent = nullptr);
     ~MainWindow() override;
+
+    // 命名页面索引(导航项与 pageStack 同顺序; 弃用裸数字 1/2/3)
+    enum PageIndex {
+        OverviewIndex = 0,
+        RevenueIndex,
+        PileIndex,
+        StationIndex,
+        UserIndex,
+    };
 
     bool isLoggedIn() const { return m_loggedIn; }
 
@@ -57,6 +67,7 @@ private:
     QLabel *m_sessionBadge = nullptr;
     QLabel *m_pageTitle = nullptr;
     OverviewPage *m_overviewPage = nullptr;
+    RevenuePage *m_revenuePage = nullptr;
     PilePage *m_pilePage = nullptr;
     StationPage *m_stationPage = nullptr;
     UserPage *m_userPage = nullptr;

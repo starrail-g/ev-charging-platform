@@ -42,3 +42,42 @@ QLabel[state="charging"] { color: #0E6E8C; }
 QLabel[state="fault"] { color: #A94B38; }
 QLabel[state="offline"] { color: #5B666B; }
 QLabel[state="unknown"] { color: #4E5A55; }
+
+/* ── 营收融合卡(2026-09-08 销售业绩): 金额文字在图表背景绘制, 热区只做命中 ── */
+QLabel#revenueCardTitle { color: #5F7068; font-size: 12px; }
+QToolButton#revenue7dButton, QToolButton#revenue30dButton,
+QToolButton#revenueRetryButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+}
+QToolButton#revenue7dButton:hover, QToolButton#revenue30dButton:hover,
+QToolButton#revenue7dButton:pressed, QToolButton#revenue30dButton:pressed {
+    background-color: rgba(203, 210, 206, 0.3);
+}
+QToolButton#revenueDetailsButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: #0E6E8C;
+    font-size: 12px;
+    padding: 2px 6px;
+}
+QToolButton#revenueDetailsButton:hover {
+    color: #18201D;
+    background-color: #CBD2CE;
+}
+QToolButton#revenueRetryButton {
+    color: #0E6E8C;
+    border-color: #5F7068;
+    font-size: 12px;
+    padding: 2px 8px;
+}
+QToolButton#revenueRetryButton:hover {
+    background-color: #CBD2CE;
+}
+QToolButton#revenue7dButton:focus, QToolButton#revenue30dButton:focus,
+QToolButton#revenueDetailsButton:focus, QToolButton#revenueRetryButton:focus {
+    border-color: #0E6E8C;
+    outline: none;
+}
