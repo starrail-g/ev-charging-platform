@@ -374,6 +374,9 @@ bool MapService::stationSearch(const QString &requestId, qint64 userId,
     QString upstreamError;
     bool fromCache = false;
     bool upstreamAttempted = false;
+    bool pageSelectedFromCache = false;
+    bool cachedHasMore = false;
+    QString cachedNextToken;
     if (fresh) {
         allPois = parseCachedPois(cached);
         origin = cached.value(QStringLiteral("resolved_origin")).toObject();
@@ -381,6 +384,9 @@ bool MapService::stationSearch(const QString &requestId, qint64 userId,
                          == QStringLiteral("server_mock")
                      ? QStringLiteral("server_mock") : QStringLiteral("tencent_cache");
         fromCache = true;
+        pageSelectedFromCache = true;
+        cachedHasMore = cached.value(QStringLiteral("has_more")).toBool();
+        cachedNextToken = cached.value(QStringLiteral("next_page_token")).toString();
     } else {
         if (stale) {
             // A stale value is a fallback only. Try the provider first so a
@@ -398,6 +404,9 @@ bool MapService::stationSearch(const QString &requestId, qint64 userId,
                                  == QStringLiteral("server_mock")
                              ? QStringLiteral("server_mock") : QStringLiteral("tencent_stale");
                 fromCache = true;
+                pageSelectedFromCache = true;
+                cachedHasMore = cached.value(QStringLiteral("has_more")).toBool();
+                cachedNextToken = cached.value(QStringLiteral("next_page_token")).toString();
             } else {
                 dataSource = isMapMockEnabled() ? QStringLiteral("server_mock")
                                                 : QStringLiteral("tencent_live");
@@ -435,22 +444,33 @@ bool MapService::stationSearch(const QString &requestId, qint64 userId,
             return left.distanceMeters < right.distanceMeters;
         return left.providerPoiId < right.providerPoiId;
     });
-    if (offset >= allPois.size()) {
-        qint64 ignored = 0;
-        database_->recordMapRequest(requestId, QStringLiteral("map.station.search"), userId,
-                                    normalizedQuery, key, QStringLiteral("error"), dataSource,
-                                    static_cast<int>(ev::protocol::ErrorCode::MapNoResult), 0,
-                                    &ignored, nullptr, nullptr);
-        setFailure(failure, ev::protocol::ErrorCode::MapNoResult, QStringLiteral("分页位置已失效"));
-        return false;
-    }
-    const int begin = static_cast<int>(offset);
-    const int end = qMin(begin + static_cast<int>(pageSize), allPois.size());
     QVector<ev::database::MapPoi> page;
-    page.reserve(end - begin);
-    for (int i = begin; i < end; ++i) page.append(allPois.at(i));
-    const bool hasMore = end < allPois.size();
-    const QString nextToken = hasMore ? encodePageToken(binding, end) : QString();
+    bool hasMore = false;
+    QString nextToken;
+    if (pageSelectedFromCache) {
+        // The cache entry is already one selected page.  Applying the request
+        // offset again would drop the page-1 continuation and make page-2
+        // cache hits look out of range.  Re-aggregate only these POIs below.
+        page = allPois;
+        hasMore = cachedHasMore;
+        nextToken = cachedNextToken;
+    } else {
+        if (offset >= allPois.size()) {
+            qint64 ignored = 0;
+            database_->recordMapRequest(requestId, QStringLiteral("map.station.search"), userId,
+                                        normalizedQuery, key, QStringLiteral("error"), dataSource,
+                                        static_cast<int>(ev::protocol::ErrorCode::MapNoResult), 0,
+                                        &ignored, nullptr, nullptr);
+            setFailure(failure, ev::protocol::ErrorCode::MapNoResult, QStringLiteral("分页位置已失效"));
+            return false;
+        }
+        const int begin = static_cast<int>(offset);
+        const int end = qMin(begin + static_cast<int>(pageSize), allPois.size());
+        page.reserve(end - begin);
+        for (int i = begin; i < end; ++i) page.append(allPois.at(i));
+        hasMore = end < allPois.size();
+        nextToken = hasMore ? encodePageToken(binding, end) : QString();
+    }
     QJsonObject warning = nullWarning();
     if (dataSource == QStringLiteral("tencent_stale")) {
         warning = QJsonObject{{QStringLiteral("code"), static_cast<int>(ev::protocol::ErrorCode::MapUpstreamUnavailable)},

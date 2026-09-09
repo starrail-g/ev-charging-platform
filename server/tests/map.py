@@ -67,6 +67,52 @@ login = exchange(request("map-test-login", "user.login", {"phone": "13900000001"
 assert login["type"] == "user.login.result", login
 user_id = login["payload"]["user"]["id"]
 
+# A cached search entry represents one already-selected page.  Cache hits must
+# preserve that page's provider continuation rather than applying the token
+# offset to the cached page a second time.
+paged_search_payload = {
+    "user_id": user_id,
+    "origin": {"kind": "address", "value": "沈阳市浑南区软件园"},
+    "radius_meters": 1000,
+    "page_size": 1,
+}
+paged_first = exchange(request(
+    "map-test-paged-first", "map.station.search", paged_search_payload))
+assert paged_first["type"] == "map.station.search.result", paged_first
+paged_first_payload = paged_first["payload"]
+assert len(paged_first_payload["stations"]) == 1, paged_first_payload
+assert paged_first_payload["has_more"] is True, paged_first_payload
+first_page_token = paged_first_payload["next_page_token"]
+assert isinstance(first_page_token, str) and first_page_token, paged_first_payload
+
+paged_first_cached_request = request(
+    "map-test-paged-first-cached", "map.station.search", paged_search_payload)
+paged_first_cached = exchange(paged_first_cached_request)
+assert paged_first_cached["type"] == "map.station.search.result", paged_first_cached
+assert paged_first_cached["payload"]["has_more"] is True, paged_first_cached
+assert paged_first_cached["payload"]["next_page_token"] == first_page_token, paged_first_cached
+assert paged_first_cached["payload"]["stations"] == paged_first_payload["stations"], paged_first_cached
+# The response persisted for request-id replay must keep the same continuation.
+assert exchange(paged_first_cached_request) == paged_first_cached
+
+paged_second_payload = {**paged_search_payload, "page_token": first_page_token}
+paged_second = exchange(request(
+    "map-test-paged-second", "map.station.search", paged_second_payload))
+assert paged_second["type"] == "map.station.search.result", paged_second
+assert len(paged_second["payload"]["stations"]) == 1, paged_second
+assert (paged_second["payload"]["stations"][0]["id"]
+        != paged_first_payload["stations"][0]["id"]), paged_second
+
+paged_second_cached = exchange(request(
+    "map-test-paged-second-cached", "map.station.search", paged_second_payload))
+assert paged_second_cached["type"] == "map.station.search.result", paged_second_cached
+assert (paged_second_cached["payload"]["has_more"]
+        == paged_second["payload"]["has_more"]), paged_second_cached
+assert (paged_second_cached["payload"]["next_page_token"]
+        == paged_second["payload"]["next_page_token"]), paged_second_cached
+assert (paged_second_cached["payload"]["stations"]
+        == paged_second["payload"]["stations"]), paged_second_cached
+
 search_payload = {
     "user_id": user_id,
     "origin": {"kind": "address", "value": "沈阳市浑南区软件园"},
