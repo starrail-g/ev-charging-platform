@@ -233,7 +233,7 @@ bash scripts/tencent_poi_probe.sh
 
 - 用户端 Qt Widgets + Mock 主流程：已实现并在 Ubuntu 虚拟机通过构建和 QtTest；
 - 站点、电桩、预约、充电、结算和历史记录：Mock 可演示；
-- 腾讯地图服务端契约：PR #15 已冻结，PR #19 已在 B 分支实现 WebService、Schema v0.4、审计和模拟网关，等待合并到 `main` 后进行真实 Socket 联调；
+- 腾讯地图服务端契约：PR #15 已冻结，PR #19 已合入 `main`（`005d6e8`），提供 WebService、Schema v0.4、审计、模拟网关和 POI 上游分页；用户端通过 `ServerMapService` 进行 Socket 联调，真实腾讯凭据仍只由服务端管理；
 - 用户端地图：已新增 `ServerMapService`，只通过 Protocol v1 `map.station.search`/`map.route.plan` 获取站点、路线和降级来源；地图位置数据不参与订单和计费，业务字段仍通过 `IUserService` 获取；
 - QWebEngineView：当前只渲染本地离线/服务端结果视图，不注入腾讯 Key、不加载腾讯 GL JS；
 - 客户端协议假服务测试已新增；Socket/Mock 严格隔离、管理端同源日间主题和 21:38 可缩放窗口的 Ubuntu qmake6 回归证据待本次 VM 验证后登记。

@@ -100,7 +100,7 @@ QT_QPA_PLATFORM=offscreen QTWEBENGINE_CHROMIUM_FLAGS='--disable-gpu' \
   ./ev-map-service-tests -txt
 ```
 
-For server-side map acceptance, configure `TENCENT_MAP_KEY` only in B's server environment and run the server's redacted probe. The user client only needs `EV_USER_CLIENT_TRANSPORT=socket`, `EV_SERVER_HOST` and `EV_SERVER_PORT`; no Tencent key is required locally. PR #19 commit `cc3f23f` has been validated in server-mock mode with the optional runtime test above; this proves the Socket contract and client mapping, not a live Tencent upstream call. To validate the interactive client map path, use a running B server:
+For server-side map acceptance, configure `TENCENT_MAP_KEY` only in B's server environment and run the server's redacted probe. The user client only needs `EV_USER_CLIENT_TRANSPORT=socket`, `EV_SERVER_HOST` and `EV_SERVER_PORT`; no Tencent key is required locally. PR #19 is merged to `main` (`005d6e8`, including the final provider-pagination fix). The client-side runtime check remains a Socket contract and mapping check; it does not replace a fresh server-side live Tencent run. To validate the interactive client map path, use a running B server:
 
 ```bash
 EV_USER_CLIENT_TRANSPORT=socket ./ev-user-client

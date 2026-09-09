@@ -1,6 +1,6 @@
 # Database contract
 
-`schema/schema.sql` is the SQLite v0.3 schema used by the server. It is
+`schema/schema.sql` is the SQLite v0.4 schema used by the server. It is
 idempotent (`CREATE IF NOT EXISTS`) and records the schema version in
 `schema_meta`.
 
@@ -21,13 +21,23 @@ python3 scripts/migrate_db.py var/ev-charging.db \
 python3 -c 'import sqlite3; c=sqlite3.connect("var/ev-charging.db"); assert not c.execute("PRAGMA foreign_key_check").fetchall()'
 ```
 
-For databases already deployed with v0.2, apply the v0.2 -> v0.3 migration
-before starting the v0.3 server:
+For databases already deployed with v0.2, apply the v0.2 -> v0.3 migration,
+then the v0.3 -> v0.4 migration before starting the server:
 
 ```sh
 python3 scripts/migrate_db.py var/ev-charging.db \
   database/migrations/002_v0.2_to_v0.3.sql
 ```
+
+```sh
+python3 scripts/migrate_db.py var/ev-charging.db \
+  database/migrations/003_v0.3_to_v0.4.sql
+```
+
+The Qt server also upgrades a v0.3 database transactionally on first open.
+The v0.4 schema adds map cache/audit tables, simulated-pile metadata, status
+events, and simulator tick idempotency records. The cache stores map-only data;
+live pile status is always aggregated from SQLite before a normal map response.
 
 The server must enable `PRAGMA foreign_keys = ON` on every new connection.
 Times use UTC ISO-8601 text and monetary values use integer Chinese fen.

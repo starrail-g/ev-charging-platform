@@ -121,7 +121,7 @@
 5. 保证地图数据只补充位置和路线，价格、桩数量、桩状态和订单始终来自 `IUserService`。
 6. 增加本地协议假服务测试和可选的 PR #19 运行时 Socket 测试，并在 README 记录服务端环境变量、qmake6 构建及真实腾讯上游验证边界。
 
-验收标准：用户端只通过服务端获取地图站点和路线；服务端数据能安全渲染并明确区分实时、缓存、降级和 Mock；服务失败时 Socket 模式显示明确错误，显式 Mock 模式仍可离线运行；用户端不保存或提交腾讯密钥。当前客户端适配、本地协议测试，以及对 PR #19 `cc3f23f` 的 server-mock 运行时 Socket 联调已完成；真实腾讯上游调用仍由 B 单独验证。
+验收标准：用户端只通过服务端获取地图站点和路线；服务端数据能安全渲染并明确区分实时、缓存、降级和 Mock；服务失败时 Socket 模式显示明确错误，显式 Mock 模式仍可离线运行；用户端不保存或提交腾讯密钥。当前客户端适配、本地协议测试，以及对已合入 `main` 的 PR #19（`005d6e8`）的 server-mock 运行时 Socket 联调已完成；真实腾讯上游调用仍由 B 单独验证。
 
 ### A-S2-02：智能分析结果的用户端展示（待完成）
 
@@ -210,4 +210,4 @@ flowchart TD
 | 2026-09-02 | A-S1-03 首轮 Socket 适配与真实订单生命周期联调完成，任务保持进行中 | B PR #4 提交 3600c3de81c252e3a8a37a8f8eff3e58a1a8ac13、VM qmake6、QtTest 9 passed、B smoke |
 | 2026-09-04 | 按当前 main 上的 PR#4 Schema v0.3 合同完成用户端真实 Socket 适配与回归；应用构建、QtTest、B smoke/concurrency 均通过，预约和直充启动路径均已覆盖，A-S1-03 完成 | current main 994e5ff（PR #4 merged，PR #8 UI baseline included）、隔离数据库服务端、Ubuntu qmake6 |
 | 2026-09-09 | 按 PR #15 新协议完成服务端地图客户端适配：`map.station.search`/`map.route.plan`、用户/站点上下文、服务端来源解析、Mock/离线回退和协议假服务测试 | 客户端不持有 Tencent Key；B 的地图 handler、Schema v0.4 和真实 Socket 联调待完成 |
-| 2026-09-09 | 对齐 PR #19 `cc3f23f` 的结构化 warning 与运行实现，增加可选真实 Socket 测试；server-mock 环境下地址解析、站点搜索、驾车和步行路线均通过 | Ubuntu 22.04、Qt 6.2.4、qmake6；真实腾讯在线调用不在本次 A 端证据范围 |
+| 2026-09-09 | 对齐已合入 `main` 的 PR #19（`005d6e8`）结构化 warning、最终 POI 分页和运行实现，增加可选真实 Socket 测试；server-mock 环境下地址解析、站点搜索、驾车和步行路线均通过 | Ubuntu 22.04、Qt 6.2.4、qmake6；真实腾讯在线调用不在本次 A 端证据范围 |

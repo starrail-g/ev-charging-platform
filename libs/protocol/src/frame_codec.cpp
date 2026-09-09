@@ -6,7 +6,8 @@ namespace ev::protocol {
 
 QByteArray encodeFrame(const Message &message)
 {
-    const QByteArray payload = QJsonDocument(message.toJson()).toJson(QJsonDocument::Compact);
+    const QByteArray payload = encodePayload(message);
+    if (payload.isEmpty() || payload.size() > kMaxPayloadBytes) return {};
     QByteArray frame;
     frame.reserve(4 + payload.size());
     const quint32 size = static_cast<quint32>(payload.size());
@@ -16,6 +17,17 @@ QByteArray encodeFrame(const Message &message)
     frame.append(char(size & 0xff));
     frame.append(payload);
     return frame;
+}
+
+QByteArray encodePayload(const Message &message)
+{
+    return QJsonDocument(message.toJson()).toJson(QJsonDocument::Compact);
+}
+
+bool payloadFitsLimit(const Message &message)
+{
+    const QByteArray payload = encodePayload(message);
+    return !payload.isEmpty() && payload.size() <= kMaxPayloadBytes;
 }
 
 QList<Message> FrameDecoder::feed(const QByteArray &bytes, QString *error,

@@ -38,6 +38,12 @@ int main(int argc, char **argv)
     if (result.size() != 1 || result.first().id != good.id
         || error.isEmpty() || errorCode != ErrorCode::InvalidJson) return 7;
     if (errorCodeName(ErrorCode::AccountFrozen) != QStringLiteral("ACCOUNT_FROZEN")) return 8;
+    if (errorCodeName(ErrorCode::MapResponseTooLarge) != QStringLiteral("MAP_RESPONSE_TOO_LARGE")) return 9;
+    if (!isRetryable(ErrorCode::MapUpstreamTimeout)
+        || isRetryable(ErrorCode::MapPermissionDenied)) return 10;
+    Message oversized = source;
+    oversized.payload.insert(QStringLiteral("blob"), QString(kMaxPayloadBytes, QLatin1Char('x')));
+    if (!encodeFrame(oversized).isEmpty()) return 11;
     qInfo() << "protocol tests passed";
     return 0;
 }
