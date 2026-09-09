@@ -7,6 +7,7 @@
 #include <QComboBox>
 #include <QDate>
 #include <QElapsedTimer>
+#include <QGraphicsTextItem>
 #include <QLabel>
 
 #include <limits>
@@ -158,6 +159,7 @@ private slots:
     void userPageStatusButtonFlipsSelectedUser();
     void mockRevenueSeriesAreConsistent();
     void revenueChartWidgetLifecycle();
+    void revenueFullChartKeepsYTitleAnchorAcrossResize();
     void revenueMetricCardSwapsFixedRowsOnClick();
     void revenueMetricCardUnavailableSeriesShowsRetry();
     void revenuePageShowsSummaryChartAndDailyTable();
@@ -438,6 +440,81 @@ void TestUi::revenueChartWidgetLifecycle()
     QVERIFY(clearedFullY);
     QCOMPARE(clearedFullY->min(), 0.0);
     QCOMPARE(clearedFullY->max(), 1.0);
+}
+
+void TestUi::revenueFullChartKeepsYTitleAnchorAcrossResize()
+{
+    // 回归(评审 Blocking): ¥ 正立自绘不得隐藏 QtCharts 纵轴标题 item。Qt 6.2.4
+    // VerticalAxis::sizeHint()/updateGeometry() 以 titleItem()->isVisible() 为闸:
+    // 隐藏后布局不再为标题预留空间(sizeHint 归零)、标题几何不再被维护 —— 首次
+    // 显示正常(隐藏发生在首帧绘制后), 但 show→resize/relayout 后轴宽塌缩、
+    // plotArea 横向漂移, 自绘锚点(sceneBoundingRect)冻结在旧位置 → ¥ 偏移/重叠。
+    // 正解 = setOpacity(0): item 仍 visible, 标题空间与几何照常维护, 自绘每帧
+    // 跟随更新后的包围盒。本用例断言: 布局往返后 plotArea 复原(轴宽不塌)、¥ 锚点
+    // 与 plotArea 左缘间距不变(自绘不漂移)、标题 item 可见且透明(不回归隐藏方案)。
+    const auto stats = ev::mockdata::overview(ev::mockdata::DataMode::Normal).stats;
+    const auto &seven = stats.revenue7dSeries;
+    const auto &thirty = stats.revenue30dSeries;
+
+    ev::RevenueChartWidget full(ev::RevenueChartWidget::Mode::Full);
+    full.setSeries(thirty);
+    full.resize(560, 280);
+    full.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&full));
+    QCoreApplication::processEvents();
+    full.grab(); // 强制首帧渲染: 旧实现(隐藏方案)在此帧执行 setVisible(false),
+    // 新实现(透明方案)在此帧执行 setOpacity(0) —— 后续 relayout 的起点状态由此定
+
+    // 与组件同一规则定位 QtCharts 内部 ¥ 标题 item(私有实现依赖, 项目固定
+    // Qt 6.2.4 —— 升级 QtCharts 需先复核定位规则与布局闸门)
+    QGraphicsTextItem *titleItem = nullptr;
+    const auto items = full.chart()->scene()->items();
+    for (QGraphicsItem *it : items) {
+        auto *txt = dynamic_cast<QGraphicsTextItem *>(it);
+        if (txt && txt->toPlainText() == QStringLiteral("¥")) {
+            titleItem = txt;
+            break;
+        }
+    }
+    QVERIFY(titleItem);
+    QVERIFY(full.chart()->plotArea().width() > 100.0); // 布局已就绪(非退化)
+
+    // 自绘锚点 = 标题 item 场景包围盒中心(转 chart 局部坐标后与 plotArea 同系)。
+    // QtCharts 把纵轴标题垂直居中于绘图区(gridRect.center), 布局正常维护时
+    // 任何尺寸下锚点都应贴合 plotArea 垂直中心 —— 锚点与刻度(网格)同动。
+    const auto anchorCenter = [&]() -> QPointF {
+        return titleItem->sceneBoundingRect().center() - full.chart()->scenePos();
+    };
+    const auto centerDrift = [&]() -> qreal {
+        return qAbs(anchorCenter().y() - full.chart()->plotArea().center().y());
+    };
+    const qreal plot0Left = full.chart()->plotArea().left();
+    const qreal plot0Width = full.chart()->plotArea().width();
+    const qreal gap0 = plot0Left - anchorCenter().x();
+    QVERIFY(centerDrift() < 1.0); // 初始: 标题垂直居中于绘图区
+    QVERIFY(gap0 > 10.0);         // ¥ 在 plotArea 左侧独立空间内(不与刻度/绘图区重叠)
+
+    // show → resize → 再次 setSeries → resize 回原尺寸(评审建议流程):
+    // 每轮 relayout 后标题 item 几何必须与 plotArea 同步更新
+    full.resize(420, 320);
+    QTest::qWait(50);
+    // 高度 280→320: 标题几何必须随布局重排(修前隐藏标题 → 几何冻结, 垂直
+    // 偏差 ≈ 高度差一半, 与 Y 轴刻度重叠)
+    QVERIFY(centerDrift() < 1.0);
+    full.setSeries(seven);
+    QTest::qWait(50);
+    QVERIFY(centerDrift() < 1.0);
+    full.resize(560, 280);
+    QTest::qWait(50);
+    QVERIFY(centerDrift() < 1.0);
+
+    QVERIFY(qAbs(full.chart()->plotArea().left() - plot0Left) < 1.0);
+    QVERIFY(qAbs(full.chart()->plotArea().width() - plot0Width) < 1.0);
+    QVERIFY(qAbs(plot0Left - anchorCenter().x() - gap0) < 1.0);
+
+    full.grab(); // 强制同步渲染一次: drawForeground 定位并处理标题 item
+    QVERIFY(titleItem->isVisible());            // 隐藏会令 sizeHint 归零(见上)
+    QVERIFY(titleItem->opacity() < 1.0);        // 原字形透明、自绘正立替代
 }
 
 void TestUi::revenueMetricCardSwapsFixedRowsOnClick()
