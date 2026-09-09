@@ -14,6 +14,7 @@
 #include "widgets/metriccard.h"
 #include "widgets/revenuemetriccard.h"
 #include "widgets/statestack.h"
+#include "widgets/staticmapimageprovider.h"
 #include "widgets/stationtopologywidget.h"
 
 namespace {
@@ -159,6 +160,12 @@ OverviewPage::OverviewPage(ev::AdminRepository *repository, QWidget *parent)
 
     m_topology = new StationTopologyWidget(topologyPanel);
     m_topology->setObjectName(QStringLiteral("stationTopology"));
+    // 真图底图注入（T3，docs/role-c-admin-map-renderer-plan.md §3.2 接线）：key 只走
+    // 环境变量 TENCENT_STATIC_MAP_KEY（WebService 型，与 Web 大屏 JS key 语义隔离，
+    // 禁入 git/日志/截图）；空 key → provider 空转（canFetch=false → 拓扑模式，行为不变）。
+    // 所有权转移给拓扑控件（内部 setParent），页面不持有。
+    m_topology->setMapImageProvider(
+        new ev::StaticMapImageProvider(qEnvironmentVariable("TENCENT_STATIC_MAP_KEY")));
 
     auto *topologyLayout = new QVBoxLayout(topologyPanel);
     topologyLayout->setContentsMargins(14, 12, 14, 12);
