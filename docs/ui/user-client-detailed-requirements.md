@@ -1,10 +1,10 @@
 # 充电用户端详细要求与腾讯地图接入记录
 
-更新时间：2026-09-02
+更新时间：2026-09-09
 适用平台：Linux 桌面环境（Ubuntu 22.04+）
 客户端技术栈：Qt Widgets / C++
 
-本文记录用户端第一阶段的详细功能要求、当前 Mock 实现边界、腾讯地图 Web Service API 接入计划，以及调研到的相似开源项目。本文是用户端开发和冒烟验收的可直接查阅版本；B 的最终 Socket、数据库字段和状态协议稳定后，只替换适配层，不以本文冻结服务端契约。
+本文记录用户端第一阶段的详细功能要求、当前 Mock 实现边界和地图服务适配。2026-09-09 起以 PR #15 的 `docs/architecture/map-service-protocol.md` 为地图契约唯一事实来源：腾讯 Key、WebService 调用、缓存、审计、站点导入和桩快照由 B 服务端负责，用户端只发送 Socket Protocol v1 请求并渲染服务端结果。下文早期直连腾讯 API 的记录保留为历史过程，不代表当前生产路径。
 
 ## 一、产品定位
 
@@ -22,7 +22,7 @@
 
 1. 支持下拉选择区域，软件层面模拟 GPS 定位。
 2. 支持手动输入地址并提交定位。
-3. 地址定位优先通过腾讯地图 Web Service 地理编码接口将地址转换为经纬度；无 Key、网络失败或接口不可用时使用明确标注的 Mock 坐标。
+3. 地址定位通过服务端 `map.station.search` 的 `origin.kind=address` 完成；服务端负责腾讯地理编码，无服务端或地图上游失败时使用明确标注的 Mock 坐标。
 4. 根据距离由近及远展示站点。
 5. 支持站点列表刷新、关键词查询和基础空/错状态提示。
 
@@ -54,7 +54,7 @@
 
 ### 功能目标
 
-用户在站点列表或站点详情中选择目标站点，调用腾讯地图完成从当前位置到目标充电站的路线规划。
+用户在站点列表或站点详情中选择目标站点，通过服务端 `map.route.plan` 获取从当前位置到目标充电站的路线规划。
 
 ### 交互要求
 
@@ -62,11 +62,11 @@
 2. 终点为用户选择的目标充电站。
 3. 支持驾车和步行两种出行方式。
 4. 点击导航后展示路线结果、距离和预计时间（接口提供时）。
-5. 地图页面规划使用 Qt WebEngine/QWebEngineView 作为后续真实 Web 地图承载方式。
+5. 地图页面使用 Qt WebEngine/QWebEngineView 承载本地离线/摘要视图，客户端不加载带 Key 的腾讯 JavaScript。
 6. 查询失败、超时、空路线、无效坐标和无 Key 时必须给出可读提示。
-7. 未配置 Key 时提供离线 Mock 路线，并显示“Mock/离线”标识。
+7. 服务端不可用、缓存降级或返回 Mock 时提供离线路线，并显示服务端数据来源和“Mock/离线”标识。
 
-### 计划使用的腾讯接口
+### 服务端负责的腾讯接口（客户端不直接调用）
 
 | 场景 | 接口候选 | 说明 |
 |---|---|---|
@@ -75,9 +75,9 @@
 | 周边站点/POI | `GET https://apis.map.qq.com/ws/place/v1/search` | `boundary=nearby(lat,lng,radius)`，关键词可使用“充电站” |
 | POI 详情 | `GET https://apis.map.qq.com/ws/place/v1/detail` | 通过 POI ID 获取名称、地址、坐标等详情 |
 | 驾车路线 | `GET https://apis.map.qq.com/ws/direction/v1/driving/` | 起点、终点和路线结果 |
-| 步行路线 | 腾讯位置服务 Web Service 步行路线接口 | 起点、终点和步行路线结果 |
+| 步行路线 | `GET https://apis.map.qq.com/ws/direction/v1/walking/` | 起点、终点和步行路线结果 |
 
-腾讯位置服务 WebService API 要求 Key 具备相应产品权限和配额；Key 只能从本地环境变量或未跟踪配置读取，不能进入源码、Git、日志、截图或本文。
+腾讯位置服务 WebService API 的 Key 只允许存在 B 服务端环境或被忽略的本地配置，不能进入用户端源码、响应、Git、日志、截图或本文。客户端只依赖 `map.station.search`、`map.route.plan` 两个服务端操作。
 
 ## 四、用户信息维护
 
@@ -186,17 +186,10 @@ export TENCENT_MAP_ENABLED=1
 
 ### 2. 首次 API 探测
 
-使用深圳南山区固定坐标进行可复现探测，查询半径内“充电站” POI：
+使用深圳南山区固定坐标进行可复现探测。按腾讯当前文档，周边搜索半径取值为 10–1000 米，距离排序参数为 `_distance`；统一执行脱敏脚本：
 
 ```bash
-curl --silent --show-error --max-time 15 --get \
-  'https://apis.map.qq.com/ws/place/v1/search' \
-  --data-urlencode 'keyword=充电站' \
-  --data-urlencode 'boundary=nearby(22.530,113.930,5000)' \
-  --data-urlencode 'orderby=distance' \
-  --data-urlencode 'page_size=10' \
-  --data-urlencode 'output=json' \
-  --data-urlencode "key=${TENCENT_MAP_KEY}"
+bash scripts/tencent_poi_probe.sh
 ```
 
 检查重点：HTTP 是否成功、JSON `status` 是否为 0、`data` 是否包含 `id`、`title`、`address`、`location.lat`、`location.lng`。腾讯 POI 返回的价格、总桩数和空闲数通常不是通用地图字段，不能直接假设可从地图 API 获取；这些业务字段仍应来自 B 服务端或本地 Mock 适配。
@@ -206,7 +199,7 @@ curl --silent --show-error --max-time 15 --get \
 - 不记录完整请求 URL，因为 URL 中包含 Key；
 - 只记录时间、接口名称、HTTP 状态、腾讯返回 `status`、结果数量和字段完整性；
 - 错误只记录脱敏后的错误码/消息；
-- 成功返回的 POI 可转换为客户端 `Station` DTO，但价格、桩数量和状态必须标记为“待业务数据补充”。
+- 成功返回的 POI 只转换为 `MapPoi`，不得直接转换或冒充业务 `Station`；预约、价格、桩数量和状态仍以 `IUserService` 数据为准。
 
 ### 4. 首次虚拟机探测结果（2026-09-02）
 
@@ -214,6 +207,15 @@ curl --silent --show-error --max-time 15 --get \
 - 使用占位 Key 调用周边搜索接口时，接口返回 HTTP 200、腾讯 `status=311`、消息为“key格式错误”。
 - 结论：虚拟机到腾讯接口的网络路径可达，接口地址和请求参数形态已得到初步验证；真实 POI 数据尚未验证，需在虚拟机本地安全注入有效 Key 后运行 `scripts/tencent_poi_probe.sh`。
 - 该探测只验证地图 POI 可达性，不会把 POI 的价格、桩总数、空闲数或实时状态误认为业务数据。
+
+### 5. 真实服务与页面验收结果（2026-09-07）
+
+- 通过 VM 临时环境变量注入测试凭据，地址解析、附近 POI、驾车路线和步行路线均返回 HTTP 200、腾讯 `status=0`，必要字段完整；附近搜索返回 20 条位置结果。
+- 在 VM 图形会话 `DISPLAY=:0` 中，真实 `QWebEngineView` 成功加载腾讯 GL JS、一个测试标记和一条固定折线；真实地图套件 11 passed、0 failed。
+- `offscreen` 模式没有可用 WebGL 上下文，因此只用于离线降级烟测，不作为真实 GL 地图验收环境。
+- 测试结束后已清除环境变量；仓库、日志和文档均不保存测试凭据。该凭据曾在仓库外明文披露，正式演示前必须轮换并复跑脱敏检查。
+- 后续人工界面复核发现该测试 Key 达到当日调用上限，腾讯返回 `status=121`。客户端已将其修正为“今日调用额度已用完”，不再误报为“权限不足”，并继续进入明确的 Mock/离线回退。
+- 固定 420×760 窗口中的地图页已改为可滚动内容、紧凑路线控制和单一离线示意图，避免 WebEngine、POI、业务站点及状态文本互相挤压或重复展示。
 
 ## 九、GitHub 相似项目调研
 
@@ -231,6 +233,16 @@ curl --silent --show-error --max-time 15 --get \
 
 - 用户端 Qt Widgets + Mock 主流程：已实现并在 Ubuntu 虚拟机通过构建和 QtTest；
 - 站点、电桩、预约、充电、结算和历史记录：Mock 可演示；
-- 腾讯地图真实 POI/路线：本阶段先完成 Key 安全注入和 API 探测，结果以实测记录为准；
-- B Socket、数据库事务和最终业务字段：待 B 稳定协议后联调；
-- 真实腾讯地图页面/QWebEngineView：在确认 API 权限、配额和网页承载依赖后再推进。
+- 腾讯地图服务端契约：已由 PR #15 冻结，运行时实现和 Schema v0.4 仍待 B 完成；
+- 用户端地图：已新增 `ServerMapService`，只通过 Protocol v1 `map.station.search`/`map.route.plan` 获取站点、路线和降级来源；地图位置数据不参与订单和计费，业务字段仍通过 `IUserService` 获取；
+- QWebEngineView：当前只渲染本地离线/服务端结果视图，不注入腾讯 Key、不加载腾讯 GL JS；
+- 客户端协议假服务测试已新增，Ubuntu qmake6 构建和真实 B 服务端 Socket 联调待在 VM 中执行。
+
+## 十一、A-S2-01 实现边界
+
+- 地图模块文件位于 `apps/user-client/src/map_service.*`、`server_map_service.*` 和 `map_web_view.*`；页面只调用统一异步接口。`tencent_map_service.*` 仅保留为早期实现的隔离测试材料，不属于生产路径。
+- 起点支持地址或 `纬度,经度`；目标必须来自有有效坐标的业务站点。地图 POI 无法关联业务站点时只可查看位置摘要，不能预约或充电。
+- 每次定位、POI 或路线请求都有 generation；新请求、切换页面和退出登录会取消旧网络请求，旧响应不会覆盖当前地图状态。
+- 路线由服务端返回米、秒和最多 4096 个折线点；客户端校验坐标和字段完整性，没有有效折线时只显示摘要。
+- 用户端不读取 `TENCENT_MAP_KEY`；Key 和腾讯上游日志仅存在 B 服务端。客户端只需配置 `EV_USER_CLIENT_TRANSPORT`、`EV_SERVER_HOST` 和 `EV_SERVER_PORT`。
+- 老师材料将基础真实导航归于 S1、A-S2-01 归于导航优化；当前交付按 PR #15 将 A-S2-01 客户端部分定义为服务端协议适配与降级兼容，腾讯 API 实现归 B。
