@@ -147,6 +147,10 @@ public:
                                  QJsonObject *result,
                                  QString *error = nullptr,
                                  ErrorKind *kind = nullptr);
+    // Returns the current server-owned snapshot consumed by a simulator
+    // session. This is read-only; the simulator never opens SQLite directly.
+    bool getSimulationSnapshot(QJsonObject *snapshot, QString *error = nullptr,
+                               ErrorKind *kind = nullptr);
     bool setUserStatus(const QString &requestId, qint64 administratorId, qint64 userId, const QString &status,
                        QJsonObject *user, QString *error = nullptr,
                        ErrorKind *kind = nullptr);

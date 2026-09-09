@@ -2901,6 +2901,56 @@ bool Database::applySimulationProposal(const QString &simulatorId, const QString
     return recordOutcome(QStringLiteral("accepted"), accepted, ErrorKind::None, {});
 }
 
+bool Database::getSimulationSnapshot(QJsonObject *snapshot, QString *error, ErrorKind *kind)
+{
+    if (kind) *kind = ErrorKind::None;
+    if (!snapshot) {
+        setFailure(error, kind, ErrorKind::InvalidArgument,
+                   QStringLiteral("snapshot output is null"));
+        return false;
+    }
+    if (!open(error)) { if (kind) *kind = ErrorKind::Database; return false; }
+    QSqlQuery stationsQuery(connection_);
+    if (!stationsQuery.exec(QStringLiteral(
+            "SELECT s.id, s.status, COALESCE(ss.seed_id, ''), "
+            "COALESCE(ss.snapshot_version, 0) FROM stations s "
+            "JOIN simulation_state ss ON ss.station_id = s.id ORDER BY s.id"))) {
+        setFailure(error, kind, ErrorKind::Database,
+                   QStringLiteral("read simulation stations failed: %1").arg(queryError(stationsQuery)));
+        return false;
+    }
+    QJsonArray stations;
+    while (stationsQuery.next()) {
+        const qint64 stationId = stationsQuery.value(0).toLongLong();
+        QJsonArray piles;
+        QSqlQuery pileQuery(connection_);
+        pileQuery.prepare(QStringLiteral(
+            "SELECT p.id, p.status, p.simulated, "
+            "EXISTS(SELECT 1 FROM charging_orders o WHERE o.pile_id=p.id "
+            "AND o.status IN ('pending_reservation','reserved','charging','pending_settlement')) "
+            "FROM charging_piles p WHERE p.station_id=:station_id ORDER BY p.id"));
+        pileQuery.bindValue(QStringLiteral(":station_id"), stationId);
+        if (!pileQuery.exec()) {
+            setFailure(error, kind, ErrorKind::Database,
+                       QStringLiteral("read simulation piles failed: %1").arg(queryError(pileQuery)));
+            return false;
+        }
+        while (pileQuery.next()) {
+            piles.append(QJsonObject{{QStringLiteral("pile_id"), pileQuery.value(0).toLongLong()},
+                                     {QStringLiteral("status"), pileQuery.value(1).toString()},
+                                     {QStringLiteral("simulated"), pileQuery.value(2).toInt() != 0},
+                                     {QStringLiteral("active_order"), pileQuery.value(3).toInt() != 0}});
+        }
+        stations.append(QJsonObject{{QStringLiteral("station_id"), stationId},
+                                    {QStringLiteral("status"), stationsQuery.value(1).toString()},
+                                    {QStringLiteral("seed_id"), stationsQuery.value(2).toString()},
+                                    {QStringLiteral("snapshot_version"), stationsQuery.value(3).toLongLong()},
+                                    {QStringLiteral("piles"), piles}});
+    }
+    *snapshot = QJsonObject{{QStringLiteral("stations"), stations}};
+    return true;
+}
+
 void Database::close()
 {
     if (!connectionName_.isEmpty()) {

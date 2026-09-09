@@ -5,6 +5,7 @@ from pile_simulator import (
     DeterministicPlanner,
     PileSnapshot,
     StationSnapshot,
+    SimulatorCluster,
     generate_piles,
     generator_digest,
     transition,
@@ -48,6 +49,28 @@ class ContractVectorTest(unittest.TestCase):
         self.assertEqual(planner.proposal(1842, [station]), planner.proposal(1842, [station]))
         self.assertEqual(planner.proposal(1842, [station])["expected_versions"], {"42": 7})
         self.assertEqual(planner.proposal(1842, [station])["changes"], [])
+
+    def test_cluster_applies_server_commands_and_tick(self):
+        cluster = SimulatorCluster("sim-1", "demo-2026-09")
+        cluster.register_snapshot({"stations": [{
+            "station_id": 42, "snapshot_version": 7,
+            "seed_id": "demo-2026-09", "status": "active",
+            "piles": [{"pile_id": 4201, "status": "idle", "simulated": True,
+                       "active_order": False}]
+        }]})
+        ack = cluster.apply_command({"command_id": "c1", "command": "reserve",
+                                     "pile_id": 4201, "order_id": 9})
+        self.assertTrue(ack["accepted"])
+        self.assertEqual(ack["status"], "reserved")
+        self.assertTrue(cluster.apply_command({"command_id": "c2", "command": "start_charging",
+                                               "pile_id": 4201})["accepted"])
+        self.assertTrue(cluster.apply_command({"command_id": "c3", "command": "stop_charging",
+                                               "pile_id": 4201, "order_id": 9})["accepted"])
+        self.assertTrue(cluster.apply_command({"command_id": "c4", "command": "settle",
+                                               "pile_id": 4201, "order_id": 9})["accepted"])
+        proposal = cluster.build_tick()
+        self.assertEqual(proposal["expected_versions"], {"42": 7})
+        self.assertEqual(proposal["changes"], [])
 
 
 if __name__ == "__main__":

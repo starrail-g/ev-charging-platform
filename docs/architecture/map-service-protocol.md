@@ -436,10 +436,11 @@ The production simulator runs as a separate cloud service named
 `pile-simulator`. A local in-process simulator may be used for development, but
 both use the same gateway semantics.
 
-The simulator communicates with a private authenticated internal channel; it
-does not expose the public client Socket port and never opens the SQLite file.
-The transport may be mTLS TCP or an equivalent private service channel, but
-the logical message is fixed:
+For the demo implementation, the simulator reuses the existing server TCP
+host/port and is distinguished by `simulator.*` message types; user/admin
+message contracts are unchanged. It never opens the SQLite file. A production
+deployment may move this logical channel behind a private authenticated
+transport, but the message shape is fixed:
 
 ```json
 {
