@@ -1,7 +1,11 @@
 #include "socketparse.h"
 
+#include <QDateTime>
 #include <QDebug>
 #include <QJsonArray>
+
+#include <cmath>
+#include <limits>
 
 // wire(snake_case)→C 模型解析单点(设计稿 D4)。字段映射表与冻结状态见
 // socketparse.h 头文件; B 冻结答复(2026-09-05, PR #10)已按实际构造点逐字段核对,
@@ -301,6 +305,64 @@ bool parseStatisticsPayload(const QJsonObject &payload, OverviewStats *stats,
         *hasData = parsedHasData;
     emitIssues("parseStatisticsPayload", issues ? *issues : QStringList());
     return true;
+}
+
+RevenueSeries parseRevenueSeries(const QJsonObject &obj, const QString &expectedRange)
+{
+    RevenueSeries out;
+    out.range = expectedRange;
+    const auto fail = [&](const QString &message) {
+        RevenueSeries bad;
+        bad.range = expectedRange;
+        bad.error = message;
+        return bad;
+    };
+    const int count = expectedRange == QStringLiteral("7d") ? 7
+                    : expectedRange == QStringLiteral("30d") ? 30 : 0;
+    if (!count || obj.value(QStringLiteral("range")).toString() != expectedRange)
+        return fail(QStringLiteral("营收时间范围不匹配"));
+    out.updatedAt = obj.value(QStringLiteral("updated_at")).toString();
+    const QDateTime snapshot = QDateTime::fromString(out.updatedAt, Qt::ISODate);
+    if (!snapshot.isValid() || !out.updatedAt.endsWith(QLatin1Char('Z')))
+        return fail(QStringLiteral("营收更新时间无效"));
+    const auto readCents = [](const QJsonValue &value, qint64 *result) {
+        // 与 JSON/图表可精确表示的整数范围保持一致；超范围显式报错。
+        constexpr double maxExact = 9007199254740991.0;
+        if (!value.isDouble()) return false;
+        const double number = value.toDouble();
+        if (!std::isfinite(number) || number < 0 || number > maxExact
+            || std::floor(number) != number) return false;
+        *result = value.toInteger(-1);
+        return *result >= 0;
+    };
+    qint64 reported = 0;
+    if (!readCents(obj.value(QStringLiteral("revenue_cents")), &reported))
+        return fail(QStringLiteral("营收合计金额无效"));
+    const QJsonValue daily = obj.value(QStringLiteral("revenue_daily"));
+    if (!daily.isArray() || daily.toArray().size() != count)
+        return fail(QStringLiteral("营收日期数量不完整"));
+    const QDate first = snapshot.toUTC().date().addDays(1 - count);
+    const auto rows = daily.toArray();
+    for (int i = 0; i < count; ++i) {
+        if (!rows.at(i).isObject())
+            return fail(QStringLiteral("营收日数据格式错误"));
+        const auto row = rows.at(i).toObject();
+        const QString dateText = row.value(QStringLiteral("date")).toString();
+        const QDate date = QDate::fromString(dateText, Qt::ISODate);
+        qint64 cents = 0;
+        if (!date.isValid() || date.toString(Qt::ISODate) != dateText
+            || date != first.addDays(i))
+            return fail(QStringLiteral("营收日期不连续或与快照不一致"));
+        if (!readCents(row.value(QStringLiteral("revenue_cents")), &cents)
+            || cents > std::numeric_limits<qint64>::max() - out.totalCents)
+            return fail(QStringLiteral("营收日金额无效"));
+        out.days.append({date, cents});
+        out.totalCents += cents;
+    }
+    if (out.totalCents != reported)
+        return fail(QStringLiteral("营收合计与逐日数据不一致"));
+    out.available = true;
+    return out;
 }
 
 bool parseAdminLoginPayload(const QJsonObject &payload, LoginResult *out,

@@ -12,6 +12,7 @@ class QComboBox;
 class QLabel;
 class QListWidget;
 class MetricCard;
+class RevenueMetricCard;
 class StateStack;
 class StationTopologyWidget;
 
@@ -42,12 +43,17 @@ public:
     // 经 Repository 异步加载概览数据并展示对应状态
     void refresh();
 
+    // 注销/退出场景: 使在途三路请求回调全部作废(清结果计数)、营收卡复位到 Loading
+    void invalidatePendingLoads();
+
     ev::mockdata::DataMode dataMode() const;
 
 signals:
     // 异常（故障/离线）列表项被激活：携带桩编号；
     // MainWindow 收到后切到充电桩页（列表内定位/筛选在 Task 6 focusPile 完成）
     void pileAttentionRequested(const QString &pileCode);
+    // 营收卡"详情"入口：携带当前 7/30 日选择（MainWindow 先设范围再切销售业绩页）
+    void revenueDetailsRequested(int days);
 
 private:
     void onModeChanged(int index);
@@ -69,7 +75,7 @@ private:
     MetricCard *m_pileTotalCard = nullptr;
     MetricCard *m_availabilityCard = nullptr;
     MetricCard *m_utilizationCard = nullptr;
-    MetricCard *m_revenueCard = nullptr;
+    RevenueMetricCard *m_revenueCard = nullptr; // 第四卡: 营收融合卡(7/30 日切换)
     QLabel *m_faultCountValue = nullptr; // "需关注" 计数（对象名 metricFaultCount）
     QListWidget *m_attentionList = nullptr;
     StationTopologyWidget *m_topology = nullptr;

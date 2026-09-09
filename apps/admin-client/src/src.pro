@@ -1,4 +1,4 @@
-QT += core gui widgets network
+QT += core gui widgets network charts
 
 TARGET = admin-client
 TEMPLATE = app
@@ -19,6 +19,7 @@ SOURCES += \
     app/mainwindow.cpp \
     pages/loginpage.cpp \
     pages/overviewpage.cpp \
+    pages/revenuepage.cpp \
     pages/pilepage.cpp \
     pages/stationpage.cpp \
     pages/userpage.cpp \
@@ -34,12 +35,15 @@ SOURCES += \
     widgets/stationtopologywidget.cpp \
     widgets/statusglyphwidget.cpp \
     widgets/statuspulsewidget.cpp \
-    widgets/statustag.cpp
+    widgets/statustag.cpp \
+    widgets/revenuechartwidget.cpp \
+    widgets/revenuemetriccard.cpp
 
 HEADERS += \
     app/mainwindow.h \
     pages/loginpage.h \
     pages/overviewpage.h \
+    pages/revenuepage.h \
     pages/pilepage.h \
     pages/stationpage.h \
     pages/userpage.h \
@@ -57,7 +61,9 @@ HEADERS += \
     widgets/stationtopologywidget.h \
     widgets/statusglyphwidget.h \
     widgets/statuspulsewidget.h \
-    widgets/statustag.h
+    widgets/statustag.h \
+    widgets/revenuechartwidget.h \
+    widgets/revenuemetriccard.h
 
 RESOURCES += \
     ../resources/admin-client.qrc
