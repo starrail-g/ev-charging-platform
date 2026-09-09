@@ -203,15 +203,8 @@ Result<Route> SocketUserService::route(double fromLat, double fromLng, const Sta
       || target.latitude < -90.0 || target.latitude > 90.0 || target.longitude < -180.0 || target.longitude > 180.0) {
     return Result<Route>::failure(1002, QStringLiteral("路线坐标无效"));
   }
-  const double latScale = 111.0;
-  const double lngScale = 111.0 * qCos(qDegreesToRadians(fromLat));
-  const double dx = (target.longitude - fromLng) * lngScale;
-  const double dy = (target.latitude - fromLat) * latScale;
-  const double distance = qMax(0.1, qSqrt(dx * dx + dy * dy));
-  const bool driving = mode == RouteMode::Driving;
-  const int duration = qMax(1, qRound(driving ? distance / 40.0 * 60.0 : distance / 5.0 * 60.0));
-  const QString modeText = driving ? QStringLiteral("驾车") : QStringLiteral("步行");
-  return Result<Route>::success({true, mode, distance, duration, QStringLiteral("离线 Mock %1 路线：前往 %2").arg(modeText, target.name)});
+  Q_UNUSED(mode);
+  return Result<Route>::failure(1408, QStringLiteral("请通过服务端地图接口查询路线"));
 }
 Result<Order> SocketUserService::currentOrder(const QString &id) { const QString wire = wireId(id); if (id.trimmed().isEmpty()) return Result<Order>::failure(1100, QStringLiteral("请先登录")); if (wire.isEmpty()) return Result<Order>::failure(1002, QStringLiteral("用户标识无效")); const auto response = call(QStringLiteral("order.active.get"), {{QStringLiteral("user_id"), wireValue(id)}}); return response.ok ? orderFrom(response.value) : Result<Order>::failure(response.code, response.error); }
 Result<QVector<Order>> SocketUserService::orderHistory(const QString &userId) { const QString wire = wireId(userId); if (userId.trimmed().isEmpty()) return Result<QVector<Order>>::failure(1100, QStringLiteral("请先登录")); if (wire.isEmpty()) return Result<QVector<Order>>::failure(1002, QStringLiteral("用户标识无效")); const auto response = call(QStringLiteral("order.history.list"), {{QStringLiteral("user_id"), wireValue(userId)}}); return response.ok ? ordersFrom(response.value) : Result<QVector<Order>>::failure(response.code, response.error); }

@@ -1,13 +1,16 @@
 #include "client_service.h"
+#include "map_service.h"
+#include "map_web_view.h"
+#include "server_map_service.h"
 #include "socket_user_service.h"
 
 #include <QApplication>
-#include <QColor>
 #include <cmath>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFutureWatcher>
 #include <QtConcurrent/QtConcurrentRun>
+#include <QFile>
 #include <QFileDialog>
 #include <QFont>
 #include <QFormLayout>
@@ -20,6 +23,9 @@
 #include <QPushButton>
 #include <QPixmap>
 #include <QRegularExpression>
+#include <QResizeEvent>
+#include <QScreen>
+#include <QScrollArea>
 #include <QtMath>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -33,21 +39,26 @@ public:
 
   UserWindow() {
     setWindowTitle(QStringLiteral("充电用户端"));
-    setFixedSize(420, 760);
-    if (qEnvironmentVariable("EV_USER_CLIENT_TRANSPORT").compare(QStringLiteral("socket"), Qt::CaseInsensitive) == 0) service_ = &socketService_;
-    setStyleSheet(QStringLiteral(
-        "QMainWindow{background:#081225;color:#e8f1ff;}"
-        "QWidget{color:#e8f1ff;font-size:13px;}"
-        "QLineEdit,QComboBox,QDoubleSpinBox{background:#101f3b;border:1px solid #12d7f5;border-radius:8px;padding:8px;color:#f5f8ff;}"
-        "QPushButton{background:#172b4d;border:1px solid #2c4772;border-radius:8px;padding:8px;color:#e8f1ff;}"
-        "QPushButton:hover{background:#1e4470;} QPushButton:disabled{color:#70809b;background:#10192d;}"
-        "QComboBox{background:#101f3b;color:#ffffff;border:1px solid #12d7f5;border-radius:8px;padding:8px;} QComboBox::drop-down{border:0;width:26px;} QComboBox QAbstractItemView{background:#101f3b;color:#ffffff;border:1px solid #12d7f5;border-radius:8px;padding:4px;outline:0;} QComboBox QAbstractItemView::item{background:#101f3b;color:#ffffff;padding:6px 8px;border-radius:5px;} QComboBox QAbstractItemView::item:hover,QComboBox QAbstractItemView::item:selected{background:#ffffff;color:#101010;}"
-        "QListWidget{background:#0c1830;border:0;padding:4px;} QListWidget::item{border-radius:12px;padding:8px;}"
-        "QListWidget#stationCards,QListWidget#pileCards{background:#0b172b;border:0;padding:4px;}"
-        "QListWidget#stationCards::item,QListWidget#pileCards::item{background:#10243d;border:1px solid #8bdcff;border-radius:12px;padding:10px;color:#ffffff;}"
-        "QListWidget#stationCards::item:selected,QListWidget#pileCards::item:selected{background:#173a5a;border:1px solid #c2f0ff;color:#ffffff;}"
-        "QLabel#title{font-size:20px;font-weight:700;} QLabel#muted{color:#8ea6c9;}"));
+    socketMode_ = qEnvironmentVariable("EV_USER_CLIENT_TRANSPORT").compare(QStringLiteral("socket"), Qt::CaseInsensitive) == 0;
+    setWindowFlag(Qt::WindowMaximizeButtonHint, false);
+    setMinimumSize(kMinUnits * kAspectWidth, kMinUnits * kAspectHeight);
+    setMaximumSize(kMaxUnits * kAspectWidth, kMaxUnits * kAspectHeight);
+    const QRect available = QGuiApplication::primaryScreen()->availableGeometry();
+    const int initialUnits = qBound(kMinUnits,
+        qMin(20, qMin(available.width() * 9 / (10 * kAspectWidth),
+                      available.height() * 9 / (10 * kAspectHeight))), kMaxUnits);
+    resize(initialUnits * kAspectWidth, initialUnits * kAspectHeight);
+    if (socketMode_) {
+      service_ = &socketService_;
+      mapService_ = &serverMapService_;
+    } else {
+      mapService_ = &mockMapService_;
+    }
+    QFile theme(QStringLiteral(":/user-client/theme.qss"));
+    if (theme.open(QIODevice::ReadOnly | QIODevice::Text))
+      setStyleSheet(QString::fromUtf8(theme.readAll()));
     stack_ = new QStackedWidget(this);
+    stack_->setObjectName(QStringLiteral("userStack"));
     setCentralWidget(stack_);
     buildLogin();
     buildHome();
@@ -58,10 +69,40 @@ public:
     showLogin();
   }
 
+protected:
+  void resizeEvent(QResizeEvent *event) override {
+    QMainWindow::resizeEvent(event);
+    if (aspectResizeInProgress_) return;
+    const QSize previous = event->oldSize();
+    const QSize requested = event->size();
+    const int widthDelta = previous.isValid() ? qAbs(requested.width() - previous.width()) : requested.width();
+    const int heightDeltaAsWidth = previous.isValid()
+        ? qRound(qAbs(requested.height() - previous.height()) * qreal(kAspectWidth) / kAspectHeight) : 0;
+    const int requestedUnits = widthDelta >= heightDeltaAsWidth
+        ? qRound(qreal(requested.width()) / kAspectWidth)
+        : qRound(qreal(requested.height()) / kAspectHeight);
+    const int units = qBound(kMinUnits, requestedUnits, kMaxUnits);
+    const QSize constrained(units * kAspectWidth, units * kAspectHeight);
+    if (constrained == requested) return;
+    aspectResizeInProgress_ = true;
+    resize(constrained);
+    aspectResizeInProgress_ = false;
+  }
+
 private:
+  static constexpr int kAspectWidth = 21;
+  static constexpr int kAspectHeight = 38;
+  static constexpr int kMinUnits = 15;
+  static constexpr int kMaxUnits = 40;
+
   MockUserService mockService_;
   SocketUserService socketService_;
+  MockMapService mockMapService_;
+  ServerMapService serverMapService_;
   IUserService *service_{&mockService_};
+  IMapService *mapService_{&mockMapService_};
+  bool socketMode_{false};
+  bool aspectResizeInProgress_{false};
   SessionManager session_;
   QStackedWidget *stack_{};
   QWidget *login_{}, *home_{}, *detail_{}, *map_{}, *orderPage_{}, *profile_{};
@@ -71,7 +112,8 @@ private:
   QDoubleSpinBox *rechargeAmount_{};
   QLabel *loginStatus_{}, *homeStatus_{}, *locationStatus_{}, *orderSummary_{}, *detailTitle_{}, *pileStatus_{}, *mapStatus_{}, *orderStatus_{}, *historySummary_{}, *profileLabel_{}, *avatarLabel_{};
   QWidget *confirmationControls_{};
-  QListWidget *stationList_{}, *pileList_{}, *mapStationList_{}, *historyList_{};
+  QListWidget *stationList_{}, *pileList_{}, *mapStationList_{}, *mapPoiList_{}, *historyList_{};
+  MapWebView *mapView_{};
   QPushButton *loginButton_{}, *confirmOrderButton_{}, *reserveButton_{}, *returnPileButton_{}, *cancelReservationButton_{}, *directStartButton_{}, *startButton_{}, *stopButton_{}, *settleButton_{}, *rechargeButton_{};
   Station selectedStation_{};
   Pile selectedPile_{};
@@ -81,6 +123,9 @@ private:
   QVector<Pile> pileCache_;
   quint64 stationRequestGeneration_{0};
   quint64 pileRequestGeneration_{0};
+  quint64 mapRequestGeneration_{0};
+  GeoCoordinate mapOrigin_{22.5300, 113.9300};
+  QVector<MapPoi> mapPois_;
   QList<QFutureWatcherBase *> activeWatchers_;
 
   QWidget *passwordRow(QLineEdit *&edit) {
@@ -177,7 +222,8 @@ private:
     loginStatus_->setWordWrap(true);
     layout->addWidget(loginStatus_);
     layout->addStretch();
-    layout->addWidget(new QLabel(QStringLiteral("演示：13800000000；新手机号会自动创建用户"), login_));
+    if (!socketMode_)
+      layout->addWidget(new QLabel(QStringLiteral("演示：13800000000；新手机号会自动创建用户"), login_));
     connect(loginButton_, &QPushButton::clicked, this, &UserWindow::login);
     stack_->addWidget(login_);
   }
@@ -194,7 +240,7 @@ private:
     layout->addLayout(top);
 
     orderSummary_ = new QLabel(QStringLiteral("当前订单：暂无活动订单"), home_);
-    orderSummary_->setStyleSheet(QStringLiteral("color:#12d7f5;font-weight:600;"));
+    orderSummary_->setObjectName(QStringLiteral("summaryAccent"));
     layout->addWidget(orderSummary_);
 
     auto *locationCard = new QVBoxLayout;
@@ -261,7 +307,7 @@ private:
     pileStatus_->setWordWrap(true);
     layout->addWidget(pileStatus_);
     auto *buttons = new QHBoxLayout;
-    buttons->addWidget(nav(QStringLiteral("Mock 导航"), detail_, &UserWindow::showMap));
+    buttons->addWidget(nav(QStringLiteral("地图导航"), detail_, &UserWindow::showMap));
     buttons->addWidget(nav(QStringLiteral("返回首页"), detail_, &UserWindow::showHome));
     layout->addLayout(buttons);
     addBottomNav(layout, detail_);
@@ -271,36 +317,68 @@ private:
 
   void buildMap() {
     map_ = new QWidget;
-    auto *layout = new QVBoxLayout(map_);
-    layout->setContentsMargins(14, 14, 14, 8);
-    layout->addWidget(new QLabel(QStringLiteral("一键导航 · Mock 接口"), map_));
-    fromLocation_ = new QLineEdit(map_);
-    fromLocation_->setPlaceholderText(QStringLiteral("起点：纬度,经度"));
+    auto *rootLayout = new QVBoxLayout(map_);
+    rootLayout->setContentsMargins(10, 10, 10, 8);
+    auto *scroll = new QScrollArea(map_);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto *content = new QWidget(scroll);
+    auto *layout = new QVBoxLayout(content);
+    layout->setContentsMargins(4, 4, 4, 8);
+    layout->setSpacing(8);
+    auto *title = new QLabel(QStringLiteral("一键导航 · 服务端地图"), content);
+    title->setObjectName(QStringLiteral("title"));
+    layout->addWidget(title);
+    fromLocation_ = new QLineEdit(content);
+    fromLocation_->setPlaceholderText(QStringLiteral("起点：地址或 纬度,经度"));
     fromLocation_->setText(QStringLiteral("22.530,113.930"));
     layout->addWidget(fromLocation_);
-    mapStationList_ = new QListWidget(map_);
+    auto *locate = new QPushButton(QStringLiteral("定位并查询附近地图 POI"), content);
+    layout->addWidget(locate);
+    mapView_ = new MapWebView(content);
+    mapView_->setServiceBacked(socketMode_);
+    layout->addWidget(mapView_);
+    layout->addWidget(new QLabel(QStringLiteral("地图 POI（仅位置数据，不能直接下单）"), content));
+    mapPoiList_ = new QListWidget(content);
+    mapPoiList_->setMinimumHeight(100);
+    mapPoiList_->setMaximumHeight(130);
+    layout->addWidget(mapPoiList_);
+    layout->addWidget(new QLabel(QStringLiteral("业务站点（可作为导航终点）"), content));
+    mapStationList_ = new QListWidget(content);
     mapStationList_->setToolTip(QStringLiteral("点击站点标记选择终点"));
+    mapStationList_->setMinimumHeight(110);
+    mapStationList_->setMaximumHeight(150);
     layout->addWidget(mapStationList_);
-    mapStatus_ = new QLabel(map_);
+    mapStatus_ = new QLabel(content);
     mapStatus_->setWordWrap(true);
+    mapStatus_->setObjectName(QStringLiteral("statusPanel"));
     layout->addWidget(mapStatus_);
-    routeMode_ = new QComboBox(map_);
-    routeMode_->addItems({QStringLiteral("驾车（Mock）"), QStringLiteral("步行（Mock）")});
-    layout->addWidget(routeMode_);
-    auto *route = new QPushButton(QStringLiteral("查询路线"), map_);
-    layout->addWidget(route);
-    layout->addWidget(new QLabel(QStringLiteral("真实腾讯地图 Web API / QWebEngineView：暂未接入"), map_));
-    layout->addWidget(nav(QStringLiteral("返回首页"), map_, &UserWindow::showHome));
-    addBottomNav(layout, map_);
+    auto *routeRow = new QHBoxLayout;
+    routeMode_ = new QComboBox(content);
+    routeMode_->addItems({QStringLiteral("驾车"), QStringLiteral("步行")});
+    auto *route = new QPushButton(QStringLiteral("查询路线"), content);
+    routeRow->addWidget(routeMode_, 1);
+    routeRow->addWidget(route, 1);
+    layout->addLayout(routeRow);
+    scroll->setWidget(content);
+    rootLayout->addWidget(scroll, 1);
+    rootLayout->addWidget(nav(QStringLiteral("返回首页"), map_, &UserWindow::showHome));
+    addBottomNav(rootLayout, map_);
     connect(mapStationList_, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
       for (const auto &station : stationCache_) {
         if (station.id == item->data(Qt::UserRole).toString()) {
           selectedStation_ = station;
+          mapService_->setTargetStationId(station.id);
           mapStatus_->setText(QStringLiteral("目标站点：%1（%2, %3）").arg(station.name).arg(station.latitude).arg(station.longitude));
           break;
         }
       }
     });
+    connect(mapPoiList_, &QListWidget::itemClicked, this,
+            [this](QListWidgetItem *item) { openMapMarker(item->data(Qt::UserRole).toString()); });
+    connect(mapView_, &MapWebView::markerActivated, this, &UserWindow::openMapMarker);
+    connect(locate, &QPushButton::clicked, this, &UserWindow::locateMapOrigin);
     connect(route, &QPushButton::clicked, this, &UserWindow::queryRoute);
     stack_->addWidget(map_);
   }
@@ -339,7 +417,7 @@ private:
     layout->addWidget(new QLabel(QStringLiteral("历史充电记录"), orderPage_));
     historySummary_ = new QLabel(orderPage_);
     historySummary_->setWordWrap(true);
-    historySummary_->setStyleSheet(QStringLiteral("background:#10203a;border-radius:10px;padding:8px;color:#d9e8ff;"));
+    historySummary_->setObjectName(QStringLiteral("statusPanel"));
     layout->addWidget(historySummary_);
     historyList_ = new QListWidget(orderPage_);
     historyList_->setMaximumHeight(150);
@@ -372,7 +450,7 @@ private:
     avatarLabel_ = new QLabel(QStringLiteral("用"), profile_);
     avatarLabel_->setFixedSize(84, 84);
     avatarLabel_->setAlignment(Qt::AlignCenter);
-    avatarLabel_->setStyleSheet(QStringLiteral("background:#12d7f5;color:#081225;border-radius:10px;font-size:22px;font-weight:700;"));
+    avatarLabel_->setObjectName(QStringLiteral("avatarBadge"));
     accountCard->addWidget(avatarLabel_);
     profileLabel_ = new QLabel(profile_);
     profileLabel_->setWordWrap(true);
@@ -392,12 +470,13 @@ private:
     rechargeAmount_->setRange(1.0, 10000.0);
     rechargeAmount_->setDecimals(2);
     rechargeAmount_->setPrefix(QStringLiteral("¥ "));
-    rechargeButton_ = new QPushButton(QStringLiteral("充值（Mock）"), profile_);
+    rechargeButton_ = new QPushButton(socketMode_ ? QStringLiteral("充值") : QStringLiteral("充值（Mock）"), profile_);
     auto *recharge = rechargeButton_;
     wallet->addWidget(rechargeAmount_);
     wallet->addWidget(recharge);
     layout->addLayout(wallet);
-    layout->addWidget(new QLabel(QStringLiteral("余额和账号信息均为 Mock 数据，后续由服务端适配层替换"), profile_));
+    if (!socketMode_)
+      layout->addWidget(new QLabel(QStringLiteral("余额和账号信息为本地演示数据"), profile_));
     layout->addStretch();
     layout->addWidget(nav(QStringLiteral("退出登录"), profile_, &UserWindow::logout));
     addBottomNav(layout, profile_);
@@ -405,6 +484,54 @@ private:
     connect(avatar, &QPushButton::clicked, this, &UserWindow::chooseAvatar);
     connect(recharge, &QPushButton::clicked, this, &UserWindow::recharge);
     stack_->addWidget(profile_);
+  }
+
+  quint64 beginMapRequest() {
+    const quint64 generation = ++mapRequestGeneration_;
+    mapService_->cancelPending();
+    return generation;
+  }
+
+  void deactivateMapIfVisible() {
+    if (!map_ || !stack_ || stack_->currentWidget() != map_) return;
+    ++mapRequestGeneration_;
+    mapService_->cancelPending();
+    if (mapView_) mapView_->deactivate();
+  }
+
+  void openMapMarker(const QString &id) {
+    if (id.isEmpty()) return;
+    for (const auto &station : stationCache_) {
+      if (station.id == id) {
+        selectedStation_ = station;
+        showStationDetail();
+        return;
+      }
+    }
+    for (const auto &poi : mapPois_) {
+      if (poi.id != id) continue;
+      const QString businessStationId = matchingBusinessStationId(poi, stationCache_);
+      if (!businessStationId.isEmpty()) {
+        for (const auto &station : stationCache_) {
+          if (station.id != businessStationId) continue;
+          selectedStation_ = station;
+          showStationDetail();
+          return;
+        }
+      }
+      const quint64 requestGeneration = beginMapRequest();
+      const quint64 sessionGeneration = session_.generation();
+      mapStatus_->setText(QStringLiteral("正在读取 POI 详情：%1…").arg(poi.title));
+      mapService_->getPoiDetail(id, [this, requestGeneration, sessionGeneration, poi](const MapResult<MapPoi> &result) {
+        if (requestGeneration != mapRequestGeneration_ || sessionGeneration != session_.generation()) return;
+        const MapPoi detail = result.ok ? result.value : poi;
+        mapStatus_->setText(QStringLiteral("地图 POI：%1\n%2\n坐标：%3,%4\n该 POI 未关联业务桩数据，请从业务站点列表选择目标。%5%6")
+            .arg(detail.title, detail.address).arg(detail.coordinate.latitude).arg(detail.coordinate.longitude)
+            .arg(result.notice.isEmpty() ? QString() : QStringLiteral("\n%1").arg(mapResultNotice(result)))
+            .arg(result.ok ? QString() : QStringLiteral("\n详情服务不可用，显示搜索结果。")));
+      });
+      return;
+    }
   }
 
   void showLogin() {
@@ -416,6 +543,7 @@ private:
       showLogin();
       return;
     }
+    deactivateMapIfVisible();
     orderConfirmationMode_ = false;
     if (confirmationControls_) confirmationControls_->setVisible(false);
     if (returnPileButton_) returnPileButton_->setVisible(false);
@@ -431,6 +559,7 @@ private:
       showLogin();
       return;
     }
+    deactivateMapIfVisible();
     if (selectedStation_.id.isEmpty()) {
       showHome();
       return;
@@ -458,7 +587,6 @@ private:
       int index = 1;
       for (const auto &pile : result.value) {
         auto *pileItem = new QListWidgetItem(QStringLiteral("电桩 %1 · %2 · %3 · %4 · %5 kW\n计费 ¥ %6/度").arg(index++).arg(pile.number).arg(pile.type).arg(pileStatusText(pile.status)).arg(pile.powerKw).arg(pile.priceCentsPerKwh / 100.0), pileList_);
-        pileItem->setBackground(QColor("#10243d")); pileItem->setForeground(QColor("#ffffff"));
         pileItem->setData(Qt::UserRole, pile.id);
       }
       pileStatus_->setText(QStringLiteral("点击充电桩查看状态；闲置桩可进入订单确认"));
@@ -471,6 +599,7 @@ private:
       showLogin();
       return;
     }
+    deactivateMapIfVisible();
     orderConfirmationMode_ = false;
     if (confirmationControls_) confirmationControls_->setVisible(false);
     if (returnPileButton_) returnPileButton_->setVisible(false);
@@ -482,19 +611,31 @@ private:
 
   void showMap() {
     if (!session_.isLoggedIn()) { showLogin(); return; }
+    beginMapRequest();
     stack_->setCurrentWidget(map_);
     mapStationList_->clear();
-    mapStatus_->setText(QStringLiteral("正在加载站点…"));
+    mapPoiList_->clear();
+    mapService_->setUserId(session_.user().id);
+    mapService_->setTargetStationId(selectedStation_.id);
+    mapView_->showOffline(socketMode_ ? QStringLiteral("等待服务端返回站点与路线数据")
+                                      : QStringLiteral("当前使用本地演示地图"));
     const quint64 requestGeneration = ++stationRequestGeneration_;
     runService<QVector<Station>>([this] { return service_->stations(QString()); }, [this, requestGeneration](const Result<QVector<Station>> &result) {
       if (requestGeneration != stationRequestGeneration_) return;
       if (!result.ok) { mapStatus_->setText(result.error); return; }
       stationCache_ = result.value;
+      QVector<MapPoi> markers;
       for (const auto &station : result.value) {
         auto *item = new QListWidgetItem(QStringLiteral("站点：%1 · (%2,%3) · %4").arg(station.name).arg(station.latitude).arg(station.longitude).arg(station.open ? QStringLiteral("营业中") : QStringLiteral("暂停营业")), mapStationList_);
         item->setData(Qt::UserRole, station.id);
+        if (isValidCoordinate({station.latitude, station.longitude}))
+          markers.push_back({station.id, station.name, station.address, {station.latitude, station.longitude}, station.distanceKm >= 0 ? qRound64(station.distanceKm * 1000.0) : -1, socketMode_ ? MapSource::Server : MapSource::Mock});
       }
-      mapStatus_->setText(selectedStation_.id.isEmpty() ? QStringLiteral("请选择目标站点；当前为 Mock/离线路线。") : QStringLiteral("当前目标：%1").arg(selectedStation_.name));
+      mapView_->setMarkers(markers);
+      mapStatus_->setText(selectedStation_.id.isEmpty()
+          ? (socketMode_ ? QStringLiteral("请选择目标站点；地图和路线由服务端提供。")
+                         : QStringLiteral("请选择目标站点；当前使用本地演示地图。"))
+          : QStringLiteral("当前目标：%1").arg(selectedStation_.name));
     });
   }
   void showProfile() {
@@ -502,6 +643,7 @@ private:
       showLogin();
       return;
     }
+    deactivateMapIfVisible();
     stack_->setCurrentWidget(profile_);
     rechargeButton_->setEnabled(session_.user().status == UserStatus::Active);
     profileLabel_->setText(QStringLiteral("手机号：%1\n余额：¥ %2")
@@ -518,9 +660,14 @@ private:
   }
 
   void logout() {
+    deactivateMapIfVisible();
     ++stationRequestGeneration_;
     ++pileRequestGeneration_;
+    ++mapRequestGeneration_;
+    mapService_->cancelPending();
     session_.clear();
+    mapService_->setUserId({});
+    mapService_->setTargetStationId({});
     order_ = Order{};
     selectedStation_ = Station{};
     selectedPile_ = Pile{};
@@ -537,6 +684,7 @@ private:
       loginButton_->setEnabled(true);
       if (!result.ok) { loginStatus_->setText(result.error); return; }
       session_.beginSession(result.value);
+      mapService_->setUserId(result.value.id);
       updateOrderButtons();
       showHome();
       if (result.value.status == UserStatus::Frozen) homeStatus_->setText(QStringLiteral("账号已冻结：可查看资料和订单并完成收尾，预约、开始充电和充值不可用。"));
@@ -560,7 +708,6 @@ private:
         const QString distance = station.distanceKm >= 0.0 ? QString::number(station.distanceKm) + QStringLiteral(" km") : QStringLiteral("距离待定位");
         auto *item = new QListWidgetItem(QStringLiteral("站点 %1  ·  %2\n%3\n空闲 %4/%5   ·   %6   ·   %7").arg(index++).arg(station.name).arg(station.address).arg(station.availablePiles).arg(station.totalPiles).arg(distance).arg(station.open ? QStringLiteral("营业中") : QStringLiteral("暂停营业")), stationList_);
         QFont font = item->font(); font.setBold(true); item->setFont(font);
-        item->setBackground(QColor("#10243d")); item->setForeground(QColor("#ffffff"));
         item->setSizeHint(QSize(0, 86)); item->setData(Qt::UserRole, station.id);
       }
       homeStatus_->setText(QStringLiteral("已加载 %1 个站点 · 空闲桩数/总桩数 · 按距离由近及远").arg(result.value.size()));
@@ -667,32 +814,146 @@ private:
       historySummary_->setText(result.value.isEmpty() ? QStringLiteral("历史充电总结：暂无已完成记录") : QStringLiteral("历史充电总结：共 %1 次，累计消费 ¥ %2").arg(result.value.size()).arg(totalCents / 100.0));
     });
   }
+  void locateMapOrigin() {
+    const quint64 requestGeneration = beginMapRequest();
+    const quint64 sessionGeneration = session_.generation();
+    const QString input = fromLocation_->text().trimmed();
+    if (input.contains(',')) {
+      const auto parts = input.split(',');
+      bool latOk = false, lngOk = false;
+      const GeoCoordinate coordinate{parts.size() == 2 ? parts[0].trimmed().toDouble(&latOk) : 0.0, parts.size() == 2 ? parts[1].trimmed().toDouble(&lngOk) : 0.0};
+      if (!latOk || !lngOk || !isValidCoordinate(coordinate)) { mapStatus_->setText(QStringLiteral("出发位置坐标无效")); return; }
+      mapOrigin_ = coordinate;
+      mapStatus_->setText(QStringLiteral("定位成功：%1,%2\n正在查询附近充电站 POI…").arg(coordinate.latitude).arg(coordinate.longitude));
+      queryNearbyPois(coordinate, requestGeneration, sessionGeneration, {});
+      return;
+    }
+    mapStatus_->setText(QStringLiteral("正在定位地址并查询附近充电站 POI…"));
+    const int radiusMeters = socketMode_ ? 1000 : 5000;
+    mapService_->searchNearbyChargingStations(input, radiusMeters,
+        [this, requestGeneration, sessionGeneration](const MapResult<QVector<MapPoi>> &result) {
+      if (requestGeneration != mapRequestGeneration_ || sessionGeneration != session_.generation()) return;
+      if (!result.ok) { mapStatus_->setText(QStringLiteral("定位或附近 POI 查询失败：%1").arg(result.error.userMessage)); return; }
+      if (!result.hasResolvedOrigin || !isValidCoordinate(result.resolvedOrigin)) {
+        mapStatus_->setText(QStringLiteral("服务端未返回有效的起点坐标")); return;
+      }
+      mapOrigin_ = result.resolvedOrigin;
+      const QString visibleNotice = mapResultNotice(result);
+      const QString status = result.value.isEmpty() ? QStringLiteral("附近暂无充电站 POI")
+          : QStringLiteral("已加载 %1 个地图 POI").arg(result.value.size());
+      renderMapPois(result.value, visibleNotice.isEmpty() ? status
+          : QStringLiteral("%1；%2").arg(visibleNotice, status));
+    });
+  }
+
+  void queryNearbyPois(const GeoCoordinate &center, quint64 requestGeneration, quint64 sessionGeneration,
+                       const QString &priorNotice) {
+    const int radiusMeters = socketMode_ ? 1000 : 5000;
+    mapService_->searchNearbyChargingStations(center, radiusMeters,
+        [this, requestGeneration, sessionGeneration, priorNotice](const MapResult<QVector<MapPoi>> &result) {
+      if (requestGeneration != mapRequestGeneration_ || sessionGeneration != session_.generation()) return;
+      if (!result.ok) { mapStatus_->setText(QStringLiteral("附近 POI 查询失败：%1").arg(result.error.userMessage)); return; }
+      const QString resultNotice = mapResultNotice(result);
+      const QString notice = !resultNotice.isEmpty() ? resultNotice : priorNotice;
+      const QString status = result.value.isEmpty() ? QStringLiteral("附近暂无充电站 POI")
+          : QStringLiteral("已加载 %1 个地图 POI").arg(result.value.size());
+      renderMapPois(result.value, notice.isEmpty() ? status : QStringLiteral("%1；%2").arg(notice, status));
+    });
+  }
+
+  void renderMapPois(const QVector<MapPoi> &pois, const QString &status) {
+    mapPois_ = pois; mapPoiList_->clear();
+    for (const auto &poi : pois) {
+      const QString distance = poi.distanceMeters >= 0
+          ? QStringLiteral("%1 km").arg(poi.distanceMeters / 1000.0, 0, 'f', 2)
+          : QStringLiteral("距离未知");
+      const bool linked = !matchingBusinessStationId(poi, stationCache_).isEmpty();
+      auto *item = new QListWidgetItem(QStringLiteral("%1 · %2 · %3%4")
+          .arg(poi.title, poi.address, distance, linked ? QStringLiteral(" · 已关联业务站点") : QStringLiteral(" · 仅地图位置")), mapPoiList_);
+      item->setData(Qt::UserRole, poi.id);
+    }
+    QVector<MapPoi> markers = pois;
+    for (const auto &station : stationCache_) {
+      if (isValidCoordinate({station.latitude, station.longitude}))
+          markers.push_back({station.id, station.name, station.address, {station.latitude, station.longitude},
+                           station.distanceKm >= 0 ? qRound64(station.distanceKm * 1000.0) : -1,
+                           socketMode_ ? MapSource::Server : MapSource::Mock});
+    }
+    mapView_->setMarkers(markers);
+    if (!pois.isEmpty() && pois.first().source != MapSource::Tencent)
+      mapView_->showOffline(status);
+    mapStatus_->setText(status);
+  }
+
   void queryRoute() {
-    if (selectedStation_.id.isEmpty()) {
-      mapStatus_->setText(QStringLiteral("请先选择目标站点"));
-      return;
-    }
+    if (selectedStation_.id.isEmpty() || !isValidCoordinate({selectedStation_.latitude, selectedStation_.longitude})) { mapStatus_->setText(QStringLiteral("请先选择坐标有效的业务站点")); return; }
+    const quint64 requestGeneration = beginMapRequest();
+    const quint64 sessionGeneration = session_.generation();
     const auto parts = fromLocation_->text().split(',');
-    if (parts.size() != 2) {
-      mapStatus_->setText(QStringLiteral("出发位置格式应为 纬度,经度"));
-      return;
+    if (parts.size() == 2) {
+      bool latOk = false, lngOk = false;
+      const GeoCoordinate coordinate{parts[0].trimmed().toDouble(&latOk), parts[1].trimmed().toDouble(&lngOk)};
+      if (!latOk || !lngOk || !isValidCoordinate(coordinate)) { mapStatus_->setText(QStringLiteral("出发位置坐标无效")); return; }
+      mapOrigin_ = coordinate; queryRouteFromCoordinates(coordinate, requestGeneration, sessionGeneration, {}); return;
     }
-    bool latOk = false;
-    bool lngOk = false;
-    const double lat = parts[0].trimmed().toDouble(&latOk);
-    const double lng = parts[1].trimmed().toDouble(&lngOk);
-    if (!latOk || !lngOk || !std::isfinite(lat) || !std::isfinite(lng) || lat < -90.0 || lat > 90.0 || lng < -180.0 || lng > 180.0) {
-      mapStatus_->setText(QStringLiteral("出发位置坐标无效"));
-      return;
-    }
+    mapStatus_->setText(QStringLiteral("正在规划地址路线…"));
+    mapService_->queryRouteFromAddress(fromLocation_->text().trimmed(),
+        {selectedStation_.latitude, selectedStation_.longitude}, routeMode_ && routeMode_->currentIndex() == 1 ? RouteMode::Walking : RouteMode::Driving,
+        [this, requestGeneration, sessionGeneration](const MapResult<MapRoute> &result) {
+      if (requestGeneration != mapRequestGeneration_ || sessionGeneration != session_.generation()) return;
+      if (!result.ok) { mapStatus_->setText(QStringLiteral("路线查询失败：%1").arg(result.error.userMessage)); return; }
+      const QString notice = mapResultNotice(result);
+      if (result.hasResolvedOrigin && isValidCoordinate(result.resolvedOrigin)) mapOrigin_ = result.resolvedOrigin;
+      if (result.value.source != MapSource::Tencent) mapView_->showOffline(notice);
+      mapView_->setRoute(result.value);
+      const QString source = socketMode_ && result.value.source == MapSource::Mock
+          ? QStringLiteral("服务端备用路线") : mapSourceText(result.value.source);
+      mapStatus_->setText(QStringLiteral("%1：%2\n距离 %3 km · 预计 %4 分钟%5%6")
+          .arg(source, result.value.summary).arg(result.value.distanceMeters / 1000.0, 0, 'f', 2)
+          .arg(qRound(result.value.durationSeconds / 60.0))
+          .arg(result.value.polyline.isEmpty() ? QStringLiteral("\n未返回折线，仅显示路线摘要") : QString())
+          .arg(notice.isEmpty() ? QString() : QStringLiteral("\n%1").arg(notice)));
+    });
+  }
+
+  void queryRouteFromCoordinates(const GeoCoordinate &origin, quint64 requestGeneration, quint64 sessionGeneration,
+                                 const QString &priorNotice) {
     const RouteMode mode = routeMode_ && routeMode_->currentIndex() == 1 ? RouteMode::Walking : RouteMode::Driving;
-    auto result = service_->route(lat, lng, selectedStation_, mode);
-    mapStatus_->setText(result.ok
-                            ? QStringLiteral("Mock 路线：%1\n距离 %2 km · 预计 %3 分钟")
-                                  .arg(result.value.summary)
-                                  .arg(result.value.distanceKm)
-                                  .arg(result.value.durationMin)
-                            : result.error);
+    const GeoCoordinate destination{selectedStation_.latitude, selectedStation_.longitude};
+    mapStatus_->setText(QStringLiteral("正在查询%1路线…").arg(mode == RouteMode::Driving ? QStringLiteral("驾车") : QStringLiteral("步行")));
+    mapService_->queryRoute(origin, destination, mode, [this, requestGeneration, sessionGeneration, priorNotice](const MapResult<MapRoute> &result) {
+      if (requestGeneration != mapRequestGeneration_ || sessionGeneration != session_.generation()) return;
+      if (!result.ok) { mapStatus_->setText(QStringLiteral("路线查询失败：%1").arg(result.error.userMessage)); return; }
+      const QString resultNotice = mapResultNotice(result);
+      const QString notice = !resultNotice.isEmpty() ? resultNotice : priorNotice;
+      if (result.value.source != MapSource::Tencent) mapView_->showOffline(notice);
+      mapView_->setRoute(result.value);
+      const QString source = socketMode_ && result.value.source == MapSource::Mock
+          ? QStringLiteral("服务端备用路线") : mapSourceText(result.value.source);
+      mapStatus_->setText(QStringLiteral("%1：%2\n距离 %3 km · 预计 %4 分钟%5%6")
+          .arg(source, result.value.summary).arg(result.value.distanceMeters / 1000.0, 0, 'f', 2)
+          .arg(qRound(result.value.durationSeconds / 60.0))
+          .arg(result.value.polyline.isEmpty() ? QStringLiteral("\n未返回折线，仅显示路线摘要") : QString())
+          .arg(notice.isEmpty() ? QString() : QStringLiteral("\n%1").arg(notice)));
+    });
+  }
+
+  QString mapDisplayText(QString text) const {
+    if (!socketMode_) return text;
+    text.replace(QRegularExpression(QStringLiteral("server[_ -]?mock"), QRegularExpression::CaseInsensitiveOption),
+                 QStringLiteral("服务端备用数据"));
+    text.replace(QRegularExpression(QStringLiteral("mock"), QRegularExpression::CaseInsensitiveOption),
+                 QStringLiteral("备用数据"));
+    return text;
+  }
+
+  template <typename T>
+  QString mapResultNotice(const MapResult<T> &result) const {
+    if (!socketMode_ || !result.warning.isPresent()) return mapDisplayText(result.notice);
+    if (result.warning.code == 1410) return QStringLiteral("服务端备用数据");
+    if (result.warning.code == 1403 && result.warning.degraded)
+      return QStringLiteral("地图上游暂不可用，当前展示服务端缓存结果");
+    return mapDisplayText(result.warning.message);
   }
 
   void updateOrderButtons() {

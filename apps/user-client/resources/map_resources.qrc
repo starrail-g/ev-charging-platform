@@ -1,0 +1,8 @@
+<RCC>
+  <qresource prefix="/map">
+    <file>map.html</file>
+  </qresource>
+  <qresource prefix="/user-client">
+    <file alias="theme.qss">user_theme.qss</file>
+  </qresource>
+</RCC>
