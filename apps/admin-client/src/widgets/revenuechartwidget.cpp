@@ -274,8 +274,9 @@ void RevenueChartWidget::drawForeground(QPainter *painter, const QRectF &rect)
     QGraphicsView::drawForeground(painter, rect);
     if (m_mode == Mode::Full) {
         // 纵轴人民币符号: QtCharts 纵轴标题固定转 270°(¥ 横躺, 用户反馈)且每次布局
-        // 重设 —— 保留标题占位(轴宽/plotArea 不抖动), 隐藏原字形, 在占位中心自绘
-        // 正立符号。首次绘制时在场景中定位标题 item, 命中后缓存。
+        // 重设 —— 保留标题占位(轴宽/plotArea 不抖动), 透明化原字形, 在占位中心自绘
+        // 正立符号(透明而非隐藏的原因与私有实现依赖说明见下方 setOpacity 处)。首次
+        // 绘制时在场景中定位标题 item, 命中后缓存。
         QGraphicsTextItem *titleItem = m_yTitleItem;
         if (!titleItem && chart()->scene()) {
             const auto items = chart()->scene()->items();
@@ -289,7 +290,19 @@ void RevenueChartWidget::drawForeground(QPainter *painter, const QRectF &rect)
             m_yTitleItem = titleItem;
         }
         if (titleItem) {
-            titleItem->setVisible(false);
+            // 不能用 setVisible(false) 隐藏原字形: Qt 6.2.4 QtCharts 的
+            // VerticalAxis::sizeHint()/updateGeometry() 以 titleItem()->isVisible()
+            // 为闸(verticalaxis.cpp) —— 隐藏后布局不再为标题预留空间(sizeHint
+            // 归零)、也不再更新标题几何, 首次显示正常但 show→resize/relayout 后
+            // 标题几何冻结在旧布局: ¥ 相对刻度漂移/重叠(回归测试
+            // revenueFullChartKeepsYTitleAnchorAcrossResize 实测复现)。改用
+            // setOpacity(0): item 保持 visible, 标题空间与几何由 QtCharts 照常
+            // 维护, 自绘正立 ¥ 每帧跟随更新后的 sceneBoundingRect。
+            // 依赖说明: 经 scene 遍历按文本 '¥' 定位内部标题 item 属 QtCharts
+            // 私有实现(verticalaxis 每次 relayout 会重设其 270° 旋转, API 无法
+            // 取消, 故保留占位 + 透明 + 自绘正立); 项目固定 Qt 6.2.4 可接受,
+            // 升级 QtCharts 需先复核本定位与布局闸门。
+            titleItem->setOpacity(0.0);
             const QRectF r = titleItem->sceneBoundingRect();
             painter->save();
             painter->setPen(m_yAxis->titleBrush().color());

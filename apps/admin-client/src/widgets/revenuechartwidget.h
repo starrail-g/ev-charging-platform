@@ -3,6 +3,7 @@
 
 #include <QChartView>
 
+#include <QPointer>
 #include <QRectF>
 
 #include <functional>
@@ -68,7 +69,9 @@ private:
     QCategoryAxis *m_xAxis = nullptr; // 儒略日数值位置 + 稀疏日期标签
     QValueAxis *m_yAxis = nullptr;
     std::function<void(QPainter *, const QRectF &)> m_foregroundPainter;
-    QGraphicsTextItem *m_yTitleItem = nullptr; // 纵轴 ¥ 标题 item(定位后隐藏, 自绘正立)
+    // 纵轴 ¥ 标题 item(QtCharts 内部 item, 见 drawForeground 依赖说明); 定位后
+    // 置透明保留 visible, 自绘正立替代; QPointer 防内部重建时悬垂
+    QPointer<QGraphicsTextItem> m_yTitleItem;
     qreal m_yMin = 0.0;   // 当前 Y 显示范围(手绘网格/绘制共用)
     qreal m_yMax = 1.0;
     bool m_hasData = false;
