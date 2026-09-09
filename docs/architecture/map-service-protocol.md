@@ -252,6 +252,7 @@ aggregation.
 ```
 
 - `user_id` is a positive existing user; frozen users may perform this read.
+- `origin` accepts either `{\"kind\":\"coordinate\",\"latitude\":...,\"longitude\":...}` or `{\"kind\":\"address\",\"value\":\"...\"}`. Address origins are geocoded by the server as part of this read-only route operation; clients must not preflight them with `map.station.search`.
 - `mode` is `driving` or `walking`.
 - `station_id` must identify a station with valid coordinates. The server
   reads the destination coordinates; arbitrary client destination coordinates

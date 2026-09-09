@@ -90,6 +90,19 @@ void MockMapService::searchNearbyChargingStations(const GeoCoordinate &center, i
   });
 }
 
+void MockMapService::searchNearbyChargingStations(const QString &address, int radiusMeters, PoiCallback callback) {
+  geocode(address, [this, radiusMeters, callback = std::move(callback)](const MapResult<GeoCoordinate> &located) mutable {
+    if (!located.ok) { callback(MapResult<QVector<MapPoi>>::failure(located.error)); return; }
+    searchNearbyChargingStations(located.value, radiusMeters,
+        [located, callback = std::move(callback)](MapResult<QVector<MapPoi>> result) mutable {
+      result.hasResolvedOrigin = true;
+      result.resolvedOrigin = located.value;
+      result.notice = located.notice;
+      callback(result);
+    });
+  });
+}
+
 void MockMapService::getPoiDetail(const QString &poiId, PoiDetailCallback callback) {
   const quint64 generation = generation_;
   QTimer::singleShot(0, this, [this, generation, poiId, callback = std::move(callback)] {
@@ -124,6 +137,14 @@ void MockMapService::queryRoute(const GeoCoordinate &origin, const GeoCoordinate
     route.summary = QStringLiteral("离线 Mock %1 路线").arg(driving ? QStringLiteral("驾车") : QStringLiteral("步行"));
     route.polyline = {origin, destination};
     callback(MapResult<MapRoute>::success(route));
+  });
+}
+
+void MockMapService::queryRouteFromAddress(const QString &originAddress, const GeoCoordinate &destination,
+                                           RouteMode mode, RouteCallback callback) {
+  geocode(originAddress, [this, destination, mode, callback = std::move(callback)](const MapResult<GeoCoordinate> &located) mutable {
+    if (!located.ok) { callback(MapResult<MapRoute>::failure(located.error)); return; }
+    queryRoute(located.value, destination, mode, std::move(callback));
   });
 }
 
@@ -178,6 +199,19 @@ void ResilientMapService::searchNearbyChargingStations(const GeoCoordinate &cent
   });
 }
 
+void ResilientMapService::searchNearbyChargingStations(const QString &address, int radiusMeters, PoiCallback callback) {
+  primary_->searchNearbyChargingStations(address, radiusMeters,
+      [this, address, radiusMeters, callback = std::move(callback)](const MapResult<QVector<MapPoi>> &primaryResult) mutable {
+    if (primaryResult.ok && !primaryResult.value.isEmpty()) { callback(primaryResult); return; }
+    fallback_->searchNearbyChargingStations(address, qMax(radiusMeters, 5000),
+        [primaryResult, callback = std::move(callback)](MapResult<QVector<MapPoi>> fallbackResult) mutable {
+      if (!fallbackResult.ok) { callback(primaryResult); return; }
+      fallbackResult.notice = fallbackNotice(primaryResult.error, primaryResult.ok);
+      callback(fallbackResult);
+    });
+  });
+}
+
 void ResilientMapService::getPoiDetail(const QString &poiId, PoiDetailCallback callback) {
   primary_->getPoiDetail(poiId, [this, poiId, callback = std::move(callback)](const MapResult<MapPoi> &primaryResult) mutable {
     if (primaryResult.ok) { callback(primaryResult); return; }
@@ -195,6 +229,20 @@ void ResilientMapService::queryRoute(const GeoCoordinate &origin, const GeoCoord
       [this, origin, destination, mode, callback = std::move(callback)](const MapResult<MapRoute> &primaryResult) mutable {
     if (primaryResult.ok) { callback(primaryResult); return; }
     fallback_->queryRoute(origin, destination, mode,
+        [primaryResult, callback = std::move(callback)](MapResult<MapRoute> fallbackResult) mutable {
+      if (!fallbackResult.ok) { callback(primaryResult); return; }
+      fallbackResult.notice = fallbackNotice(primaryResult.error);
+      callback(fallbackResult);
+    });
+  });
+}
+
+void ResilientMapService::queryRouteFromAddress(const QString &originAddress, const GeoCoordinate &destination,
+                                                RouteMode mode, RouteCallback callback) {
+  primary_->queryRouteFromAddress(originAddress, destination, mode,
+      [this, originAddress, destination, mode, callback = std::move(callback)](const MapResult<MapRoute> &primaryResult) mutable {
+    if (primaryResult.ok) { callback(primaryResult); return; }
+    fallback_->queryRouteFromAddress(originAddress, destination, mode,
         [primaryResult, callback = std::move(callback)](MapResult<MapRoute> fallbackResult) mutable {
       if (!fallbackResult.ok) { callback(primaryResult); return; }
       fallbackResult.notice = fallbackNotice(primaryResult.error);

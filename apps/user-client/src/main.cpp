@@ -828,16 +828,22 @@ private:
       queryNearbyPois(coordinate, requestGeneration, sessionGeneration, {});
       return;
     }
-    mapStatus_->setText(QStringLiteral("正在定位地址…"));
-    mapService_->geocode(input, [this, requestGeneration, sessionGeneration](const MapResult<GeoCoordinate> &result) {
+    mapStatus_->setText(QStringLiteral("正在定位地址并查询附近充电站 POI…"));
+    const int radiusMeters = socketMode_ ? 1000 : 5000;
+    mapService_->searchNearbyChargingStations(input, radiusMeters,
+        [this, requestGeneration, sessionGeneration](const MapResult<QVector<MapPoi>> &result) {
       if (requestGeneration != mapRequestGeneration_ || sessionGeneration != session_.generation()) return;
-      if (!result.ok) { mapStatus_->setText(QStringLiteral("定位失败：%1").arg(result.error.userMessage)); return; }
-      mapOrigin_ = result.value;
+      if (!result.ok) { mapStatus_->setText(QStringLiteral("定位或附近 POI 查询失败：%1").arg(result.error.userMessage)); return; }
+      if (!result.hasResolvedOrigin || !isValidCoordinate(result.resolvedOrigin)) {
+        mapStatus_->setText(QStringLiteral("服务端未返回有效的起点坐标")); return;
+      }
+      mapOrigin_ = result.resolvedOrigin;
       const QString visibleNotice = mapResultNotice(result);
       mapStatus_->setText(visibleNotice.isEmpty()
           ? QStringLiteral("定位成功：%1,%2\n正在查询附近充电站 POI…").arg(mapOrigin_.latitude).arg(mapOrigin_.longitude)
-          : QStringLiteral("%1；正在查询附近站点…").arg(visibleNotice));
-      queryNearbyPois(mapOrigin_, requestGeneration, sessionGeneration, visibleNotice);
+          : QStringLiteral("%1；正在展示附近站点…").arg(visibleNotice));
+      renderMapPois(result.value, result.value.isEmpty() ? QStringLiteral("附近暂无充电站 POI")
+          : QStringLiteral("已加载 %1 个地图 POI").arg(result.value.size()));
     });
   }
 
@@ -891,12 +897,23 @@ private:
       if (!latOk || !lngOk || !isValidCoordinate(coordinate)) { mapStatus_->setText(QStringLiteral("出发位置坐标无效")); return; }
       mapOrigin_ = coordinate; queryRouteFromCoordinates(coordinate, requestGeneration, sessionGeneration, {}); return;
     }
-    mapStatus_->setText(QStringLiteral("正在定位起点地址…"));
-    mapService_->geocode(fromLocation_->text().trimmed(), [this, requestGeneration, sessionGeneration](const MapResult<GeoCoordinate> &result) {
+    mapStatus_->setText(QStringLiteral("正在规划地址路线…"));
+    mapService_->queryRouteFromAddress(fromLocation_->text().trimmed(),
+        {selectedStation_.latitude, selectedStation_.longitude}, routeMode_ && routeMode_->currentIndex() == 1 ? RouteMode::Walking : RouteMode::Driving,
+        [this, requestGeneration, sessionGeneration](const MapResult<MapRoute> &result) {
       if (requestGeneration != mapRequestGeneration_ || sessionGeneration != session_.generation()) return;
-      if (!result.ok) { mapStatus_->setText(QStringLiteral("起点定位失败：%1").arg(result.error.userMessage)); return; }
-      mapOrigin_ = result.value;
-      queryRouteFromCoordinates(mapOrigin_, requestGeneration, sessionGeneration, mapResultNotice(result));
+      if (!result.ok) { mapStatus_->setText(QStringLiteral("路线查询失败：%1").arg(result.error.userMessage)); return; }
+      const QString notice = mapResultNotice(result);
+      if (result.hasResolvedOrigin && isValidCoordinate(result.resolvedOrigin)) mapOrigin_ = result.resolvedOrigin;
+      if (result.value.source != MapSource::Tencent) mapView_->showOffline(notice);
+      mapView_->setRoute(result.value);
+      const QString source = socketMode_ && result.value.source == MapSource::Mock
+          ? QStringLiteral("服务端备用路线") : mapSourceText(result.value.source);
+      mapStatus_->setText(QStringLiteral("%1：%2\n距离 %3 km · 预计 %4 分钟%5%6")
+          .arg(source, result.value.summary).arg(result.value.distanceMeters / 1000.0, 0, 'f', 2)
+          .arg(qRound(result.value.durationSeconds / 60.0))
+          .arg(result.value.polyline.isEmpty() ? QStringLiteral("\n未返回折线，仅显示路线摘要") : QString())
+          .arg(notice.isEmpty() ? QString() : QStringLiteral("\n%1").arg(notice)));
     });
   }
 

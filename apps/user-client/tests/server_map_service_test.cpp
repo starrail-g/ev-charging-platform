@@ -4,6 +4,7 @@
 #include "ev_protocol/message.h"
 
 #include <QSignalSpy>
+#include <QStringList>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QtTest>
@@ -23,6 +24,7 @@ public:
         QString error;
         const auto messages = decoder_.feed(socket->readAll(), &error);
         for (const auto &request : messages) {
+          requestTypes_.append(request.type);
           Message response;
           response.id = request.id;
           response.type = request.type + QStringLiteral(".result");
@@ -66,11 +68,13 @@ public:
 
   bool start() { return server_.listen(QHostAddress::LocalHost, 0); }
   quint16 port() const { return server_.serverPort(); }
+  QStringList requestTypes() const { return requestTypes_; }
 
 private:
   QTcpServer server_;
   FrameDecoder decoder_;
   bool serverMock_{false};
+  QStringList requestTypes_;
 };
 
 } // namespace
@@ -132,6 +136,31 @@ private slots:
     QCOMPARE(stations.dataSource, QStringLiteral("server_mock"));
     QCOMPARE(stations.warning.code, 1410);
     QVERIFY(stations.warning.degraded);
+  }
+
+  void addressRequestsUseSingleStationSearchAndDirectRoute() {
+    MapProtocolServer server;
+    QVERIFY(server.start());
+    ServerMapService service(QStringLiteral("127.0.0.1"), server.port(), 1000);
+    service.setUserId(QStringLiteral("7"));
+    service.setTargetStationId(QStringLiteral("42"));
+
+    MapResult<QVector<MapPoi>> stations;
+    service.searchNearbyChargingStations(QStringLiteral("没有附近站点的合法地址"), 1000,
+                                         [&stations](const auto &result) { stations = result; });
+    QTRY_VERIFY_WITH_TIMEOUT(stations.ok, 2000);
+    QVERIFY(stations.hasResolvedOrigin);
+    QCOMPARE(stations.resolvedOrigin.latitude, 22.53);
+    QCOMPARE(server.requestTypes().size(), 1);
+    QCOMPARE(server.requestTypes().first(), QStringLiteral("map.station.search"));
+
+    MapResult<MapRoute> route;
+    service.queryRouteFromAddress(QStringLiteral("没有附近站点的合法地址"), {22.54, 113.94}, RouteMode::Driving,
+                                  [&route](const auto &result) { route = result; });
+    QTRY_VERIFY_WITH_TIMEOUT(route.ok, 2000);
+    QCOMPARE(route.value.mode, RouteMode::Driving);
+    QCOMPARE(server.requestTypes().size(), 2);
+    QCOMPARE(server.requestTypes().last(), QStringLiteral("map.route.plan"));
   }
 
   void serverRuntimeIntegration() {

@@ -59,6 +59,8 @@ struct MapResult {
   QString notice;
   QString dataSource;
   MapWarning warning{};
+  GeoCoordinate resolvedOrigin{};
+  bool hasResolvedOrigin{false};
   static MapResult success(const T &value, const QString &notice = {}) {
     return {true, value, {}, notice, {}, {}};
   }

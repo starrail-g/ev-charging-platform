@@ -102,6 +102,8 @@ QT_QPA_PLATFORM=offscreen QTWEBENGINE_CHROMIUM_FLAGS='--disable-gpu' \
 
 For server-side map acceptance, configure `TENCENT_MAP_KEY` only in B's server environment and run the server's redacted probe. The user client only needs `EV_USER_CLIENT_TRANSPORT=socket`, `EV_SERVER_HOST` and `EV_SERVER_PORT`; no Tencent key is required locally. PR #19 is merged to `main` (`005d6e8`, including the final provider-pagination fix). The client-side runtime check remains a Socket contract and mapping check; it does not replace a fresh server-side live Tencent run. To validate the interactive client map path, use a running B server:
 
+For text-address navigation, the client sends the address directly in the `origin` of one `map.route.plan` request. It does not use a nearby-station search as a geocoder, so a valid address with no charging station within the search radius can still be routed. Text-address station discovery separately sends one address-origin `map.station.search` request and consumes its `resolved_origin` together with the returned POIs.
+
 ```bash
 EV_USER_CLIENT_TRANSPORT=socket ./ev-user-client
 ```

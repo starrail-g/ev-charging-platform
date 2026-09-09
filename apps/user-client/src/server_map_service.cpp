@@ -195,6 +195,58 @@ void ServerMapService::geocode(const QString &address, GeoCallback callback) {
   }));
 }
 
+void ServerMapService::searchNearbyChargingStations(const QString &address, int radiusMeters, PoiCallback callback) {
+  const quint64 generation = generation_;
+  const QString user = wireId(userId_);
+  const QString value = address.trimmed();
+  if (user.isEmpty() || value.isEmpty()) {
+    callback(MapResult<QVector<MapPoi>>::failure(mapError(user.isEmpty() ? 1100 : 1002,
+        user.isEmpty() ? QStringLiteral("请先登录") : QStringLiteral("请输入地址"))));
+    return;
+  }
+  if (radiusMeters < 10 || radiusMeters > 1000) {
+    callback(MapResult<QVector<MapPoi>>::failure(mapError(1002, QStringLiteral("搜索半径无效"))));
+    return;
+  }
+  const QString host = host_; const quint16 port = port_; const int timeout = timeoutMs_;
+  auto *watcher = new QFutureWatcher<Reply>(this); remember(watcher);
+  connect(watcher, &QFutureWatcher<Reply>::finished, this, [this, watcher, generation, callback = std::move(callback)] {
+    const Reply reply = watcher->result(); watcher->deleteLater(); watchers_.removeAll(watcher);
+    if (generation != generation_) return;
+    if (!reply.ok) { callback(MapResult<QVector<MapPoi>>::failure(mapError(reply.code, reply.error))); return; }
+    MapSource source; QString dataSource; MapWarning warning;
+    if (!readResponseMetadata(reply.payload, &source, &dataSource, &warning)) {
+      callback(MapResult<QVector<MapPoi>>::failure(mapError(1407, QStringLiteral("服务端地图元数据无效")))); return;
+    }
+    GeoCoordinate resolved;
+    if (!readCoordinate(reply.payload.value(QStringLiteral("resolved_origin")).toObject(), &resolved)) {
+      callback(MapResult<QVector<MapPoi>>::failure(mapError(1407, QStringLiteral("服务端返回的定位坐标无效")))); return;
+    }
+    const auto array = reply.payload.value(QStringLiteral("stations")).toArray();
+    QVector<MapPoi> result;
+    for (const auto &value : array) {
+      const auto object = value.toObject(); MapPoi poi;
+      poi.id = QString::number(object.value(QStringLiteral("id")).toInteger());
+      poi.title = object.value(QStringLiteral("name")).toString();
+      poi.address = object.value(QStringLiteral("address")).toString();
+      if (poi.id == QStringLiteral("0") || poi.title.isEmpty() || poi.address.isEmpty() || !readCoordinate(object, &poi.coordinate)) continue;
+      poi.distanceMeters = object.value(QStringLiteral("distance_meters")).toInteger(-1);
+      poi.source = source; result.push_back(poi);
+    }
+    if (!array.isEmpty() && result.isEmpty()) { callback(MapResult<QVector<MapPoi>>::failure(mapError(1407, QStringLiteral("服务端站点字段无效")))); return; }
+    lastPois_ = result;
+    MapResult<QVector<MapPoi>> mapped = MapResult<QVector<MapPoi>>::success(result);
+    mapped.notice = warning.message; mapped.dataSource = dataSource; mapped.warning = warning;
+    mapped.resolvedOrigin = resolved; mapped.hasResolvedOrigin = true;
+    callback(mapped);
+  });
+  watcher->setFuture(QtConcurrent::run([host, port, timeout, user, value, radiusMeters] {
+    return request(host, port, timeout, QStringLiteral("map.station.search"),
+                   {{QStringLiteral("user_id"), user.toLongLong()}, {QStringLiteral("origin"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("address")}, {QStringLiteral("value"), value}}},
+                    {QStringLiteral("radius_meters"), radiusMeters}, {QStringLiteral("page_size"), 20}, {QStringLiteral("page_token"), QJsonValue()}});
+  }));
+}
+
 void ServerMapService::searchNearbyChargingStations(const GeoCoordinate &center, int radiusMeters, PoiCallback callback) {
   const quint64 generation = generation_;
   const QString user = wireId(userId_);
@@ -227,6 +279,7 @@ void ServerMapService::searchNearbyChargingStations(const GeoCoordinate &center,
     lastPois_ = result;
     MapResult<QVector<MapPoi>> mapped = MapResult<QVector<MapPoi>>::success(result);
     mapped.notice = warning.message; mapped.dataSource = dataSource; mapped.warning = warning;
+    mapped.resolvedOrigin = center; mapped.hasResolvedOrigin = true;
     callback(mapped);
   });
   watcher->setFuture(QtConcurrent::run([host, port, timeout, user, center, radiusMeters] {
@@ -283,6 +336,56 @@ void ServerMapService::queryRoute(const GeoCoordinate &origin, const GeoCoordina
   watcher->setFuture(QtConcurrent::run([host, port, timeout, user, station, origin, mode] {
     return request(host, port, timeout, QStringLiteral("map.route.plan"),
                    {{QStringLiteral("user_id"), user.toLongLong()}, {QStringLiteral("origin"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("coordinate")}, {QStringLiteral("latitude"), origin.latitude}, {QStringLiteral("longitude"), origin.longitude}}},
+                    {QStringLiteral("station_id"), station.toLongLong()}, {QStringLiteral("mode"), mode == RouteMode::Driving ? QStringLiteral("driving") : QStringLiteral("walking")}});
+  }));
+}
+
+void ServerMapService::queryRouteFromAddress(const QString &originAddress, const GeoCoordinate &destination,
+                                             RouteMode mode, RouteCallback callback) {
+  const quint64 generation = generation_;
+  const QString user = wireId(userId_);
+  const QString station = wireId(targetStationId_);
+  const QString value = originAddress.trimmed();
+  if (user.isEmpty()) { callback(MapResult<MapRoute>::failure(mapError(1100, QStringLiteral("请先登录")))); return; }
+  if (station.isEmpty() || value.isEmpty() || !isValidCoordinate(destination)) {
+    callback(MapResult<MapRoute>::failure(mapError(1002, QStringLiteral("路线起点或目标站点无效")))); return;
+  }
+  const QString host = host_; const quint16 port = port_; const int timeout = timeoutMs_;
+  auto *watcher = new QFutureWatcher<Reply>(this); remember(watcher);
+  connect(watcher, &QFutureWatcher<Reply>::finished, this, [this, watcher, generation, mode, callback = std::move(callback)] {
+    const Reply reply = watcher->result(); watcher->deleteLater(); watchers_.removeAll(watcher);
+    if (generation != generation_) return;
+    if (!reply.ok) { callback(MapResult<MapRoute>::failure(mapError(reply.code, reply.error))); return; }
+    MapSource source; QString dataSource; MapWarning warning;
+    if (!readResponseMetadata(reply.payload, &source, &dataSource, &warning)) {
+      callback(MapResult<MapRoute>::failure(mapError(1407, QStringLiteral("服务端地图元数据无效")))); return;
+    }
+    MapRoute route; route.mode = mode; route.source = source;
+    route.distanceMeters = reply.payload.value(QStringLiteral("distance_meters")).toInteger(-1);
+    route.durationSeconds = reply.payload.value(QStringLiteral("duration_seconds")).toInt(-1);
+    const auto line = reply.payload.value(QStringLiteral("polyline")).toArray();
+    for (const auto &point : line) {
+      const auto pair = point.toArray(); GeoCoordinate coordinatePoint;
+      if (pair.size() != 2 || !finiteNumber(pair.at(0)) || !finiteNumber(pair.at(1))) { route.polyline.clear(); break; }
+      coordinatePoint = {pair.at(0).toDouble(), pair.at(1).toDouble()};
+      if (!isValidCoordinate(coordinatePoint)) { route.polyline.clear(); break; }
+      route.polyline.push_back(coordinatePoint);
+    }
+    if (route.distanceMeters < 0 || route.durationSeconds < 0 || route.polyline.size() == 1) {
+      callback(MapResult<MapRoute>::failure(mapError(1407, QStringLiteral("服务端路线字段无效")))); return;
+    }
+    route.summary = QStringLiteral("服务端地图 %1 路线").arg(mode == RouteMode::Driving ? QStringLiteral("驾车") : QStringLiteral("步行"));
+    MapResult<MapRoute> mapped = MapResult<MapRoute>::success(route);
+    mapped.notice = warning.message; mapped.dataSource = dataSource; mapped.warning = warning;
+    GeoCoordinate resolved;
+    if (readCoordinate(reply.payload.value(QStringLiteral("resolved_origin")).toObject(), &resolved)) {
+      mapped.resolvedOrigin = resolved; mapped.hasResolvedOrigin = true;
+    }
+    callback(mapped);
+  });
+  watcher->setFuture(QtConcurrent::run([host, port, timeout, user, station, value, destination, mode] {
+    return request(host, port, timeout, QStringLiteral("map.route.plan"),
+                   {{QStringLiteral("user_id"), user.toLongLong()}, {QStringLiteral("origin"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("address")}, {QStringLiteral("value"), value}}},
                     {QStringLiteral("station_id"), station.toLongLong()}, {QStringLiteral("mode"), mode == RouteMode::Driving ? QStringLiteral("driving") : QStringLiteral("walking")}});
   }));
 }
