@@ -839,11 +839,10 @@ private:
       }
       mapOrigin_ = result.resolvedOrigin;
       const QString visibleNotice = mapResultNotice(result);
-      mapStatus_->setText(visibleNotice.isEmpty()
-          ? QStringLiteral("定位成功：%1,%2\n正在查询附近充电站 POI…").arg(mapOrigin_.latitude).arg(mapOrigin_.longitude)
-          : QStringLiteral("%1；正在展示附近站点…").arg(visibleNotice));
-      renderMapPois(result.value, result.value.isEmpty() ? QStringLiteral("附近暂无充电站 POI")
-          : QStringLiteral("已加载 %1 个地图 POI").arg(result.value.size()));
+      const QString status = result.value.isEmpty() ? QStringLiteral("附近暂无充电站 POI")
+          : QStringLiteral("已加载 %1 个地图 POI").arg(result.value.size());
+      renderMapPois(result.value, visibleNotice.isEmpty() ? status
+          : QStringLiteral("%1；%2").arg(visibleNotice, status));
     });
   }
 
