@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    html, body, #map { width: 100%; height: 100%; margin: 0; }
+    body { overflow: hidden; background: #10243d; color: #e8f1ff; font: 13px sans-serif; }
+    #map.offline { box-sizing: border-box; position: relative; overflow: hidden; min-height: 210px;
+      background-color: #10243d; background-image: linear-gradient(#1d4160 1px, transparent 1px), linear-gradient(90deg, #1d4160 1px, transparent 1px); background-size: 28px 28px; }
+    .offline-caption { position: absolute; z-index: 3; left: 8px; top: 8px; right: 8px; padding: 6px 8px;
+      border-radius: 7px; background: rgba(8,18,37,.9); }
+    .offline-pin { position: absolute; z-index: 2; width: 18px; height: 18px; margin: -9px; padding: 0;
+      border: 2px solid white; border-radius: 50%; background: #12d7f5; box-shadow: 0 0 0 4px rgba(18,215,245,.2); cursor: pointer; }
+    .offline-route { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    #info { position: absolute; z-index: 10; left: 8px; right: 8px; bottom: 8px; padding: 7px; border-radius: 7px; background: rgba(8,18,37,.9); }
+  </style>
+  __TENCENT_SCRIPT__
+</head>
+<body>
+  <div id="map"></div>
+  <div id="info" hidden></div>
+  <script>
+    const payload = __MAP_PAYLOAD__;
+    const realMode = __REAL_MODE__;
+    const mapNode = document.getElementById('map');
+    const infoNode = document.getElementById('info');
+    window.evMapReady = false;
+
+    function text(value) { return document.createTextNode(String(value || '')); }
+    function openMarker(id) { location.href = 'evstation://open/' + encodeURIComponent(id); }
+    function showInfo(marker) {
+      infoNode.replaceChildren();
+      const title = document.createElement('strong');
+      title.appendChild(text(marker.title));
+      const address = document.createElement('div');
+      address.appendChild(text(marker.address));
+      const button = document.createElement('button');
+      button.textContent = '查看该标记';
+      button.onclick = () => openMarker(marker.id);
+      infoNode.append(title, address, button);
+      infoNode.hidden = false;
+    }
+    function drawOffline() {
+      mapNode.replaceChildren();
+      mapNode.className = 'offline';
+      const caption = document.createElement('div');
+      caption.className = 'offline-caption';
+      caption.textContent = 'Mock/离线示意图 · ' + payload.markers.length + ' 个标记' +
+        (payload.line.length > 1 ? ' · 已加载示意路线' : '');
+      mapNode.appendChild(caption);
+      const coordinates = payload.markers.map(m => [m.lat, m.lng]).concat(payload.line);
+      if (!coordinates.length) return;
+      const lats = coordinates.map(p => p[0]);
+      const lngs = coordinates.map(p => p[1]);
+      const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+      const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+      const project = point => [12 + 76 * (point[1] - minLng) / Math.max(maxLng - minLng, .0001),
+                                20 + 68 * (maxLat - point[0]) / Math.max(maxLat - minLat, .0001)];
+      if (payload.line.length > 1) {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('class', 'offline-route');
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        line.setAttribute('points', payload.line.map(point => project(point).join(',')).join(' '));
+        line.setAttribute('fill', 'none'); line.setAttribute('stroke', '#ffcf55'); line.setAttribute('stroke-width', '2.5');
+        svg.appendChild(line); mapNode.appendChild(svg);
+      }
+      payload.markers.forEach(marker => {
+        const position = project([marker.lat, marker.lng]);
+        const button = document.createElement('button');
+        button.className = 'offline-pin'; button.title = marker.title + ' · ' + marker.address;
+        button.style.left = position[0] + '%'; button.style.top = position[1] + '%';
+        button.onclick = () => openMarker(marker.id);
+        mapNode.appendChild(button);
+      });
+    }
+    function drawTencent() {
+      if (!window.TMap) { mapNode.textContent = '腾讯地图脚本未加载'; return; }
+      const center = new TMap.LatLng(payload.centerLat, payload.centerLng);
+      window.evMap = new TMap.Map(mapNode, { center: center, zoom: 13 });
+      if (payload.markers.length) {
+        const markerLayer = new TMap.MultiMarker({
+          map: window.evMap,
+          geometries: payload.markers.map(marker => ({
+            id: marker.id,
+            position: new TMap.LatLng(marker.lat, marker.lng),
+            properties: marker
+          }))
+        });
+        markerLayer.on('click', event => showInfo(event.geometry.properties));
+      }
+      if (payload.line.length > 1) {
+        new TMap.MultiPolyline({
+          map: window.evMap,
+          styles: { route: new TMap.PolylineStyle({ color: '#12d7f5', width: 6, borderWidth: 1 }) },
+          geometries: [{ id: 'route', styleId: 'route', paths: payload.line.map(point => new TMap.LatLng(point[0], point[1])) }]
+        });
+      }
+      window.evMapReady = true;
+    }
+    window.addEventListener('load', () => realMode ? drawTencent() : drawOffline());
+  </script>
+</body>
+</html>
