@@ -3,7 +3,7 @@
 ## Baseline and fixed decisions
 
 - Project: 东软电动汽车充电桩应用管理平台。
-- Current GitHub `main` baseline: `94d8f218415231c7983182949abad28daacfcb31` (PR #15 merged; includes PR #11, #12 and #13 work).
+- Current GitHub `main` baseline: `f5af4a128d2676860fe1e39944ba0e6f617a4300` (PR #16 merged after PR #15; includes PR #11, #12, #13, #15 and #16 work).
 - Stage I deadline: 2026-09-10 24:00. Stage II deadline: 2026-09-17 24:00. Personal report deadline: 2026-09-18 24:00.
 - Formal requirements source: `docs/requirements/requirements-matrix.md`; role plans: `docs/role-a-delivery-plan.md` and `docs/role-c-delivery-plan.md`.
 - All Qt/C++ build, test and acceptance paths use `qmake6`; CMake is forbidden. Build directories stay outside the repository.
