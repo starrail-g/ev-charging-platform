@@ -1,0 +1,78 @@
+QMainWindow { background-color: #EDF0EE; }
+QWidget { color: #18201D; font-size: 13px; }
+QStackedWidget#userStack, QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }
+
+QLabel#title { color: #18201D; font-size: 20px; font-weight: 700; }
+QLabel#muted { color: #5F7068; }
+QLabel#summaryAccent { color: #0E6E8C; font-weight: 600; }
+QLabel#statusPanel {
+  background-color: #F7F8F7;
+  border: 1px solid #CBD2CE;
+  border-radius: 8px;
+  padding: 8px;
+}
+QLabel#avatarBadge {
+  background-color: #2A7442;
+  color: #F7F8F7;
+  border: 1px solid #2A7442;
+  border-radius: 8px;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+QLineEdit, QComboBox, QDoubleSpinBox {
+  background-color: #F7F8F7;
+  color: #18201D;
+  border: 1px solid #5F7068;
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-height: 20px;
+  selection-background-color: #0E6E8C;
+  selection-color: #F7F8F7;
+}
+QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus {
+  border: 2px solid #0E6E8C;
+  padding: 7px 9px;
+}
+QComboBox::drop-down { border: 0; width: 26px; }
+QComboBox QAbstractItemView {
+  background-color: #F7F8F7;
+  color: #18201D;
+  border: 1px solid #CBD2CE;
+  selection-background-color: #0E6E8C;
+  selection-color: #F7F8F7;
+  outline: 0;
+}
+
+QPushButton {
+  background-color: #0E6E8C;
+  color: #F7F8F7;
+  border: 1px solid #0E6E8C;
+  border-radius: 6px;
+  padding: 8px 12px;
+  min-height: 20px;
+}
+QPushButton:hover { background-color: #18201D; border-color: #18201D; }
+QPushButton:focus { border: 2px solid #18201D; padding: 7px 11px; }
+QPushButton:disabled { background-color: #CBD2CE; color: #5F7068; border-color: #CBD2CE; }
+
+QListWidget {
+  background: transparent;
+  border: 0;
+  outline: 0;
+  padding: 3px;
+}
+QListWidget::item {
+  background-color: #F7F8F7;
+  color: #18201D;
+  border: 1px solid #CBD2CE;
+  border-radius: 8px;
+  padding: 9px;
+}
+QListWidget::item:hover { border-color: #0E6E8C; }
+QListWidget::item:selected { background-color: #2A7442; color: #F7F8F7; border-color: #2A7442; }
+
+QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
+QScrollBar::handle:vertical { background: #CBD2CE; border-radius: 5px; min-height: 28px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QToolTip { background-color: #18201D; color: #F7F8F7; border: 0; padding: 5px; }

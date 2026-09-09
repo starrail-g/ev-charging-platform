@@ -4,6 +4,7 @@
 
 #include <QFile>
 #include <QHostAddress>
+#include <QLabel>
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -358,6 +359,16 @@ private slots:
     QVERIFY(!loadSpy.isEmpty());
     view.loadTencent(QString());
     QVERIFY(!view.isRealPageLoaded());
+  }
+
+  void serviceBackedPresentationHidesMockWording() {
+    MapWebView view;
+    view.setServiceBacked(true);
+    view.showOffline(QStringLiteral("server_mock / Mock fallback"));
+    auto *modeLabel = view.findChild<QLabel *>(QStringLiteral("mapModeLabel"));
+    QVERIFY(modeLabel);
+    QVERIFY(!modeLabel->text().contains(QStringLiteral("mock"), Qt::CaseInsensitive));
+    QVERIFY(modeLabel->text().contains(QStringLiteral("服务端")));
   }
 
   void webEngineRealIntegration() {

@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QRegularExpression>
 #include <QUrl>
 #include <QVariant>
 #include <QVBoxLayout>
@@ -44,13 +45,22 @@ QString scriptSafeJson(const QJsonDocument &document) {
   return json;
 }
 
+QString serviceSafeText(QString text) {
+  text.replace(QRegularExpression(QStringLiteral("server[_ -]?mock"), QRegularExpression::CaseInsensitiveOption),
+               QStringLiteral("服务端备用数据"));
+  text.replace(QRegularExpression(QStringLiteral("mock"), QRegularExpression::CaseInsensitiveOption),
+               QStringLiteral("备用数据"));
+  return text;
+}
+
 } // namespace
 
 MapWebView::MapWebView(QWidget *parent) : QWidget(parent) {
   auto *layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   modeLabel_ = new QLabel(this);
-  modeLabel_->setStyleSheet(QStringLiteral("background:#132541;color:#bfeeff;padding:5px;border-radius:6px;"));
+  modeLabel_->setObjectName(QStringLiteral("mapModeLabel"));
+  modeLabel_->setStyleSheet(QStringLiteral("background:#F7F8F7;color:#0E6E8C;border:1px solid #CBD2CE;padding:5px;border-radius:6px;"));
   modeLabel_->setAlignment(Qt::AlignCenter);
   modeLabel_->setWordWrap(true);
   view_ = new QWebEngineView(this);
@@ -95,6 +105,10 @@ MapWebView::MapWebView(QWidget *parent) : QWidget(parent) {
   showOffline(QStringLiteral("尚未加载真实页面"));
 }
 
+void MapWebView::setServiceBacked(bool serviceBacked) {
+  serviceBacked_ = serviceBacked;
+}
+
 void MapWebView::setMarkers(const QVector<MapPoi> &markers) {
   markers_ = markers;
   if (realRequested_) renderRealPage();
@@ -128,6 +142,8 @@ QString MapWebView::makeHtml(bool real) const {
   QJsonObject payload;
   payload.insert(QStringLiteral("markers"), markerArray);
   payload.insert(QStringLiteral("line"), lineArray);
+  payload.insert(QStringLiteral("caption"), serviceBacked_
+      ? QStringLiteral("服务端地图预览") : QStringLiteral("Mock/离线示意图"));
   if (!markers_.isEmpty()) {
     payload.insert(QStringLiteral("centerLat"), markers_.first().coordinate.latitude);
     payload.insert(QStringLiteral("centerLng"), markers_.first().coordinate.longitude);
@@ -172,8 +188,9 @@ void MapWebView::showOffline(const QString &reason) {
   realRequested_ = false;
   realPageLoaded_ = false;
   offlinePageLoaded_ = false;
-  modeLabel_->setText(reason.isEmpty() ? QStringLiteral("Mock/离线地图")
-      : QStringLiteral("Mock/离线地图 · %1").arg(reason));
+  const QString label = serviceBacked_ ? QStringLiteral("服务端地图预览") : QStringLiteral("Mock/离线地图");
+  const QString visibleReason = serviceBacked_ ? serviceSafeText(reason) : reason;
+  modeLabel_->setText(visibleReason.isEmpty() ? label : QStringLiteral("%1 · %2").arg(label, visibleReason));
   view_->setHtml(makeHtml(false), QUrl(QStringLiteral("qrc:/map/")));
 }
 

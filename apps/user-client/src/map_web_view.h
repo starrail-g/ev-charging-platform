@@ -14,6 +14,7 @@ class MapWebView final : public QWidget {
 public:
   explicit MapWebView(QWidget *parent = nullptr);
 
+  void setServiceBacked(bool serviceBacked);
   void setMarkers(const QVector<MapPoi> &markers);
   void setRoute(const MapRoute &route);
   void loadTencent(const QString &apiKey);
@@ -39,6 +40,7 @@ private:
   bool realRequested_{false};
   bool realPageLoaded_{false};
   bool offlinePageLoaded_{false};
+  bool serviceBacked_{false};
 };
 
 } // namespace ev
