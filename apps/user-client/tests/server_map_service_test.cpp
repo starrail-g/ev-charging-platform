@@ -90,7 +90,7 @@ private slots:
     service.setTargetStationId(QStringLiteral("42"));
 
     MapResult<QVector<MapPoi>> stations;
-    service.searchNearbyChargingStations({22.53, 113.93}, 1000,
+    service.searchNearbyChargingStations(GeoCoordinate{22.53, 113.93}, 1000,
                                          [&stations](const auto &result) { stations = result; });
     QTRY_VERIFY_WITH_TIMEOUT(stations.ok, 2000);
     QCOMPARE(stations.value.size(), 1);
@@ -117,7 +117,7 @@ private slots:
     ServerMapService service(QStringLiteral("127.0.0.1"), 1, 20);
     MapResult<QVector<MapPoi>> result;
     bool called = false;
-    service.searchNearbyChargingStations({22.53, 113.93}, 1000,
+    service.searchNearbyChargingStations(GeoCoordinate{22.53, 113.93}, 1000,
         [&result, &called](const auto &value) { result = value; called = true; });
     QVERIFY(called);
     QVERIFY(!result.ok);
@@ -130,7 +130,7 @@ private slots:
     ServerMapService service(QStringLiteral("127.0.0.1"), server.port(), 1000);
     service.setUserId(QStringLiteral("7"));
     MapResult<QVector<MapPoi>> stations;
-    service.searchNearbyChargingStations({22.53, 113.93}, 1000,
+    service.searchNearbyChargingStations(GeoCoordinate{22.53, 113.93}, 1000,
                                          [&stations](const auto &result) { stations = result; });
     QTRY_VERIFY_WITH_TIMEOUT(stations.ok, 2000);
     QCOMPARE(stations.dataSource, QStringLiteral("server_mock"));
