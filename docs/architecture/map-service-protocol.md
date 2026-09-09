@@ -39,8 +39,28 @@ Independent cloud pile-simulator
 - Tencent credentials exist only in server-side environment or ignored local
   configuration. They never appear in a client response, database row, log,
   cache key, or Git-tracked file.
-- Clients do not call Tencent directly and do not load credential-bearing
-  Tencent JavaScript. They draw the returned station and route data locally.
+- The server is the only client-visible map-data authority: POI search,
+  route planning, and station search are server-side Tencent calls, and their
+  results reach clients only through the Socket protocol as validated map
+  data. Clients never call Tencent for map data and never load
+  credential-bearing Tencent JavaScript; they draw returned geometry locally.
+- Base-map rendering (static imagery / SDK / tiles) is a client-side concern
+  and is outside the server map service scope: only map-data and business
+  payloads travel through the Socket protocol, and the server map service
+  never proxies base-map imagery or tiles.
+- Base-map exception, admin client only, display-only: the admin Qt client
+  renders Tencent static-map imagery directly with a dedicated deployment
+  key (`TENCENT_STATIC_MAP_KEY`, WebService type). The exception is bounded:
+  - the key feeds the static-map image request only and must never be used
+    against business map-data APIs (POI search, geocoding, route planning,
+    and the like), which remain server-side;
+  - the user client holds no Tencent credential of any kind;
+  - the key is deployment configuration and must never enter Git, logs,
+    screenshots, or the database, and credential-bearing URLs are built in
+    memory only;
+  - the exception is not a map-data channel: station coordinates and
+    business state still arrive over the Socket protocol, and the server
+    remains the only authority for map data.
 - The server remains the only authority for users, stations, piles, orders,
   wallet state, and lifecycle transitions.
 - The independent simulator is an untrusted proposal producer. The server

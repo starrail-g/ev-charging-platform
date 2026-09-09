@@ -14,6 +14,7 @@
 #include "pages/loginpage.h"
 #include "pages/overviewpage.h"
 #include "pages/pilepage.h"
+#include "pages/revenuepage.h"
 #include "pages/stationpage.h"
 #include "pages/userpage.h"
 #include "widgets/aurorabackdrop.h"
@@ -76,6 +77,7 @@ void MainWindow::buildBusinessArea(ev::AdminRepository *repository)
     m_navList = new QListWidget(navigationRail);
     m_navList->setObjectName(QStringLiteral("navList"));
     m_navList->addItem(QStringLiteral("概览"));
+    m_navList->addItem(QStringLiteral("销售业绩"));
     m_navList->addItem(QStringLiteral("充电桩"));
     m_navList->addItem(QStringLiteral("充电站"));
     m_navList->addItem(QStringLiteral("用户管理"));
@@ -101,24 +103,30 @@ void MainWindow::buildBusinessArea(ev::AdminRepository *repository)
     navigationLayout->addWidget(separator);
 
     navigationLayout->addSpacing(34);
-    m_navList->setSpacing(22); // 用列表 spacing 统一控制导航项的垂直间距
+    // 五项导航: 项高 52px(QSS), 内容高 = 5×52 + 4×spacing。2026-09-08 起 spacing
+    // 由 22 收紧为 18(14 的 1.3 倍, 用户指定; 1024×700 下五项完整可见的初值,
+    // 最终值以视觉验收为准); 较矮窗口允许出现内部滚动(AsNeeded), 不裁掉第五项。
+    m_navList->setSpacing(18); // 用列表 spacing 统一控制导航项的垂直间距
     // 导航区吃满分隔线到退出按钮之间的全部弹性空间：列表控件高度 ≥ 内容高，
-    // 关闭滚动条后 4 项恒完整可见（不会出现内部滚动），多余空间落在列表视口内。
+    // 高度足够时五项恒完整可见（不会出现内部滚动），多余空间落在列表视口内。
     // 注：QListWidget 的 sizeHint 不随内容变化，若仍用独立 addStretch 会让列表
-    // 只有 ~192px 高、274px 内容被压缩成内部滚动。
-    m_navList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // 只有 ~192px 高、292px 内容被压缩成内部滚动。
+    m_navList->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_navList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     navigationLayout->addWidget(m_navList, 1);
     navigationLayout->addWidget(logoutButton);
 
     m_overviewPage = new OverviewPage(repository, m_businessArea);
+    m_revenuePage = new RevenuePage(repository, m_businessArea);
     m_pilePage = new PilePage(repository, m_businessArea);
     m_stationPage = new StationPage(repository, m_businessArea);
     m_userPage = new UserPage(repository, m_businessArea);
 
     auto *pageStack = new QStackedWidget(m_businessArea);
     pageStack->setObjectName(QStringLiteral("pageStack"));
+    // 与 PageIndex/navList 同顺序: 概览/销售业绩/充电桩/充电站/用户管理
     pageStack->addWidget(m_overviewPage);
+    pageStack->addWidget(m_revenuePage);
     pageStack->addWidget(m_pilePage);
     pageStack->addWidget(m_stationPage);
     pageStack->addWidget(m_userPage);
@@ -151,19 +159,34 @@ void MainWindow::buildBusinessArea(ev::AdminRepository *repository)
     // 概览"需关注"异常项 → 切到充电桩页并定位该桩（focusPile 内部处理数据未到齐）
     connect(m_overviewPage, &OverviewPage::pileAttentionRequested,
             this, [this](const QString &pileCode) {
-                m_navList->setCurrentRow(1); // 1 = 充电桩
+                m_navList->setCurrentRow(PileIndex);
                 m_pilePage->focusPile(pileCode);
                 statusBar()->showMessage(
                     QStringLiteral("需关注充电桩 %1，已定位至充电桩页").arg(pileCode));
             });
-    // 工作页进入时经 Repository 刷新（跟随数据层当前演示模式；
-    // 概览页由模式下拉/登录自行驱动，不在此重复刷新）
+    // 营收卡"详情"入口：先携带当前 7/30 日选择到销售页, 再切页(进入不闪回默认 7 日)
+    connect(m_overviewPage, &OverviewPage::revenueDetailsRequested,
+            this, [this](int days) {
+                m_revenuePage->setRange(days);
+                m_navList->setCurrentRow(RevenueIndex);
+            });
+    // 工作页进入时经 Repository 刷新（跟随数据层当前状态；销售页每次进入取最新）。
+    // 概览页同规则（2026-09-09：桩重启/用户冻结等动作改变数据源状态后，切回概览
+    // 必须重新拉取才能反映——此前概览只在登录/模式下拉时刷新，动作结果被旧缓存
+    // 遮住，Socket 联调实证）；onLoginSuccess 仍保留显式 refresh 兜底（pageStack
+    // 已停在概览时 currentChanged 不触发），两条入口并发由页面 generation 防串。
     connect(pageStack, &QStackedWidget::currentChanged, this, [this](int index) {
-        if (index == 1)
+        if (!m_loggedIn)
+            return;
+        if (index == OverviewIndex)
+            m_overviewPage->refresh();
+        else if (index == RevenueIndex)
+            m_revenuePage->refresh();
+        else if (index == PileIndex)
             m_pilePage->refresh();
-        else if (index == 2)
+        else if (index == StationIndex)
             m_stationPage->refresh();
-        else if (index == 3)
+        else if (index == UserIndex)
             m_userPage->refresh();
     });
     // 标题联动：状态栏显示当前页面（来源标识来自 Repository，见 loggedInStatusText）
@@ -182,13 +205,16 @@ void MainWindow::buildBusinessArea(ev::AdminRepository *repository)
 
 void MainWindow::onLoginSuccess()
 {
+    // 顺序敏感：m_loggedIn 必须在 setCurrentRow(0) 之后置位——本次程序化切页若触发
+    // pageStack::currentChanged(0)，切页刷新 lambda 的 !m_loggedIn 守卫会跳过，
+    // 概览刷新只由本函数末尾显式调用一次（否则登出前停在非概览页时再登录会双刷）。
+    m_navList->setEnabled(true);
+    m_navList->setCurrentRow(0);
     m_loggedIn = true;
     m_sessionBadge->setText(
         m_dataSourceLabel.isEmpty()
             ? QStringLiteral("● 已登录")
             : QStringLiteral("● %1").arg(m_dataSourceLabel));
-    m_navList->setEnabled(true);
-    m_navList->setCurrentRow(0);
     m_stack->setCurrentWidget(m_businessArea);
     statusBar()->showMessage(loggedInStatusText(QStringLiteral("概览")));
     m_overviewPage->refresh(); // 概览页加载数据（经 Repository 链路）
@@ -201,6 +227,9 @@ void MainWindow::onLogout()
     m_navList->setEnabled(false);
     m_sessionBadge->setText(QStringLiteral("● 会话已结束"));
     m_stack->setCurrentWidget(m_loginPage);
+    // 使在途页面请求失效(旧 generation 迟到回包不得覆盖下次登录的新数据/旧会话金额)
+    m_overviewPage->invalidatePendingLoads();
+    m_revenuePage->invalidatePendingLoads();
     // 清空登录页凭据：下一位使用者不得沿用上一位账号/密码（P1 review 修复）
     m_loginPage->clearCredentials();
     statusBar()->showMessage(QStringLiteral("未登录"));

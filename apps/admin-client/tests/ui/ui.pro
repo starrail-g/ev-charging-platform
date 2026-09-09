@@ -1,4 +1,4 @@
-QT += core gui widgets testlib
+QT += core gui widgets testlib charts network
 TEMPLATE = app
 TARGET = tst_ui
 CONFIG += c++17 testcase
@@ -11,6 +11,7 @@ SOURCES += \
     ../../src/app/mainwindow.cpp \
     ../../src/pages/loginpage.cpp \
     ../../src/pages/overviewpage.cpp \
+    ../../src/pages/revenuepage.cpp \
     ../../src/pages/pilepage.cpp \
     ../../src/pages/stationpage.cpp \
     ../../src/pages/userpage.cpp \
@@ -20,16 +21,21 @@ SOURCES += \
     ../../src/widgets/aurorabackdrop.cpp \
     ../../src/widgets/metriccard.cpp \
     ../../src/widgets/statestack.cpp \
+    ../../src/widgets/staticmapimageprovider.cpp \
+    ../../src/widgets/staticmapviewport.cpp \
     ../../src/widgets/stationtopologywidget.cpp \
     ../../src/widgets/statusglyphwidget.cpp \
     ../../src/widgets/statuspulsewidget.cpp \
     ../../src/widgets/statustag.cpp \
+    ../../src/widgets/revenuechartwidget.cpp \
+    ../../src/widgets/revenuemetriccard.cpp \
     ../../src/models/adminmodels.cpp
 
 HEADERS += \
     ../../src/app/mainwindow.h \
     ../../src/pages/loginpage.h \
     ../../src/pages/overviewpage.h \
+    ../../src/pages/revenuepage.h \
     ../../src/pages/pilepage.h \
     ../../src/pages/stationpage.h \
     ../../src/pages/userpage.h \
@@ -40,10 +46,14 @@ HEADERS += \
     ../../src/widgets/aurorabackdrop.h \
     ../../src/widgets/metriccard.h \
     ../../src/widgets/statestack.h \
+    ../../src/widgets/staticmapimageprovider.h \
+    ../../src/widgets/staticmapviewport.h \
     ../../src/widgets/stationtopologywidget.h \
     ../../src/widgets/statusglyphwidget.h \
     ../../src/widgets/statuspulsewidget.h \
     ../../src/widgets/statustag.h \
+    ../../src/widgets/revenuechartwidget.h \
+    ../../src/widgets/revenuemetriccard.h \
     ../../src/models/adminmodels.h
 
 RESOURCES += ../../resources/admin-client.qrc

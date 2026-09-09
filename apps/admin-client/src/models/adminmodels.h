@@ -3,6 +3,8 @@
 
 #include <QString>
 
+#include <QDate>
+
 #include <QList>
 
 // 管理端只读展示模型（第一阶段）。
@@ -68,10 +70,26 @@ struct UserInfo {
 
 // 概览页指标（C-S1-003）。字段待 B 的 statistics 口径确认（9/4），
 // 当前按大屏 demo JSON 同口径自拟。
+struct RevenueDay {
+    QDate date;
+    qint64 revenueCents = 0;
+};
+
+struct RevenueSeries {
+    QString range;                 // 7d | 30d
+    QList<RevenueDay> days;        // UTC 自然日升序、无缺日（缺日补零）
+    qint64 totalCents = 0;         // 逐日之和（与 wire revenue_cents 同值）
+    QString updatedAt;             // 该序列响应快照 UTC ISO-8601
+    bool available = false;        // 序列合法可画；false 时 error 说明原因
+    QString error;
+};
+
 struct OverviewStats {
     qint64 revenueCents = 0;              // 近 7 日营收（分）
     qint64 revenue30dCents = 0;           // 近 30 日营收（分，A-02；口径 = 30 日序列和，
                                           //   demo.json revenue30dCents 同值）
+    RevenueSeries revenue7dSeries;        // 近 7 日完整逐日序列（营收融合卡/销售页）
+    RevenueSeries revenue30dSeries;       // 近 30 日完整逐日序列（两序列各自 updatedAt）
     int pileIdle = 0;
     int pileReserved = 0;
     int pileCharging = 0;

@@ -282,6 +282,21 @@ token 适配已完成并推送（`ec09270`），且**通过真实 main 服务端
 
 示例仅展示序列中间字段；实际 `7d` 响应包含 7 条、`30d` 响应包含 30 条。
 
+### C 侧映射：`revenue_daily` → `RevenueSeries`（2026-09-08，feature/admin-revenue 本地产物）
+
+管理端营收图表（概览 `RevenueMetricCard` 与销售业绩页 `RevenuePage`）把每个 range 响应的
+`revenue_daily` **整条保留**到模型 `RevenueSeries`（`adminmodels.h`：range/days/totalCents/updatedAt/available），
+wire 协议**零改动**——仍是 B 冻结的 `admin.statistics.get` 7d/30d 样例：
+
+- `SocketAdminRepository::fetchOverview` 对 `7d` 与 `30d` 各发一次请求，两响应**各自**保留完整逐日序列与各自
+  `updated_at`；两次统计的快照时间可能不同，客户端**不宣称同一快照**（概览/销售页分别显示选中范围的更新时间；
+  摘要口径仍以 7d 主体为准）。`30d` 聚合合计仍取 30d 响应 `revenue_cents`（= 30 条序列和）填 `revenue30dCents`。
+- 严格解析（`socketparse::parseRevenueSeries`，图表专用，摘要路径不受影响）：range 回声必须等于请求值；条数恰为
+  7/30；`date` 为 UTC 日历日、连续升序且末日 == `updated_at` 当日；金额为非负整数且 ≤ 2^53-1；逐日之和 ==
+  `revenue_cents` 合计。**任一不符 → 该序列 `available=false`**（营收卡显示「趋势暂不可用」与重试入口），
+  不补 0、不静默丢弃；序列坏只影响营收区，不清其它摘要。
+- 序列合法但全零 = 正常零营收（`has_data` 语义不变，空库仍由 7d 主体 `has_data=false` 表达）。
+
 ### 管理端站点利用率
 
 `admin.station.list` 返回的每个站点对象包含 `utilization` 和
