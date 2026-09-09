@@ -38,6 +38,19 @@ make -j"$(nproc)"
 QT_QPA_PLATFORM=offscreen ./ev-server-map-service-tests -txt
 ```
 
+To repeat the optional runtime test against an already running PR #19 server,
+provide an existing numeric user ID. The test exercises address resolution,
+station search, and both driving and walking routes over the real Socket
+connection; it does not need or accept a Tencent Key:
+
+```bash
+EV_RUN_MAP_SOCKET_INTEGRATION=1 \
+EV_MAP_TEST_USER_ID=1 \
+EV_SERVER_HOST=127.0.0.1 \
+EV_SERVER_PORT=45454 \
+QT_QPA_PLATFORM=offscreen ./ev-server-map-service-tests -txt
+```
+
 The client starts in deterministic Mock mode. Set `EV_USER_CLIENT_TRANSPORT=socket` to select `SocketUserService` and the server-owned `ServerMapService`; both use Protocol v1 over `EV_SERVER_HOST`/`EV_SERVER_PORT` (defaults `127.0.0.1:45454`). Against the B PR #4 Schema v0.3 contract now present on `main`, login, profile update, wallet recharge, station/pile queries, active/history orders, reservation transitions, and both reservation and direct charging start (`order_id` or `pile_id`) plus stop/settlement are available. Frozen accounts return status=frozen; the adapter maps 1101 ACCOUNT_FROZEN, 1202 INSUFFICIENT_BALANCE, timeout and connection failures to user-readable messages. Login is phone-only in both Mock and Socket modes and accepts exactly 11 ASCII digits; there is no standalone registration UI or service operation. A legal phone number logs in directly, and the first login can auto-create the account according to the active service contract.
 
 In Socket mode, network work runs outside the GUI thread and completion is returned to widgets through `QFutureWatcher`; login and subsequent station/order queries therefore do not block the window event loop. State-changing operations retain their generated request ID after a connection failure, timeout, protocol failure, or server error, and a retry of the same operation/payload reuses that ID. The ID is retired only after a successful response. A created `pending_reservation` remains visible in the charging page and can be confirmed again or cancelled, including after a lost confirmation response.
@@ -87,7 +100,7 @@ QT_QPA_PLATFORM=offscreen QTWEBENGINE_CHROMIUM_FLAGS='--disable-gpu' \
   ./ev-map-service-tests -txt
 ```
 
-For server-side map acceptance, configure `TENCENT_MAP_KEY` only in B's server environment and run the server's redacted probe. The user client only needs `EV_USER_CLIENT_TRANSPORT=socket`, `EV_SERVER_HOST` and `EV_SERVER_PORT`; no Tencent key is required locally. To validate the client map path, use the server protocol fake or a running B server:
+For server-side map acceptance, configure `TENCENT_MAP_KEY` only in B's server environment and run the server's redacted probe. The user client only needs `EV_USER_CLIENT_TRANSPORT=socket`, `EV_SERVER_HOST` and `EV_SERVER_PORT`; no Tencent key is required locally. PR #19 commit `cc3f23f` has been validated in server-mock mode with the optional runtime test above; this proves the Socket contract and client mapping, not a live Tencent upstream call. To validate the interactive client map path, use a running B server:
 
 ```bash
 EV_USER_CLIENT_TRANSPORT=socket ./ev-user-client

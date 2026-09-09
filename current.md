@@ -15,7 +15,7 @@
 - `A-S1-02` deterministic Qt Widgets Mock user flow: complete.
 - `A-S1-03` Socket Protocol v1 user adapter: complete in the merged baseline for the existing user business operations; final cross-module evidence remains part of `A-S1-04`.
 - `A-S1-04` coordinated server/user/admin regression and clean-environment delivery: pending.
-- `A-S2-01` server-owned map integration: client-side adaptation is implemented in this worktree. B's PR #19 contains the matching Tencent HTTP, Schema v0.4, cache/audit and pile-simulation runtime; it remains pending until that PR is merged and deployed for real Socket integration.
+- `A-S2-01` server-owned map integration: client adaptation and mock-enabled runtime Socket integration against B PR #19 commit `cc3f23f` are complete in this worktree. PR #19 remains open; a live Tencent upstream run is still B-owned evidence.
 - User-client UI follow-up: Socket and Mock modes are strictly isolated, the visual system now matches the admin day theme, and the window preserves a resizable 21:38 mobile ratio. VM qmake6 regression evidence is recorded below.
 - `A-S2-02` analysis result presentation and `A-S2-03` final regression/materials: pending the frozen B/C contracts and final integrated build.
 
@@ -46,16 +46,19 @@ QT_QPA_PLATFORM=offscreen ./ev-user-client-tests -txt
 
 - User-client application qmake build: PASS.
 - Existing user-client QtTest: `11 passed, 0 failed, 4 skipped`; skipped cases require a live B service.
-- Server map adapter fake-Protocol test: `5 passed, 0 failed, 0 skipped`, including structured `server_mock`/1410 metadata.
+- Server map adapter default suite: `5 passed, 0 failed, 1 skipped`; the skip is the explicitly gated PR #19 runtime test.
+- PR #19 mock-enabled runtime integration: `6 passed, 0 failed, 0 skipped`; address resolution, station search, driving route and walking route passed against the running qmake6 server with Schema v0.4. Responses covered per-request source metadata, including `server_mock`/1410 and a valid non-degraded Tencent source.
+- PR #19 server evidence at `cc3f23f`: qmake6 server build PASS; database schema `10 passed`; Tencent HTTP client PASS; simulation gateway PASS; pile simulator `3 passed`; server `map.py` Socket regression PASS.
 - Map adapter/WebEngine test: `11 passed, 0 failed, 1 skipped`; WebEngine offline smoke passed, real Tencent integration is intentionally skipped because Tencent calls are server-owned.
 - Application startup under `QT_QPA_PLATFORM=offscreen` and WebEngine no-sandbox flags remained alive for the smoke window; no crash was observed.
 - UI regression in a clean VM snapshot: qmake6 app build PASS; user tests `11 passed, 0 failed, 4 skipped`; map tests `11 passed, 0 failed, 1 skipped`; server-map tests `5 passed, 0 failed`. Socket login window showed the day theme with demo/Mock hints hidden. X11 resize checks measured 315 x 570 and 399 x 722, preserving the 21:38 ratio.
+- PR #19 GUI smoke: the Socket-mode client logged in, loaded four server map markers, and kept local Mock wording hidden across login, station and map pages. The captured window measured 378 x 684, preserving 21:38.
 - Local `git diff --check`: PASS. No real key, local `.env`, runtime database, log, Makefile or build output is part of the intended commit.
 
 ## Open work and risks
 
-- B must implement and expose `map.station.search`/`map.route.plan`, server-side Tencent calls, 30-day redacted audit records, station persistence, Schema v0.4 migration and authoritative pile simulation according to `docs/architecture/map-service-protocol.md`.
-- A must run real Socket integration once B's handlers and port are available; current fake-server tests prove client framing and response mapping only, not real Tencent success.
+- B PR #19 now supplies `map.station.search`/`map.route.plan`, server-side Tencent/cache/audit code, Schema v0.4 and authoritative pile simulation. It remains unmerged and still needs B's live Tencent credential/upstream evidence.
+- A's PR #19 mock-enabled Socket integration is complete; repeat it after PR #19 is merged into `main` and during the final clean-environment regression. This result does not claim live Tencent success.
 - C and B still provide final admin/dashboard and cross-module regression evidence for `A-S1-04`.
 - Real Tencent credentials stay in ignored local configuration owned by B. Never commit keys, tokens, passwords, complete key-bearing URLs, screenshots or logs.
 

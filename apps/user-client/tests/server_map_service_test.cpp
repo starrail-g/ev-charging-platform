@@ -133,6 +133,75 @@ private slots:
     QCOMPARE(stations.warning.code, 1410);
     QVERIFY(stations.warning.degraded);
   }
+
+  void serverRuntimeIntegration() {
+    if (qEnvironmentVariable("EV_RUN_MAP_SOCKET_INTEGRATION") != QStringLiteral("1"))
+      QSKIP("set EV_RUN_MAP_SOCKET_INTEGRATION=1 to run against the B map service");
+
+    const QString userId = qEnvironmentVariable("EV_MAP_TEST_USER_ID").trimmed();
+    QVERIFY2(!userId.isEmpty(), "EV_MAP_TEST_USER_ID must identify an existing server user");
+
+    ServerMapService service({}, 0, 3000);
+    service.setUserId(userId);
+    const auto verifyMetadata = [](const auto &result) {
+      const QString source = result.dataSource;
+      QVERIFY(source == QStringLiteral("tencent_live") ||
+              source == QStringLiteral("tencent_cache") ||
+              source == QStringLiteral("tencent_stale") ||
+              source == QStringLiteral("server_mock"));
+      if (source == QStringLiteral("server_mock")) {
+        QCOMPARE(result.warning.code, 1410);
+        QVERIFY(result.warning.degraded);
+      } else if (source == QStringLiteral("tencent_stale")) {
+        QVERIFY(result.warning.isPresent());
+        QVERIFY(result.warning.degraded);
+      } else {
+        QVERIFY(!result.warning.isPresent());
+      }
+    };
+
+    bool geocodeDone = false;
+    MapResult<GeoCoordinate> geocode;
+    service.geocode(QStringLiteral("沈阳市浑南区软件园"),
+                    [&geocode, &geocodeDone](const auto &result) {
+                      geocode = result;
+                      geocodeDone = true;
+                    });
+    QTRY_VERIFY_WITH_TIMEOUT(geocodeDone, 5000);
+    QVERIFY2(geocode.ok, qPrintable(geocode.error.userMessage));
+    verifyMetadata(geocode);
+
+    bool searchDone = false;
+    MapResult<QVector<MapPoi>> stations;
+    service.searchNearbyChargingStations(geocode.value, 1000,
+                                         [&stations, &searchDone](const auto &result) {
+                                           stations = result;
+                                           searchDone = true;
+                                         });
+    QTRY_VERIFY_WITH_TIMEOUT(searchDone, 5000);
+    QVERIFY2(stations.ok, qPrintable(stations.error.userMessage));
+    QVERIFY(!stations.value.isEmpty());
+    verifyMetadata(stations);
+
+    const MapPoi target = stations.value.first();
+    service.setTargetStationId(target.id);
+    for (const RouteMode mode : {RouteMode::Driving, RouteMode::Walking}) {
+      bool routeDone = false;
+      MapResult<MapRoute> route;
+      service.queryRoute(geocode.value, target.coordinate, mode,
+                         [&route, &routeDone](const auto &result) {
+                           route = result;
+                           routeDone = true;
+                         });
+      QTRY_VERIFY_WITH_TIMEOUT(routeDone, 5000);
+      QVERIFY2(route.ok, qPrintable(route.error.userMessage));
+      QCOMPARE(route.value.mode, mode);
+      QVERIFY(route.value.distanceMeters >= 0);
+      QVERIFY(route.value.durationSeconds >= 0);
+      QVERIFY(route.value.polyline.size() >= 2);
+      verifyMetadata(route);
+    }
+  }
 };
 
 QTEST_MAIN(ServerMapServiceTest)
