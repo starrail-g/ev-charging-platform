@@ -141,17 +141,22 @@ private:
             ticker->start();
             return;
         }
-        const auto send = [socket, response] {
-            if (socket->state() != QAbstractSocket::ConnectedState)
+        const QPointer<QTcpSocket> socketGuard(socket);
+        const auto send = [socketGuard, response] {
+            // QPointer 保护：客户端可能先 abort 断开——socket 被 disconnected 路径
+            // deleteLater 后，延迟回包 lambda 到期不得访问悬垂指针（Ubuntu SIGSEGV，
+            // Windows 断开时序不同未现——双平台测试必踩的平台差异）
+            if (!socketGuard || socketGuard->state() != QAbstractSocket::ConnectedState)
                 return;
             const QByteArray head = "HTTP/1.1 " + QByteArray::number(response.status)
                 + " X\r\nContent-Type: " + response.contentType
                 + "\r\nContent-Length: " + QByteArray::number(response.body.size())
                 + "\r\nConnection: close\r\n\r\n";
-            socket->write(head + response.body);
-            socket->flush();
-            socket->disconnectFromHost();
+            socketGuard->write(head + response.body);
+            socketGuard->flush();
+            socketGuard->disconnectFromHost();
         };
+
         if (response.delayMs > 0)
             QTimer::singleShot(response.delayMs, send);
         else
