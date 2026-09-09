@@ -32,6 +32,8 @@ SOURCES += \
     widgets/aurorabackdrop.cpp \
     widgets/metriccard.cpp \
     widgets/statestack.cpp \
+    widgets/staticmapimageprovider.cpp \
+    widgets/staticmapviewport.cpp \
     widgets/stationtopologywidget.cpp \
     widgets/statusglyphwidget.cpp \
     widgets/statuspulsewidget.cpp \
@@ -58,6 +60,8 @@ HEADERS += \
     widgets/aurorabackdrop.h \
     widgets/metriccard.h \
     widgets/statestack.h \
+    widgets/staticmapimageprovider.h \
+    widgets/staticmapviewport.h \
     widgets/stationtopologywidget.h \
     widgets/statusglyphwidget.h \
     widgets/statuspulsewidget.h \
