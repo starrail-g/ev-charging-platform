@@ -54,6 +54,61 @@
 - **测试（Windows 实测，数字逐字）**：tst_ui **34** / tst_launchsmoke **6** / tst_loginflow **7** / tst_socketparse **12** / tst_socketadapter **19**（改造前基线 24/6/7/10/16；ui 34 = 33 + ¥ 标题布局回归）；新用例清单与输出文件见 `tests/integration/role-c-regression.md` §5。
 - **验证进度（2026-09-09 目检更新）**：Ubuntu VM 构建✓（09-09 09:24 重建含 ¥ 修复的 admin-client）与 GUI 桌面目检✓（Mock 模式，用户确认 ¥ 正立/布局正常）；VM 五套 QtTest 复跑与真实服务端 Socket 联调（7d/30d 双请求）待收尾。
 
+## 2026-09-09 管理端真实地图渲染（站点态势双模式）—— `feature/admin-client-tencent-map`（未提交）
+
+- **状态三块式**：① 已提交进 PR：无（分支 0 commits，基于 `f5af4a1` = PR #16 merge）；② 仅本地工作树：
+  T1–T3 代码与测试 + T5 文档（11 文件：`widgets/staticmapviewport.{h,cpp}`、
+  `widgets/staticmapimageprovider.{h,cpp}`、`widgets/stationtopologywidget.{h,cpp}`（双模式改造）、
+  `pages/overviewpage.cpp`（接线，页面唯一改动点）、4 个 .pro（src/tests/ui/loginflow 注册 +
+  QT += network）、`tests/ui/tst_ui.cpp`（+31 用例）、`docs/ui/README.md` §6.2、
+  `docs/architecture/map-service-protocol.md` §1 底图例外补录、`config/example.env`、
+  实施计划 `docs/role-c-admin-map-renderer-plan.md` 状态翻已实现）；③ 后续待办：用户审查后按
+  commit 边界分批提交（T1→T2→T3→T5 单 PR）、T4 GUI 冒烟收尾（Mock 无 key 目检）、T6 真图
+  联调（key+网络、双平台、降级三态冷启动）、附录 B 坐标通道、合入门禁（协议补录经 B 评审）。
+- **实施计划**：`docs/role-c-admin-map-renderer-plan.md` v1.3（两轮评审 + 复审修正定稿；T0/T0b
+  实证先行，边界决策 D1–D7 已拍板——底图客户端自理、业务数据全走 Socket、key 仅 env、
+  无 datum 补偿、D7 精确投影式锁定）。
+- **T1 纯函数 core**（`staticmapviewport`）：取景（bbox + 8% 边距、最大适配 zoom ∈ [10,17]、
+  单站 zoom14、单轴零跨度不退化单站）、D7 精确投影、稳定指纹（center 5dp 量化）。
+  13 用例锁定文档向量一次全绿：校准站对 → zoom12/center、z13 +0.01° → +58.254222/−78.052375px
+  （±0.0001）、z12 减半、85.05112878 边界、wide-span 全式 vs 导数近似差 0.123px（实测打印）。
+- **T2 图片提供者**（`staticmapimageprovider`）：`MapImageProvider` 抽象（fetch/cancelAll/
+  canFetch + Failure 分类）+ `StaticMapImageProvider`（QNAM、5s 传输超时可注入、构造显式收
+  key/baseUrl **不读 env**、空 key 空转不建网络对象、URL/key 仅内存禁打印）。实现修正：
+  腾讯业务拒绝以 **HTTP 200 + JSON status 121** 返回（T0 实证），成功分支先查配额码再解码图像，
+  否则误判 BadImage。6 用例全走本地假 HTTP 服务器（QTcpServer 回环）：URL 形态、空 key 短路、
+  403+121 → Quota、500 → Http、静默超时 → Network、坏图 → BadImage、cancelAll 停交付。
+- **T3 控件双模式**（`StationTopologyWidget` 改造 + OverviewPage 接线）：净化（setStations 入口
+  剔除非法坐标站，stationCount/取景/布局/点击/键盘同源）+ 真图触发状态机（触发点 = 数据到达 /
+  resize 32px 尺寸桶，debounce 300ms；指纹缓存仅完全匹配复用；同视图在途复用；目标失效
+  generation 立即作废 + cancelAll；失败 30s 时间门 + 注入时钟；QPointer+seq 回调双保险）+ 三种
+  降级标注（服务不可用 / 超投影范围 / 区域过大）+ 图例区替换展示。接线 = OverviewPage 构造注入
+  `new StaticMapImageProvider(qEnvironmentVariable("TENCENT_STATIC_MAP_KEY"))`（空 key 拓扑
+  静默，行为不变）。12 用例覆盖：无 provider 回归锁、投影点=独立期望、点击/键盘复用、
+  降级标注、时间门、跨视图缓存不误用、superseded 丢弃、同视图在途复用、极区站保留拓扑、
+  resize 桶触发、标注清除、非法坐标净化。
+- **测试（Windows 实测，数字逐字）**：五套 = tst_ui **70**（34 + 31 新 + 5 评审回归）/ tst_launchsmoke **6** /
+  tst_loginflow **7** / tst_socketparse **12** / tst_socketadapter **19**，全部 `env -u
+  TENCENT_STATIC_MAP_KEY`；`EV_UI_REDUCED_MOTION=1` 复跑 tst_ui 70 全绿；零真实网络（widget
+  测试注入 Fake、provider 测试指向本地假服务器）。既有拓扑 3 用例零改动回归锁。
+- **评审修复（2026-09-09 静态审查 5 条，全部修复 + 回归锁定）**：P1-1 视图失效未停 debounce
+  （旧目标在 timer 到期后被重发）→ `discardPendingMapFetch()` 统一失效出口（++seq + cancelAll +
+  停 timer + 清待发目标），回归 `debounceStoppedWhenTargetBecomesUnreachable`（清空/超投影两变体，
+  修复前 RED）；P1-2 切换区域时旧底图仍作当前可用（A 图承载 B 标记窗口期）→ 目标离开缓存视图即退役
+  （`m_mapAvailable=false`），缓存命中改为"指纹匹配即可重新激活"（回切原区域免重拉），失败/替换
+  provider 才清缓存（fp+image），回归 `staleImageRetiredWhileSwitchingRegion` + 既有 resize 回桶
+  用例锁定；P1-3 `cancelAll` 遍历容器被同步 finished 回调修改（UB）→ 快照 + 先摘除容器再逐个
+  abort，回归 `providerCancelAllMultipleInflightSafe`（双在途 + 取消后可继续请求）；P2-1 控件
+  <320×240 时拉取的图大于控件 → paint 偏移为负被跳过（图不绘制 + 投影错位）→ 请求尺寸门槛与
+  clamp 下限一致（320×240），回归 `smallWidgetStaysTopologyWithoutRequest`；P2-2 transferTimeout
+  只在数据停滞时触发（持续滴答慢传输永不超时）→ 增加总时长 deadline 定时器（挂 reply 名下，
+  到期 abort → 归 Network），失败分类改按 QNAM 错误码区分传输层/服务端（响应头已收但本地中断 ≠
+  Http），回归 `providerTotalDeadlineFiresOnDripTransfer`（假服务器 drip 滴答模式，修复前 RED）。
+- **T5 文档（本批）**：docs/ui/README.md §6.2（双模式/降级/key 类型与隔离/D7 公式/触发去重
+  竞态/测试计数）；config/example.env `TENCENT_STATIC_MAP_KEY`（WebService 型、IP 白名单、
+  配额方案绑定、与 Web JS key 隔离）；map-service-protocol.md §1 底图例外补录（附录 A 文本，
+  待 B 评审——合入门禁 2）；本文件本节省。
+
 ## Validation and evidence
 
 - Ubuntu qmake6 (Qt 6.2.4) server build and real-server `admin.py`/`smoke.py`/`concurrency.py` regression pass; admin-client QtTest build and suites are green: `tst_ui` 24, `tst_launchsmoke` 6, `tst_loginflow` 7, `tst_socketparse` 10, `tst_socketadapter` 16 (including cursor-page aggregation and 1 MiB oversized-row handling). User-client QtTest coverage and GUI startup remain separate desktop/VM checks.

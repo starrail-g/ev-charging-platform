@@ -113,6 +113,51 @@ UTC 儒略日数值定位（不受本机时区影响），日期标签稀疏—�
 找回 `RevenueDay`、用原整数分格式化精确金额（不从浮点反算）。Mini 不做逐点 hover（点击语义由热区承担）。
 非法/空序列由调用方先判 `available`；图表自身 `clearSeries` 一次清空数据/点/提示/回调。
 
+### 6.2 概览站点态势：真图底图渲染（2026-09-09，T3 已实现）
+
+**单控件双模式**：`StationTopologyWidget`（对象名 `stationTopology`）同一画布承载两种模式，
+页面层不感知切换——
+
+- **拓扑模式（默认）**：min/max 归一化示意拓扑，现状绘制一字不改。触发条件 = 未注入提供者 /
+  key 为空 / 净化后无站 / 控件未布局 / 取景失败（坐标超投影范围、区域过大）/ 拉图失败 / 超时 /
+  请求在途。拓扑模式保留背景网格、站间虚线、图例"态势示意，不代表物理电网连接"。
+- **真图模式**：拉图成功后，背景 = 腾讯静态图 PNG，节点/状态色/站名/呼吸 halo/键盘/点击/
+  focus ring 全部复用，仅投影换用 Web-Mercator 精确式。真图模式不画网格与站间虚线，隐藏图例。
+- **降级标注**：曾尝试真图但失败/不可取景 → 落回拓扑，图例区显示标注（替换示意声明）：
+  拉图失败 = "地图服务不可用，已回退示意拓扑"；站纬度超投影范围 = "坐标超出地图投影范围，
+  已回退示意拓扑"；跨度过大 = "区域过大，暂不支持地图视图"。失败后 30s 时间门内不重试
+  （下一触发点自然带入）；已显示真图后断网**不回退**（底图已缓存，不依赖后续请求）。
+
+**接线与凭据**：`OverviewPage` 构造注入
+`new StaticMapImageProvider(qEnvironmentVariable("TENCENT_STATIC_MAP_KEY"))`（所有权转移给
+控件；控件不自建 provider、不读 env）。key = **WebServiceAPI 型**（`config/example.env` 的
+`TENCENT_STATIC_MAP_KEY`）：授权方式必须是 **IP 白名单**（桌面/脚本无 Referer，域名白名单报
+status 110），且须**手动绑定配额方案**（未绑方案每日仅 1 次体验额度，报 status 121）；与
+`TENCENT_MAP_KEY`（Web 大屏 JS API key、域名白名单）类型不同、语义隔离，勿混用。空 key =
+provider 空转（不建网络对象、不发请求）→ 拓扑模式。URL/key 仅内存构造，禁打印/落盘。
+
+**渲染与数据流（分层纪律）**：底图 = 客户端直连腾讯静态图 WebService（渲染层经
+`MapImageProvider` 抽象，将来可切服务端代理）；桩/站业务数据（含经纬度）**仍全部走 Socket
+服务端**，零直连——真图只换概览拓扑画布的底图与投影，数据流零改动。投影公式（D7 精确式，
+见 `docs/role-c-admin-map-renderer-plan.md` §1）：`x = w/2 + Δlng·W/360`；
+`y = h/2 + y_world(lat) − y_world(centerLat)`，`W = 256·2^zoom`、
+`y_world(φ) = W/2·(1 − asinh(tan(πφ/180))/π)`（实现禁导数近似）。不做 datum 补偿；
+坐标校准后以腾讯解析值（GCJ-02）为准。T0/T0b 实证与像素证据（无 key）：
+`D:/work/chargingplatform/build/staticmap-probe/T0-evidence.md`（仓库外路径）。
+
+**触发/去重/竞态（与 Web MapSurface 同构语义）**：触发点 = 数据到达（setStations）/
+resize 后 32px 尺寸桶变化，debounce 300ms 合并；成功图按（center 5dp + zoom + 尺寸）指纹
+缓存，**仅指纹完全匹配才复用**（A 区图不得承载 B 区标记）；同视图请求在途 → 复用不重发；
+目标视图改变/清空/不可取景/替换提供者 → fetch generation 立即作废并取消旧请求，迟到的旧
+响应不落地（QPointer + seq 双保险）。净化：setStations 入口剔除坐标非法站（NaN/越业务范围），
+拓扑布局、取景、stationCount、点击/键盘都只消费净化后列表；业务合法但纬度超
+±85.05112878°（地图投影保护边界）的站保留在拓扑列表，仅禁止上图。请求图尺寸 = 控件尺寸
+32px 向下桶化并夹取 [320,1280]×[240,960]。
+
+**测试**：tst_ui 新增 36 用例（T1 纯函数 13 + T2 provider 6 + T3 双模式 12 + 静态审查回归 5，
+全部走本地假服务器/Fake 提供者，零真实网络、`env -u TENCENT_STATIC_MAP_KEY` 运行）；既有拓扑 3
+用例零改动回归锁（无 provider → 拓扑）。取景/投影已知向量与实现决策 → 实施计划 §3.3/§4。
+
 ## 7. 用户端文档与边界
 
 - [用户端详细要求与腾讯地图接入记录](user-client-detailed-requirements.md)

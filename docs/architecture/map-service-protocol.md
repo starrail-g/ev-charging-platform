@@ -36,6 +36,12 @@ Independent cloud pile-simulator
   cache key, or Git-tracked file.
 - Clients do not call Tencent directly and do not load credential-bearing
   Tencent JavaScript. They draw the returned station and route data locally.
+- Base-map rendering (static imagery / SDK / tiles) is a client-side concern and
+  is outside the server map service scope; only map-data and business payloads
+  travel through the Socket protocol. Client-side base-map keys are deployment
+  configuration and must never enter Git, logs, or database. (2026-09-09 record:
+  the admin Qt client renders Tencent static-map imagery directly with a
+  WebService key; this is a base-map exception, not a map-data channel.)
 - The server remains the only authority for users, stations, piles, orders,
   wallet state, and lifecycle transitions.
 - The independent simulator is an untrusted proposal producer. The server
