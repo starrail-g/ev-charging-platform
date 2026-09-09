@@ -520,6 +520,11 @@ unavailable, quota, permission, no result, or invalid response. Route distance
 is metres; Tencent route duration (minutes) is converted to protocol seconds.
 Tencent's compressed polyline is decoded from `[lat0,lng0,deltaLat1,deltaLng1,...]`,
 with coordinate/range validation and a maximum of 4096 retained points.
+For POI search the adapter requests Tencent's maximum `page_size=20`, reads the
+provider `count` when present, and drains subsequent `page_index` values until
+all provider records are received (or a short page ends a response without a
+count). The service then applies the client-facing `page_size`/opaque token;
+provider pages are never mistaken for the complete result set.
 
 ## 12. Configuration and non-functional requirements
 

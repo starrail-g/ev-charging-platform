@@ -16,6 +16,8 @@ namespace {
 constexpr double kReferenceLatitude = 41.7192;
 constexpr double kReferenceLongitude = 123.4315;
 constexpr double kEarthRadiusMeters = 6371000.0;
+constexpr int kTencentPageSize = 20;
+constexpr int kTencentMaxPages = 100;
 
 double distanceMeters(double lat1, double lon1, double lat2, double lon2)
 {
@@ -398,42 +400,66 @@ bool HttpTencentClient::searchStations(const QJsonObject &origin, qint64 radiusM
                            .arg(QString::number(longitude, 'f', 6))
                            .arg(radiusMeters));
     query.addQueryItem(QStringLiteral("keyword"), QStringLiteral("充电站"));
-    query.addQueryItem(QStringLiteral("page_size"), QStringLiteral("20"));
-    query.addQueryItem(QStringLiteral("page_index"), QStringLiteral("1"));
     query.addQueryItem(QStringLiteral("orderby"), QStringLiteral("_distance"));
-    QJsonObject body;
-    if (!get(QStringLiteral("/ws/place/v1/search"), query, &body, code, error)) return false;
-    const QJsonValue dataValue = body.value(QStringLiteral("data"));
-    if (!dataValue.isArray()) {
-        setFailure(code, error, ev::protocol::ErrorCode::MapResponseInvalid,
-                   QStringLiteral("POI response is invalid"));
-        return false;
-    }
     QVector<ev::database::MapPoi> result;
-    for (const QJsonValue &value : dataValue.toArray()) {
-        const QJsonObject item = value.toObject();
-        const QJsonObject location = item.value(QStringLiteral("location")).toObject();
-        const QString id = item.value(QStringLiteral("id")).toString();
-        const QString name = item.value(QStringLiteral("title")).toString();
-        const QString address = item.value(QStringLiteral("address")).toString();
-        double itemLatitude = 0.0;
-        double itemLongitude = 0.0;
-        if (id.isEmpty() || name.isEmpty()
-            || !parseCoordinate(location.value(QStringLiteral("lat")), -90.0, 90.0, &itemLatitude)
-            || !parseCoordinate(location.value(QStringLiteral("lng")), -180.0, 180.0, &itemLongitude))
-            continue;
-        qint64 distance = qRound64(distanceMeters(latitude, longitude,
-                                                  itemLatitude, itemLongitude));
-        if (item.value(QStringLiteral("distance")).isDouble()) {
-            const double valueDistance = item.value(QStringLiteral("distance")).toDouble();
-            if (qIsFinite(valueDistance) && valueDistance >= 0.0
-                && valueDistance <= std::numeric_limits<qint64>::max())
-                distance = qRound64(valueDistance);
+    qint64 providerCount = -1;
+    int fetchedProviderItems = 0;
+    for (int pageIndex = 1; pageIndex <= kTencentMaxPages; ++pageIndex) {
+        QUrlQuery pageQuery = query;
+        pageQuery.addQueryItem(QStringLiteral("page_size"), QString::number(kTencentPageSize));
+        pageQuery.addQueryItem(QStringLiteral("page_index"), QString::number(pageIndex));
+        QJsonObject body;
+        if (!get(QStringLiteral("/ws/place/v1/search"), pageQuery, &body, code, error)) return false;
+        const QJsonValue countValue = body.value(QStringLiteral("count"));
+        if (!countValue.isUndefined()) {
+            if (!countValue.isDouble() || countValue.toInteger() < 0) {
+                setFailure(code, error, ev::protocol::ErrorCode::MapResponseInvalid,
+                           QStringLiteral("POI response count is invalid"));
+                return false;
+            }
+            providerCount = countValue.toInteger();
         }
-        if (distance <= radiusMeters)
-            result.append(ev::database::MapPoi{id, name, address, itemLatitude,
-                                               itemLongitude, distance});
-        if (result.size() >= 100) break;
+        const QJsonValue dataValue = body.value(QStringLiteral("data"));
+        if (!dataValue.isArray()) {
+            setFailure(code, error, ev::protocol::ErrorCode::MapResponseInvalid,
+                       QStringLiteral("POI response is invalid"));
+            return false;
+        }
+        const QJsonArray data = dataValue.toArray();
+        fetchedProviderItems += data.size();
+        for (const QJsonValue &value : data) {
+            const QJsonObject item = value.toObject();
+            const QJsonObject location = item.value(QStringLiteral("location")).toObject();
+            const QString id = item.value(QStringLiteral("id")).toString();
+            const QString name = item.value(QStringLiteral("title")).toString();
+            const QString address = item.value(QStringLiteral("address")).toString();
+            double itemLatitude = 0.0;
+            double itemLongitude = 0.0;
+            if (id.isEmpty() || name.isEmpty()
+                || !parseCoordinate(location.value(QStringLiteral("lat")), -90.0, 90.0, &itemLatitude)
+                || !parseCoordinate(location.value(QStringLiteral("lng")), -180.0, 180.0, &itemLongitude))
+                continue;
+            qint64 distance = qRound64(distanceMeters(latitude, longitude,
+                                                      itemLatitude, itemLongitude));
+            if (item.value(QStringLiteral("distance")).isDouble()) {
+                const double valueDistance = item.value(QStringLiteral("distance")).toDouble();
+                if (qIsFinite(valueDistance) && valueDistance >= 0.0
+                    && valueDistance <= std::numeric_limits<qint64>::max())
+                    distance = qRound64(valueDistance);
+            }
+            if (distance <= radiusMeters)
+                result.append(ev::database::MapPoi{id, name, address, itemLatitude,
+                                                   itemLongitude, distance});
+        }
+        if (data.isEmpty() || (providerCount >= 0 && fetchedProviderItems >= providerCount)
+            || (providerCount < 0 && data.size() < kTencentPageSize)) {
+            break;
+        }
+        if (pageIndex == kTencentMaxPages) {
+            setFailure(code, error, ev::protocol::ErrorCode::MapResponseInvalid,
+                       QStringLiteral("POI response pagination exceeds the supported limit"));
+            return false;
+        }
     }
     if (result.isEmpty()) {
         setFailure(code, error, ev::protocol::ErrorCode::MapNoResult,

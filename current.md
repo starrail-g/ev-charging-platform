@@ -159,6 +159,7 @@
 - Official Tencent key smoke check now reaches the upstream endpoint: geocoding and driving route both succeed with `tencent_live`; the POI search endpoint independently returns provider status 121 (daily quota exhausted), mapped to `MAP_QUOTA_EXCEEDED` (1404). Fake HTTP and full production-selection integration pass.
 - B map work is tracked in `docs/role-b-map-service-plan.md`: protocol/size guard → v0.4 migration → map Mock/cache/audit → station/pile import → handlers → simulator gateway/cloud simulator → validation. The cloud simulator never writes SQLite directly; the server remains the sole business-state writer.
 - 2026-09-09 review follow-up: confirmed the P1 page-cache continuation bug with `page_size=1`; cache hits now reuse the cached page's `has_more`/`next_page_token` and re-aggregate only that page's stations. `server/tests/map.py` covers page-1/page-2 cache hits and request replay; qmake6 server build and mock map regression pass. Ubuntu QtCharts is installed as `libqt6charts6-dev` and the admin qmake6 tree now builds with `QT += charts`.
+- 2026-09-09 Tencent pagination review follow-up: production POI search now reads Tencent `count` and drains provider pages (`page_index`) before applying server pagination. Fake HTTP and production-selection integration cover 21 records across two upstream pages; mock map cache regression remains green.
 - S2 intelligent-analysis chain: data preparation → model-service contract → predictions/recommendation/warning → B service adaptation → C display → integrated validation. It must not block the S1 basic charging loop.
 
 ## Collaboration and security rules
@@ -176,6 +177,7 @@
 - 2026-09-09：重新用用户提供的运行时 key 联调官方接口：地址解析和驾车路线已返回真实结果，POI 接口仍受腾讯 status 121 日额度限制；确认服务端不再走 Mock，错误正确返回 1404。
 - 2026-09-09：修复地图分页缓存命中续读：缓存条目按页保存时，命中分支不再重复应用 offset，沿用缓存 continuation；新增 `page_size=1` 二次命中、续读与 replay 回归。
 - 2026-09-09：本机安装 Qt 6.2.4 Charts（`libqt6charts6-dev`）；管理端 qmake6 整树构建通过，QtTest 在 offscreen 环境通过 6/72/7/12/19 用例。
+- 2026-09-09：修复真实腾讯 POI 上游分页：`HttpTencentClient` 不再固定只请求第 1 页；按 `count` 续拉并在服务端切页，新增两页 fake HTTP 单测及 `map_live.py` 分页端到端覆盖。
 - B Schema v0.3 protocol/database foundation and profile/wallet endpoints are merged; its smoke and concurrency suites cover transaction rollback, replay, lifecycle, frozen policy and completed-order history. The pile-uniqueness migration `002_v0.2_to_v0.3.sql` handles already-deployed v0.2 databases (C re-verified 2026-09-04).
 - A user-client Mock baseline and opt-in Socket adapter are implemented; PR #9 (P1 follow-up) merged 2026-09-05 as `e577baa`.
 - PR #8 (`994e5ff`, 2026-09-04) restored the unified admin/dashboard UI (reverting PR #7's rollback of PR #6) plus the A-02/A-04/A-06/A-07 gaps, P2-01 cleanup and the AdminRepository contract-to-wire mapping doc.

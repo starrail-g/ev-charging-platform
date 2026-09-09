@@ -40,6 +40,20 @@ class Handler(BaseHTTPRequestHandler):
             if not query.get("boundary", [""])[0].startswith("nearby("):
                 self.respond({"status": 348, "message": "invalid boundary"})
                 return
+            if os.getenv("EV_FAKE_TENCENT_PAGED") == "1":
+                page_index = int(query.get("page_index", ["1"])[0])
+                begin = (page_index - 1) * 20
+                end = 20 if page_index == 1 else 21
+                data = [{
+                    "id": f"fake-live-paged-{index + 1}",
+                    "title": f"腾讯分页联调充电站{index + 1}",
+                    "address": f"沈阳市浑南区分页测试路{index + 1}号",
+                    "location": {"lat": 41.7202 + index * 0.00001, "lng": 123.4335},
+                    "distance": 200 + index,
+                } for index in range(begin, end)]
+                self.respond({"status": 0, "message": "Success", "count": 21,
+                              "data": data})
+                return
             self.respond({
                 "status": 0,
                 "message": "Success",

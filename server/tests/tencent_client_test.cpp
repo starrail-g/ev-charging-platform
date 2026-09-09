@@ -59,14 +59,35 @@ public:
                             body = R"({"status":0,"message":"Success","result":{"location":{"lat":41.7192,"lng":123.4315}}})";
                         }
                     } else if (url.path() == QStringLiteral("/ws/place/v1/search")) {
+                        const int pageIndex = query.queryItemValue(QStringLiteral("page_index")).toInt();
                         const bool valid = query.queryItemValue(QStringLiteral("keyword")) == QStringLiteral("充电站")
                             && query.queryItemValue(QStringLiteral("page_size")) == QStringLiteral("20")
-                            && query.queryItemValue(QStringLiteral("page_index")) == QStringLiteral("1")
+                            && pageIndex >= 1
                             && query.queryItemValue(QStringLiteral("orderby")) == QStringLiteral("_distance")
                             && query.queryItemValue(QStringLiteral("boundary")).startsWith(QStringLiteral("nearby("));
-                        body = valid
-                            ? R"({"status":0,"message":"Success","data":[{"id":"real-poi-1","title":"腾讯测试充电站","address":"测试路1号","location":{"lat":41.7202,"lng":123.4335},"distance":200}]})"
-                            : R"({"status":310,"message":"invalid parameters"})";
+                        if (valid && key == QStringLiteral("fake-paged")) {
+                            QJsonArray data;
+                            const int begin = (pageIndex - 1) * 20;
+                            const int end = pageIndex == 1 ? 20 : 21;
+                            for (int index = begin; index < end; ++index) {
+                                data.append(QJsonObject{
+                                    {QStringLiteral("id"), QStringLiteral("paged-poi-%1").arg(index + 1)},
+                                    {QStringLiteral("title"), QStringLiteral("分页测试充电站%1").arg(index + 1)},
+                                    {QStringLiteral("address"), QStringLiteral("分页测试路%1号").arg(index + 1)},
+                                    {QStringLiteral("location"), QJsonObject{{QStringLiteral("lat"), 41.7202 + index * 0.00001},
+                                                                                 {QStringLiteral("lng"), 123.4335}}},
+                                    {QStringLiteral("distance"), 200 + index}});
+                            }
+                            const QJsonObject response{{QStringLiteral("status"), 0},
+                                                       {QStringLiteral("message"), QStringLiteral("Success")},
+                                                       {QStringLiteral("count"), 21},
+                                                       {QStringLiteral("data"), data}};
+                            body = QJsonDocument(response).toJson(QJsonDocument::Compact);
+                        } else {
+                            body = valid
+                                ? R"({"status":0,"message":"Success","data":[{"id":"real-poi-1","title":"腾讯测试充电站","address":"测试路1号","location":{"lat":41.7202,"lng":123.4335},"distance":200}]})"
+                                : R"({"status":310,"message":"invalid parameters"})";
+                        }
                     } else if (url.path().startsWith(QStringLiteral("/ws/direction/v1/"))) {
                         const bool valid = !query.queryItemValue(QStringLiteral("from")).isEmpty()
                             && !query.queryItemValue(QStringLiteral("to")).isEmpty();
@@ -124,6 +145,13 @@ int main(int argc, char **argv)
                  && pois.size() == 1 && pois.first().providerPoiId == QStringLiteral("real-poi-1")
                  && pois.first().distanceMeters == 200,
                  QStringLiteral("POI search failed: %1").arg(error))) return 1;
+
+    qputenv("TENCENT_MAP_KEY", QByteArrayLiteral("fake-paged"));
+    if (!require(client.searchStations(origin, 1000, &pois, &code, &error)
+                 && pois.size() == 21
+                 && pois.last().providerPoiId == QStringLiteral("paged-poi-21"),
+                 QStringLiteral("POI upstream pagination failed: %1").arg(error))) return 1;
+    qputenv("TENCENT_MAP_KEY", QByteArrayLiteral("fake-success"));
 
     const QJsonObject destination{{QStringLiteral("latitude"), 41.7202},
                                   {QStringLiteral("longitude"), 123.4335}};

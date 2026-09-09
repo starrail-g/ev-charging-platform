@@ -55,6 +55,20 @@ assert all(station["provider"] == "tencent" for station in payload["stations"]),
 assert all("pile_idle" in station and "pile_snapshot_version" in station
            for station in payload["stations"]), payload
 
+if os.getenv("EV_EXPECT_PAGED") == "1":
+    assert len(payload["stations"]) == 20, payload
+    assert payload["has_more"] is True and payload["next_page_token"], payload
+    second = exchange(request("map-live-search-page-2", "map.station.search", {
+        "user_id": user_id,
+        "origin": {"kind": "address", "value": "沈阳市浑南区软件园"},
+        "radius_meters": 1000,
+        "page_size": 20,
+        "page_token": payload["next_page_token"],
+    }))
+    assert second["type"] == "map.station.search.result", second
+    assert len(second["payload"]["stations"]) == 1, second
+    assert second["payload"]["stations"][0]["provider_poi_id"] == "fake-live-paged-21", second
+
 route = exchange(request("map-live-route", "map.route.plan", {
     "user_id": user_id,
     "origin": {"kind": "coordinate", "latitude": 41.7192, "longitude": 123.4315},
