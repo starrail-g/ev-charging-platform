@@ -398,6 +398,7 @@ private slots:
     void topologyPulseFollowsStationAttentionState();
     void topologyKeyboardActivatesStation();
     void attentionItemSwitchesToPilePage();
+    void overviewRefreshesAfterPileRestartOnReturn();
     void auroraBackdropAnimatesWhenMotionEnabled();
     void reducedMotionFreezesAuroraBackdrop();
     void pilePageFiltersByAttentionStateAndCode();
@@ -1298,6 +1299,53 @@ void TestUi::attentionItemSwitchesToPilePage()
                       firstRow.center());
     QTRY_COMPARE_WITH_TIMEOUT(pageStack->currentIndex(), 2, 1000); // 2 = 充电桩页(销售业绩插入后)
     QVERIFY(window.statusBar()->currentMessage().contains(QStringLiteral("P-101-C")));
+}
+
+void TestUi::overviewRefreshesAfterPileRestartOnReturn()
+{
+    // 动作后概览同步（2026-09-09 Socket 联调回归）：桩重启成功恢复后，切回概览
+    // 不再显示该桩。根因 = 概览页原不在 pageStack currentChanged 刷新清单内（只在
+    // 登录/模式下拉时拉取），桩页动作只刷新了自身 → 概览保留动作前的旧缓存。
+    // 此用例锁"切回概览即重新拉取"（MainWindow 全链路 Mock，与真实数据源同路径）。
+    MainWindow window;
+    window.show();
+    auto *loginPage = window.findChild<LoginPage *>();
+    QVERIFY(loginPage);
+    loginPage->findChild<QLineEdit *>("usernameEdit")->setText(QStringLiteral("admin"));
+    loginPage->findChild<QLineEdit *>("passwordEdit")->setText(QStringLiteral("123456"));
+    QTest::mouseClick(loginPage->findChild<QPushButton *>("loginButton"), Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(window.isLoggedIn(), 3000);
+
+    auto *overview = window.findChild<OverviewPage *>();
+    auto *attentionList = overview->findChild<QListWidget *>("attentionList");
+    auto *nav = window.findChild<QListWidget *>("navList");
+    auto *pageStack = window.findChild<QStackedWidget *>("pageStack");
+    auto *pilePage = window.findChild<PilePage *>();
+    QVERIFY(overview && attentionList && nav && pageStack && pilePage);
+    QTRY_COMPARE_WITH_TIMEOUT(attentionList->count(), 2, 3000); // P-101-C 故障 + P-202-C 离线
+
+    // 进桩页（进入即刷新）→ 重启故障桩 P-101-C
+    nav->setCurrentRow(2); // 充电桩（pageStack 与 navList 同序，见 mainwindow.h PageIndex）
+    QTRY_COMPARE_WITH_TIMEOUT(pageStack->currentIndex(), 2, 1000);
+    pilePage->focusPile(QStringLiteral("P-101-C"));
+    QTRY_COMPARE_WITH_TIMEOUT(pilePage->currentPileCode(), QStringLiteral("P-101-C"), 1000);
+    auto *button = pilePage->findChild<QPushButton *>("pileRestartButton");
+    QVERIFY(button);
+    QTRY_VERIFY_WITH_TIMEOUT(button->isEnabled(), 1000); // fault 桩可重启
+    QTest::mouseClick(button, Qt::LeftButton);
+    auto *hint = pilePage->findChild<QLabel *>("pilePageHint");
+    QTRY_VERIFY_WITH_TIMEOUT(hint->text().contains(QStringLiteral("已重启")), 3000);
+
+    // 切回概览：currentChanged(0) 触发重新拉取 → 需关注只剩 P-202-C，
+    // 指标同源刷新（总桩数不变、可用率 (6-1)/6 = 83.3%）
+    nav->setCurrentRow(0);
+    QTRY_COMPARE_WITH_TIMEOUT(pageStack->currentIndex(), 0, 1000);
+    QTRY_COMPARE_WITH_TIMEOUT(attentionList->count(), 1, 3000);
+    QVERIFY2(!attentionList->item(0)->text().contains(QStringLiteral("P-101-C")),
+             "重启成功的桩不应再出现在需关注列表");
+    QCOMPARE(overview->findChild<QLabel *>("metricPileTotal")->text(), QStringLiteral("6"));
+    QCOMPARE(overview->findChild<QLabel *>("metricAvailability")->text(),
+             QStringLiteral("83.3%"));
 }
 
 void TestUi::auroraBackdropAnimatesWhenMotionEnabled()

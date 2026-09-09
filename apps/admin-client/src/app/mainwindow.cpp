@@ -170,12 +170,17 @@ void MainWindow::buildBusinessArea(ev::AdminRepository *repository)
                 m_revenuePage->setRange(days);
                 m_navList->setCurrentRow(RevenueIndex);
             });
-    // 工作页进入时经 Repository 刷新（跟随数据层当前演示模式；
-    // 概览页由登录/模式下拉自行驱动，不在此重复刷新；销售页每次进入取最新）
+    // 工作页进入时经 Repository 刷新（跟随数据层当前状态；销售页每次进入取最新）。
+    // 概览页同规则（2026-09-09：桩重启/用户冻结等动作改变数据源状态后，切回概览
+    // 必须重新拉取才能反映——此前概览只在登录/模式下拉时刷新，动作结果被旧缓存
+    // 遮住，Socket 联调实证）；onLoginSuccess 仍保留显式 refresh 兜底（pageStack
+    // 已停在概览时 currentChanged 不触发），两条入口并发由页面 generation 防串。
     connect(pageStack, &QStackedWidget::currentChanged, this, [this](int index) {
         if (!m_loggedIn)
             return;
-        if (index == RevenueIndex)
+        if (index == OverviewIndex)
+            m_overviewPage->refresh();
+        else if (index == RevenueIndex)
             m_revenuePage->refresh();
         else if (index == PileIndex)
             m_pilePage->refresh();
@@ -200,13 +205,16 @@ void MainWindow::buildBusinessArea(ev::AdminRepository *repository)
 
 void MainWindow::onLoginSuccess()
 {
+    // 顺序敏感：m_loggedIn 必须在 setCurrentRow(0) 之后置位——本次程序化切页若触发
+    // pageStack::currentChanged(0)，切页刷新 lambda 的 !m_loggedIn 守卫会跳过，
+    // 概览刷新只由本函数末尾显式调用一次（否则登出前停在非概览页时再登录会双刷）。
+    m_navList->setEnabled(true);
+    m_navList->setCurrentRow(0);
     m_loggedIn = true;
     m_sessionBadge->setText(
         m_dataSourceLabel.isEmpty()
             ? QStringLiteral("● 已登录")
             : QStringLiteral("● %1").arg(m_dataSourceLabel));
-    m_navList->setEnabled(true);
-    m_navList->setCurrentRow(0);
     m_stack->setCurrentWidget(m_businessArea);
     statusBar()->showMessage(loggedInStatusText(QStringLiteral("概览")));
     m_overviewPage->refresh(); // 概览页加载数据（经 Repository 链路）
