@@ -142,9 +142,9 @@ class DeterministicPlanner:
         expected_versions: dict[str, int] = {}
         changes: list[dict] = []
         for station in sorted(stations, key=lambda item: item.station_id):
-            expected_versions[str(station.station_id)] = station.version
             if station.seed_id != self.seed_id or station.status != "active":
                 continue
+            expected_versions[str(station.station_id)] = station.version
             for pile in sorted(station.piles, key=lambda item: item.pile_id):
                 if not pile.simulated or pile.active_order or pile.status not in {"idle", "fault", "offline"}:
                     continue

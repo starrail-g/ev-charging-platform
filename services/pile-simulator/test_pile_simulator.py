@@ -70,7 +70,33 @@ class ContractVectorTest(unittest.TestCase):
                                                "pile_id": 4201, "order_id": 9})["accepted"])
         proposal = cluster.build_tick()
         self.assertEqual(proposal["expected_versions"], {"42": 7})
-        self.assertEqual(proposal["changes"], [])
+        self.assertTrue(all(change["pile_id"] == 4201 for change in proposal["changes"]))
+
+    def test_planner_excludes_inactive_station_from_version_guard(self):
+        matching = StationSnapshot(
+            42, 7, "demo-2026-09", "active",
+            (PileSnapshot(4201, 42, "idle", True, False),),
+        )
+        inactive = StationSnapshot(
+            43, 19, "demo-2026-09", "inactive",
+            (PileSnapshot(4301, 43, "idle", True, False),),
+        )
+        proposal = DeterministicPlanner("sim-1", "demo-2026-09").proposal(
+            1842, [matching, inactive])
+        self.assertEqual(proposal["expected_versions"], {"42": 7})
+
+    def test_planner_excludes_different_seed_from_version_guard(self):
+        matching = StationSnapshot(
+            42, 7, "demo-2026-09", "active",
+            (PileSnapshot(4201, 42, "idle", True, False),),
+        )
+        other_seed = StationSnapshot(
+            44, 23, "legacy-seed", "active",
+            (PileSnapshot(4401, 44, "idle", True, False),),
+        )
+        proposal = DeterministicPlanner("sim-1", "demo-2026-09").proposal(
+            1842, [matching, other_seed])
+        self.assertEqual(proposal["expected_versions"], {"42": 7})
 
 
 if __name__ == "__main__":

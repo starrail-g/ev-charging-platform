@@ -53,6 +53,7 @@
 - 服务端原子语义：gateway 在 `BEGIN IMMEDIATE` 中校验 simulator/seed、station snapshot version、桩当前状态、simulated 标志、活动订单和最小 idle（默认 `EV_PILE_SIMULATION_MIN_IDLE=1`）；成功时更新桩状态与 `status_source='simulation'`、写入 `pile_status_events`、每个受影响站点只递增一次 `simulation_state.snapshot_version`。同 `(simulator_id,tick_id)` 重放返回原结果；指纹变化、旧版本、非法/占用桩或违反最小 idle 返回 conflict/rejected，不能覆盖 `reserved`/`charging`。
 - 持久化对象：v0.4 的 `charging_piles.simulated/status_source/status_updated_at`、`pile_status_events`、`simulation_state` 和 `simulation_tick_records` 支撑资格、快照版本、审计和 tick 幂等；站点首次地图导入时由固定 seed 生成 4–12 个模拟桩，并保证 active station 至少一个 idle 桩。
 - 当前实现边界：Python 端已增加 SQLite-free `SimulatorCluster` 常驻循环：复用现有 `EV_SERVER_HOST`/`EV_SERVER_PORT`，注册并接收服务端快照，接收 `simulator.command` 并 ACK，周期提交 `simulator.tick`，断线后重新注册。服务端 `main.cpp` 已将 `simulator.register/snapshot/tick/pile.report/command.result` 接入公共 dispatcher，新增共享会话注册表；现有用户端/管理端消息和配置架构未改动。服务端仍是唯一状态写入者，长期 mTLS、heartbeat 指标和 stale 冲突自动重算尚未实现。
+- 2026-09-10 P1 修复：`DeterministicPlanner` 先过滤非 active 或 seed 不匹配站点，再登记 `expected_versions`；因此单个 inactive/不同 seed 站点不会阻断其他匹配站点。新增两条 Python 回归，覆盖 matching active + inactive 与 matching active + different-seed，确认 matching station proposal 可继续被接受。
 - 已验证：`services/pile-simulator` 的 Python unittest 4/4 通过（生成、transition、planner、cluster 命令向量）；`qmake6` Qt 6.2.4 配置 `server/tests/simulation_gateway.pro`，`make -j2` 后运行 `simulation-gateway-test database/schema/schema.sql` 通过。另以 `qmake6 server/server.pro` + `make -j2` 构建服务端，用户端主程序 `qmake6 apps/user-client/user-client.pro` + `make -j2` 已通过，`server-map-service-tests` 在 `QT_QPA_PLATFORM=offscreen` 下 6 通过/1 跳过，真实服务端 `smoke.py` 通过。新合并的旧 `map-service-tests.pro` 仍因 `TencentMapService` 未实现当前 `IMapService` 两个纯虚接口及花括号重载歧义而无法编译，暂不改用户端。
 
 ## 2026-09-08 管理端销售业绩（近 7/30 日营收）—— `feature/admin-revenue`（PR #16 open）
@@ -181,6 +182,7 @@
 - 2026-09-09：修复真实腾讯 POI 上游分页：`HttpTencentClient` 不再固定只请求第 1 页；按 `count` 续拉并在服务端切页，新增两页 fake HTTP 单测及 `map_live.py` 分页端到端覆盖。
 - 2026-09-09：修复用户端地址型 POI 查询覆盖服务端降级提示的问题，最终状态保留 warning 与 POI 数量信息。
 - 2026-09-10：同步 `origin/main` 至 `83449ab`（PR #17，用户端服务端地图适配）；确认 `simulator.*` 与 `map.station.search/map.route.plan` 无消息冲突。补齐模拟器命令幂等、停止后待结算占用、结算释放通知，并重新通过 server qmake6 构建、用户端服务端地图适配测试、smoke、模拟器 4/4 回归，以及真实预约→`reserve`→取消→`release` 命令镜像冒烟。
+- 2026-09-10：确认桩模拟器 P1 评审属实并修复 planner 版本守卫过滤；新增 inactive/不同 seed 站点回归，桩模拟器 Python unittest 达到 6/6。
 - 2026-09-10：安装 Qt 6.2.4 WebEngine 后，用户端主程序 qmake6 构建通过；兼容性复跑确认 PR #17 的旧 `map-service-tests` 测试目标存在接口不一致编译问题，已记录为用户端既有待修项，不纳入本次桩模拟器改动。
 - B Schema v0.3 protocol/database foundation and profile/wallet endpoints are merged; its smoke and concurrency suites cover transaction rollback, replay, lifecycle, frozen policy and completed-order history. The pile-uniqueness migration `002_v0.2_to_v0.3.sql` handles already-deployed v0.2 databases (C re-verified 2026-09-04).
 - A user-client Mock baseline and opt-in Socket adapter are implemented; PR #9 (P1 follow-up) merged 2026-09-05 as `e577baa`.
