@@ -26,6 +26,10 @@ ml（智能分析，扩展项）
 | [admin-client.md](admin-client.md) | 管理端：页面层、Repository 抽象、Mock/Socket 双实现、数据方向 |
 | [database.md](database.md) | 数据库设计、v0.3 迁移和事务边界（B 负责） |
 | [protocol.md](protocol.md) | Socket 协议 v1、错误码和用户生命周期接口（B 负责） |
+| [map-service-protocol.md](map-service-protocol.md) | 服务端腾讯地图、站点导入、桩模拟和云端模拟器契约（B 负责） |
+
+B 端地图与模拟器的分阶段实施、测试和上线边界见
+[`../role-b-map-service-plan.md`](../role-b-map-service-plan.md)。
 
 ## 管理端/大屏在系统中的位置
 

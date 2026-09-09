@@ -13,7 +13,7 @@ read/query, user profile/wallet, and user charging lifecycle operations
 `station.list`, `pile.list`, `order.active.get`, `order.history.list`,
 `reservation.*`, `charging.*`, and the administrator operations listed below).
 The administrator wire operations, including the full-scope `admin.pile.list`,
-are implemented by the server on this branch and consumed by the Qt adapter.
+are implemented on the current `main` line and consumed by the Qt adapter.
 
 ## Transport and Framing
 
@@ -23,9 +23,11 @@ are implemented by the server on this branch and consumed by the Qt adapter.
 - A frame is a four-byte unsigned big-endian payload length followed by the
   payload. The length does not include its four-byte prefix.
 - Payload: UTF-8 JSON object, max 1 MiB. Zero-length and over-limit frames
-  are invalid; senders must not emit them. The server verifies every success
-  envelope before writing it and returns a bounded `1500` error if a response
-  cannot fit. The server sends an `error` where possible and closes only that
+  are invalid; senders must not emit them. The server compact-serializes and
+  size-checks every complete response envelope before writing it. A paged
+  response is reduced to fit; a single item that cannot fit returns a bounded
+  error (`MAP_RESPONSE_TOO_LARGE` for map operations) rather than an invalid
+  frame. The server sends an `error` where possible and closes only that
   connection for malformed inbound frames.
 - If a TCP read contains valid frames followed by a malformed frame, the
   decoder returns the valid messages together with the error. The server
@@ -88,6 +90,17 @@ Malformed frames without a usable request ID use `id: "server"`.
 | 1201 | `CONFLICT` | State transition is not permitted, including duplicate active orders. |
 | 1202 | `INSUFFICIENT_BALANCE` | Wallet balance cannot cover settlement. |
 | 1300 | `DATABASE_ERROR` | Persistence failure; server must roll back the affected transaction. |
+| 1400 | `MAP_DISABLED` | Server-side map capability is disabled. |
+| 1401 | `MAP_NOT_CONFIGURED` | No valid server-side Tencent credential/configuration exists. |
+| 1402 | `MAP_UPSTREAM_TIMEOUT` | Tencent request timed out. |
+| 1403 | `MAP_UPSTREAM_UNAVAILABLE` | Tencent or the external network is unavailable. |
+| 1404 | `MAP_QUOTA_EXCEEDED` | Tencent quota is exhausted. |
+| 1405 | `MAP_PERMISSION_DENIED` | Tencent key permission or source restriction failed. |
+| 1406 | `MAP_NO_RESULT` | Address, POI, or route returned no usable result. |
+| 1407 | `MAP_RESPONSE_INVALID` | Tencent response, coordinate, or route data is invalid. |
+| 1408 | `MAP_RATE_LIMITED` | The client or server exceeded the map request rate. |
+| 1409 | `MAP_RESPONSE_TOO_LARGE` | A valid logical map item cannot fit the 1 MiB protocol payload. |
+| 1410 | `MAP_SERVER_MOCK` | Deterministic server mock data was used; normally a warning, not a failure. |
 | 1500 | `INTERNAL_ERROR` | Unexpected server failure. |
 
 The `message` field is suitable for display/logging but clients must branch
@@ -123,6 +136,9 @@ The following names and payloads are reserved for v1. Result types append
 | `admin.pile.restart` | `token`, `administrator_id`, `pile_id` | `admin.pile.restart.result`: `pile` |
 | `admin.user.list` | `token`, optional `phone_query` | `admin.user.list.result`: `users` (each user includes `active_order_status`) |
 | `admin.user.status.set` | `token`, `administrator_id`, `user_id`, `status` (`active` or `frozen`) | `admin.user.status.set.result`: `user` |
+| `map.station.search` | `user_id`, `origin`, optional `radius_meters` (`10..1000`, default `1000`), optional `page_size` (`1..20`, default `20`), optional opaque `page_token` | `map.station.search.result`: `stations`, `has_more`, `next_page_token`, source/cache metadata |
+| `map.route.plan` | `user_id`, `origin`, `station_id`, `mode` (`driving` or `walking`) | `map.route.plan.result`: destination, distance, duration, decoded `polyline`, source/cache metadata |
+| `admin.map.audit.list` | `token`, optional `operation`, optional `result_status`, optional opaque `page_token`, optional `limit` (`1..100`, default `50`) | `admin.map.audit.list.result`: `records`, `has_more`, `next_page_token` |
 
 Unless an operation says otherwise, object IDs are integers. Money is always
 an integer number of Chinese fen (`*_cents`), never a floating-point yuan
@@ -185,6 +201,12 @@ Order status values are `pending_reservation`, `reserved`, `charging`,
   `wallet.recharge`, `admin.station.create`, `admin.pile.restart`, and
   `admin.user.status.set`. Read operations and `admin.login` do not create
   persistence records.
+- `map.station.search` is the exception among map reads because a first search
+  can create a station and its piles. It stores a successful response in
+  `request_records` and replays it for the same request ID and fingerprint.
+  Its `map_request_log_id` is a separate audit identifier. `map.route.plan`
+  and `admin.map.audit.list` are read operations and do not create replay
+  records, although every map attempt creates a sanitized map audit row.
 - Request IDs are currently globally unique in the server database across
   users and operations; clients must not reuse an ID for another request.
 - Login always succeeds for an existing frozen account and returns
@@ -237,3 +259,11 @@ current stage. Clients still depend only on this wire contract and never
 access SQLite directly. Database work is currently synchronous in the
 connection event loop; moving long-running operations to bounded workers is a
 known follow-up before production deployment.
+
+## Accepted map-service extension (pending implementation)
+
+The complete server-side Tencent Maps, cache/audit, station-import, pile
+simulation, and independent cloud simulator gateway contract is defined in
+[`map-service-protocol.md`](map-service-protocol.md). The extension is a
+design boundary, not current runtime evidence. Schema v0.4, the three new
+handlers, map error enum additions, and client adapters remain pending.

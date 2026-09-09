@@ -177,3 +177,41 @@ recreates indexes/views, changes revenue grouping to `settled_at`, and updates
 roll back instead of being silently accepted. Run `PRAGMA foreign_key_check`
 after the migration; a successful check returns no rows. Do not pipe the SQL
 file into an executor configured to continue after errors.
+
+## Map and simulation schema boundary (v0.4, pending implementation)
+
+The server-side Tencent Maps and pile simulation contract is defined in
+[`map-service-protocol.md`](map-service-protocol.md). The current repository
+schema remains v0.3 until the migration below is implemented and validated.
+
+The v0.4 migration must be one transaction and preserve all valid v0.3 rows:
+
+- `stations` gains `provider TEXT NOT NULL DEFAULT 'internal'`, nullable
+  `provider_poi_id`, nullable `map_synced_at`, and nullable
+  `map_content_hash`. A unique index covers non-null `(provider,
+  provider_poi_id)` values. Existing manually seeded stations use provider
+  `internal`.
+- `charging_piles` gains `simulated INTEGER NOT NULL DEFAULT 0`,
+  `status_source TEXT NOT NULL DEFAULT 'seed'`, and
+  `status_updated_at TEXT NOT NULL`, backfilled from `updated_at`.
+- `map_request_logs` stores sanitized client map attempts and result metadata;
+  it is an audit table, not the request replay table.
+- `map_upstream_call_logs` stores one sanitized row per geocode, POI, detail,
+  driving, or walking call and references its map request log.
+- `map_cache_entries` stores normalized cache keys and parsed payloads with
+  `expires_at` and `stale_until`; it must never store a credential-bearing URL
+  or raw Tencent response.
+- `pile_status_events` stores each status change, its source/reason, optional
+  simulation tick, and UTC timestamp.
+- `simulation_state` stores one row per station with seed ID, tick ID,
+  last-run time, and snapshot version.
+
+The service must use `BEGIN IMMEDIATE` for first-import generation and every
+authoritative simulation tick. Station upsert, first pile generation, map
+audit, and the successful `request_records` replay row commit together. A
+failed generation or migration rolls back completely.
+
+Map request/upstream/cache/event rows are retained for 30 UTC days and cleaned
+by indexed timestamps. Cleanup must never delete stations, piles, orders, or
+wallet rows. The simulator proposal service is not a database writer; only the
+server validates and persists its changes.

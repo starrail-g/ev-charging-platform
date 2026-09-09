@@ -9,14 +9,15 @@
 服务端当前可运行：`health`、`echo`、`user.login`、`user.profile.get`、
 `user.profile.update`、`wallet.recharge`、`station.list`、
 `pile.list`、`order.active.get`、`order.history.list`、预约生命周期和充电
-开始/停止/结算，以及本分支新增的 `admin.login`、统计、管理员桩/站/用户操作。
-管理端 `AdminRepository` 仍使用 Mock；真实 Socket adapter 尚未接入，需按下方
-wire 映射契约完成客户端联调。
+开始/停止/结算，以及已合入当前 `main` 的 `admin.login`、统计、管理员桩/站/用户操作。
+管理端同时保留 Mock 和已实现的 `SocketAdminRepository`；Socket 适配层已覆盖
+登录、概览、站点、全量桩游标聚合、用户和管理动作。Mock 仍是可选的本地回退，
+不得被当作真实 Socket 验收证据。
 
-主分支协作约定仍适用：C 端的管理员登录、概览统计和桩状态接口是第一阶段
-联调闸门，目标时间为 9 月 7 日 18:00；在真实 Socket adapter 验证前，A/C
-保留 Mock 或离线回退，不得把 Mock 结果当作真实 Socket 验收证据。B 端用户接口、
-充电生命周期和本分支管理员接口均按下文 v1 契约提供。
+主分支协作约定仍适用：C 端的管理员登录、概览统计和桩状态接口已进入第一阶段
+联调与发布证据收集；A/C 可保留 Mock 或离线回退，但不得把 Mock 结果当作真实
+Socket 验收证据。B 端用户接口、充电生命周期和当前 `main` 的管理员接口均按下文
+v1 契约提供。
 
 每个状态修改请求都必须使用客户端生成的 `id`（1 至 64 字符）。相同操作和
 标识性 payload 重放同一 ID 会返回第一次成功响应，即使客户端已重连；同一 ID
@@ -30,6 +31,11 @@ wire 映射契约完成客户端联调。
 `admin.login` 外，所有 `admin.*` 请求都必须在 payload 中携带该 token；只读接口也不例外。
 token 在服务端进程内保存，服务重启后失效。建站、重启桩、冻结/解冻请求仍需携带
 `administrator_id`，且必须与 token 对应的管理员一致。
+
+地图扩展（`map.station.search`、`map.route.plan`、
+`admin.map.audit.list`）目前是待实现的服务端契约，不属于当前运行时能力；完整
+字段、分页、幂等、缓存、1 MiB 响应保护和独立云端桩模拟器边界见
+[`docs/architecture/map-service-protocol.md`](../architecture/map-service-protocol.md)。
 
 ## 登录与查询
 
@@ -154,7 +160,7 @@ JSON `null`；历史接口只返回 `completed` 订单，按 `settled_at` 倒序
 业务拒绝或数据库失败会回滚且不会固化记录，因此相同 ID 可在条件修复后重试，参数
 变化或操作变化则返回 `CONFLICT`。
 
-管理员接口当前实现：原 admin.* 接口随 PR #12 合入 `main`（`3d015f7`，2026-09-06）；本分支另增 `admin.pile.list` 全量桩查询：
+管理员接口当前实现：原 admin.* 接口随 PR #12 合入 `main`（`3d015f7`，2026-09-06）；PR #13 已合入当前 `main`（`f3bee707`），并提供 `admin.pile.list` 全量桩查询：
 
 | 接口 | 用途 | 状态 |
 |---|---|---|
