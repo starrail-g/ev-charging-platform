@@ -135,6 +135,9 @@ UTC 儒略日数值定位（不受本机时区影响），日期标签稀疏—�
 status 110），且须**手动绑定配额方案**（未绑方案每日仅 1 次体验额度，报 status 121）；与
 `TENCENT_MAP_KEY`（Web 大屏 JS API key、域名白名单）类型不同、语义隔离，勿混用。空 key =
 provider 空转（不建网络对象、不发请求）→ 拓扑模式。URL/key 仅内存构造，禁打印/落盘。
+**该 key 是纯展示底图凭据（display-only）**：只喂静态图底图请求，禁止用于 geocoder/POI
+搜索/路线规划等业务地图数据 API——那些调用由服务端凭据完成并经 Socket 下发；admin-client
+的 static-map 直连是唯一的客户端腾讯直连例外（边界见协议文档 §1）。
 
 **渲染与数据流（分层纪律）**：底图 = 客户端直连腾讯静态图 WebService（渲染层经
 `MapImageProvider` 抽象，将来可切服务端代理）；桩/站业务数据（含经纬度）**仍全部走 Socket
