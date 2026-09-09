@@ -3,7 +3,7 @@
 ## Baseline and fixed decisions
 
 - Project: 东软电动汽车充电桩应用管理平台。
-- Current GitHub `main` baseline: `f5af4a128d2676860fe1e39944ba0e6f617a4300` (PR #16 merged after PR #15; includes PR #11, #12, #13, #15 and #16 work).
+- Current GitHub `main` baseline: `2bc84ec6b289bf96da058f3e024c788e1c4301a4` (PR #18 merged after PR #16; includes PR #11, #12, #13, #15, #16 and #18 work).
 - Stage I deadline: 2026-09-10 24:00. Stage II deadline: 2026-09-17 24:00. Personal report deadline: 2026-09-18 24:00.
 - Formal requirements source: `docs/requirements/requirements-matrix.md`; role plans: `docs/role-a-delivery-plan.md` and `docs/role-c-delivery-plan.md`.
 - All Qt/C++ build, test and acceptance paths use `qmake6`; CMake is forbidden. Build directories stay outside the repository.
@@ -18,6 +18,7 @@
 - `A-S2-01` server-owned map integration: client adaptation and mock-enabled runtime Socket integration against B PR #19 commit `cc3f23f` are complete in this worktree. PR #19 remains open; a live Tencent upstream run is still B-owned evidence.
 - User-client UI follow-up: Socket and Mock modes are strictly isolated, the visual system now matches the admin day theme, and the window preserves a resizable 21:38 mobile ratio. VM qmake6 regression evidence is recorded below.
 - `A-S2-02` analysis result presentation and `A-S2-03` final regression/materials: pending the frozen B/C contracts and final integrated build.
+- C's PR #18 admin static-map renderer is merged. It uses the separate local-only `TENCENT_STATIC_MAP_KEY` for a presentation background and keeps all station business data on the Socket path.
 
 ## User-client map boundary
 
@@ -29,6 +30,7 @@
 - Business station price, pile count/status and order data continue to come from `IUserService`; Tencent POIs are location context only. Unmatched POIs cannot enter reservation or charging flows.
 - The legacy `TencentMapService` remains isolated for adapter tests and is excluded from the production qmake application path. The client does not read, store, print or inject `TENCENT_MAP_KEY`.
 - `MapWebView` is a local/offline rendering surface for server-returned geometry and explicit fallback status; it is not a client-side Tencent credential holder.
+- PR #18's admin static-map exception does not change this user-client boundary: the admin Key fetches a non-business image only, while `TENCENT_MAP_KEY` and all user navigation requests remain server-owned.
 
 ## Evidence from Ubuntu VM
 
@@ -53,6 +55,7 @@ QT_QPA_PLATFORM=offscreen ./ev-user-client-tests -txt
 - Application startup under `QT_QPA_PLATFORM=offscreen` and WebEngine no-sandbox flags remained alive for the smoke window; no crash was observed.
 - UI regression in a clean VM snapshot: qmake6 app build PASS; user tests `11 passed, 0 failed, 4 skipped`; map tests `11 passed, 0 failed, 1 skipped`; server-map tests `5 passed, 0 failed`. Socket login window showed the day theme with demo/Mock hints hidden. X11 resize checks measured 315 x 570 and 399 x 722, preserving the 21:38 ratio.
 - PR #19 GUI smoke: the Socket-mode client logged in, loaded four server map markers, and kept local Mock wording hidden across login, station and map pages. The captured window measured 378 x 684, preserving 21:38.
+- PR #18 admin-map baseline retained during conflict resolution: qmake6 suites `71/6/7/12/19` passed on Windows and Ubuntu; its real/static-map and topology fallback evidence remains owned by C.
 - Local `git diff --check`: PASS. No real key, local `.env`, runtime database, log, Makefile or build output is part of the intended commit.
 
 ## Open work and risks
@@ -60,7 +63,7 @@ QT_QPA_PLATFORM=offscreen ./ev-user-client-tests -txt
 - B PR #19 now supplies `map.station.search`/`map.route.plan`, server-side Tencent/cache/audit code, Schema v0.4 and authoritative pile simulation. It remains unmerged and still needs B's live Tencent credential/upstream evidence.
 - A's PR #19 mock-enabled Socket integration is complete; repeat it after PR #19 is merged into `main` and during the final clean-environment regression. This result does not claim live Tencent success.
 - C and B still provide final admin/dashboard and cross-module regression evidence for `A-S1-04`.
-- Real Tencent credentials stay in ignored local configuration owned by B. Never commit keys, tokens, passwords, complete key-bearing URLs, screenshots or logs.
+- Real Tencent credentials stay in ignored local configuration: `TENCENT_MAP_KEY` is B server-only and `TENCENT_STATIC_MAP_KEY` is C admin-display-only. Never commit keys, tokens, passwords, complete key-bearing URLs, screenshots or logs.
 
 ## Collaboration rules
 
