@@ -77,6 +77,14 @@
   真图（沈阳静态图 597KB PNG）→ 用户目检真图 + 两站标记贴合通过。**UI 微调（目检反馈，commit
   `17619de`）**：底图透明度 0.4（setOpacity 隔离，仅底图）、真图模式站名纯黑（拓扑保持
   mutedText 原色）、站名字号 11→13px——用户逐项确认；tst_ui 71/71 复跑全绿。
+  **T6 VM 侧（2026-09-09 完成）**：guest 桥接网段外网不通（DNS 失败）→ 用户 VMware 界面热切
+  NAT（192.168.182.128）→ 腾讯预检 200+PNG（NAT 出口=宿主白名单 IP）；guest server 全新库
+  ev-t6-live.db + 坐标校准 + GUI Socket+key 目检通过（与 Windows 同配方、同微调版）。
+  **VM 五套暴露并修复一个平台差异 bug（commit `8859570`）**：providerCancelAllStopsDelivery
+  在 Ubuntu SIGSEGV（Windows 全绿）——FakeStaticMapServer 延迟回包 singleShot lambda 捕获裸
+  QTcpSocket，客户端 abort 断开后 socket 被 deleteLater、400ms 后到期访问悬垂指针（Windows
+  断开通知时序晚于回包未现）；修复 = QPointer 守卫。修复后 VM tst_ui 71/71，双平台五套
+  71/6/7/12/19 逐字一致，T6 闭环。
 - **实施计划**：`docs/role-c-admin-map-renderer-plan.md` v1.3（两轮评审 + 复审修正定稿；T0/T0b
   实证先行，边界决策 D1–D7 已拍板——底图客户端自理、业务数据全走 Socket、key 仅 env、
   无 datum 补偿、D7 精确投影式锁定）。
