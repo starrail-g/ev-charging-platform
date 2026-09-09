@@ -63,8 +63,20 @@
   QT += network）、`tests/ui/tst_ui.cpp`（+31 用例）、`docs/ui/README.md` §6.2、
   `docs/architecture/map-service-protocol.md` §1 底图例外补录、`config/example.env`、
   实施计划 `docs/role-c-admin-map-renderer-plan.md` 状态翻已实现）；③ 后续待办：用户审查后按
-  commit 边界分批提交（T1→T2→T3→T5 单 PR）、T4 GUI 冒烟收尾（Mock 无 key 目检）、T6 真图
+  commit 边界分批提交（T1→T2→T3→T5 单 PR）、T6 真图
   联调（key+网络、双平台、降级三态冷启动）、附录 B 坐标通道、合入门禁（协议补录经 B 评审）。
+  **T4 GUI 冒烟（2026-09-09 VM 目检通过）**：Ubuntu VM 同步 4 commits 整树 + 重建
+  admin-client（exe 11:43，staticmap 符号验证在场），bit 桌面 Mock 模式起 GUI（无 key →
+  静默拓扑），用户目检概览站点态势拓扑一致性（节点/呼吸/键盘/点击）确认无回归；真图留给 T6。
+  **T6 Windows 真图联调（2026-09-09 目检通过）**：server-main 重建（9/8 源码落后 5min 修复）+
+  全新库 t6-live-0909.db 起真实服务端（login/station.list 冒烟 OK）→ 附录 B 通道二校准坐标
+  （站1 41.714729,123.449597 / 站2 41.805727,123.440030，复核逐字）→ GUI Socket 模式 + key
+  冷启。**实证两件事**：①降级三态之三：首次冷启腾讯返回 status 112（宿主出口 IP 已从白名单
+  36.110.14.128 漂移为 36.110.14.171——计划 §7 风险第一行应验）→ GUI 自动落拓扑 + 服务降级
+  标注（用户目检确认降级路径真实生效）；②用户腾讯控制台补白名单 36.110.14.171 后重启冷启 =
+  真图（沈阳静态图 597KB PNG）→ 用户目检真图 + 两站标记贴合通过。**UI 微调（目检反馈，commit
+  `17619de`）**：底图透明度 0.4（setOpacity 隔离，仅底图）、真图模式站名纯黑（拓扑保持
+  mutedText 原色）、站名字号 11→13px——用户逐项确认；tst_ui 71/71 复跑全绿。
 - **实施计划**：`docs/role-c-admin-map-renderer-plan.md` v1.3（两轮评审 + 复审修正定稿；T0/T0b
   实证先行，边界决策 D1–D7 已拍板——底图客户端自理、业务数据全走 Socket、key 仅 env、
   无 datum 补偿、D7 精确投影式锁定）。
