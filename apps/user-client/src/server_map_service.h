@@ -36,8 +36,8 @@ private:
   static Reply request(const QString &host, quint16 port, int timeoutMs,
                        const QString &type, const QJsonObject &payload);
   static MapError mapError(int code, const QString &message);
-  static MapSource sourceFor(const QJsonObject &payload);
-  static QString warningFor(const QJsonObject &payload);
+  static bool readResponseMetadata(const QJsonObject &payload, MapSource *source,
+                                   QString *dataSource, MapWarning *warning);
   static bool readCoordinate(const QJsonObject &object, GeoCoordinate *coordinate);
   static QString wireId(const QString &id);
   void remember(QFutureWatcher<Reply> *watcher);

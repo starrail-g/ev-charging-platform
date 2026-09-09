@@ -15,7 +15,8 @@ namespace {
 
 class MapProtocolServer final : public QObject {
 public:
-  explicit MapProtocolServer(QObject *parent = nullptr) : QObject(parent) {
+  explicit MapProtocolServer(QObject *parent = nullptr, bool serverMock = false)
+      : QObject(parent), serverMock_(serverMock) {
     connect(&server_, &QTcpServer::newConnection, this, [this] {
       auto *socket = server_.nextPendingConnection();
       connect(socket, &QTcpSocket::readyRead, this, [this, socket] {
@@ -28,7 +29,8 @@ public:
           if (request.type == QStringLiteral("map.station.search")) {
             const auto origin = request.payload.value(QStringLiteral("origin")).toObject();
             response.payload = {
-                {QStringLiteral("data_source"), QStringLiteral("tencent_live")},
+                {QStringLiteral("provider"), QStringLiteral("tencent")},
+                {QStringLiteral("data_source"), serverMock_ ? QStringLiteral("server_mock") : QStringLiteral("tencent_live")},
                 {QStringLiteral("resolved_origin"),
                  QJsonObject{{QStringLiteral("latitude"), origin.value(QStringLiteral("latitude")).toDouble(22.53)},
                              {QStringLiteral("longitude"), origin.value(QStringLiteral("longitude")).toDouble(113.93)}}},
@@ -37,14 +39,23 @@ public:
                                 {QStringLiteral("address"), QStringLiteral("服务端路 1 号")},
                                 {QStringLiteral("latitude"), 22.54}, {QStringLiteral("longitude"), 113.94},
                                 {QStringLiteral("distance_meters"), 320}}}},
-                {QStringLiteral("warning"), QJsonValue()}};
+                {QStringLiteral("warning"), serverMock_ ? QJsonValue(QJsonObject{
+                    {QStringLiteral("code"), 1410}, {QStringLiteral("name"), QStringLiteral("MAP_SERVER_MOCK")},
+                    {QStringLiteral("message"), QStringLiteral("服务端演示数据")},
+                    {QStringLiteral("retryable"), false}, {QStringLiteral("degraded"), true}})
+                    : QJsonValue(QJsonValue::Null)}};
           } else if (request.type == QStringLiteral("map.route.plan")) {
             response.payload = {
-                {QStringLiteral("data_source"), QStringLiteral("tencent_cache")},
+                {QStringLiteral("provider"), QStringLiteral("tencent")},
+                {QStringLiteral("data_source"), serverMock_ ? QStringLiteral("server_mock") : QStringLiteral("tencent_cache")},
                 {QStringLiteral("distance_meters"), 1250},
                 {QStringLiteral("duration_seconds"), 180},
                 {QStringLiteral("polyline"), QJsonArray{QJsonArray{22.53, 113.93}, QJsonArray{22.54, 113.94}}},
-                {QStringLiteral("warning"), QJsonObject{{QStringLiteral("message"), QStringLiteral("使用服务端缓存")}}}};
+                {QStringLiteral("warning"), serverMock_ ? QJsonValue(QJsonObject{
+                    {QStringLiteral("code"), 1410}, {QStringLiteral("name"), QStringLiteral("MAP_SERVER_MOCK")},
+                    {QStringLiteral("message"), QStringLiteral("服务端演示数据")},
+                    {QStringLiteral("retryable"), false}, {QStringLiteral("degraded"), true}})
+                    : QJsonValue(QJsonValue::Null)}};
           }
           socket->write(encodeFrame(response));
           socket->flush();
@@ -59,6 +70,7 @@ public:
 private:
   QTcpServer server_;
   FrameDecoder decoder_;
+  bool serverMock_{false};
 };
 
 } // namespace
@@ -80,6 +92,8 @@ private slots:
     QCOMPARE(stations.value.size(), 1);
     QCOMPARE(stations.value.first().id, QStringLiteral("42"));
     QCOMPARE(stations.value.first().source, MapSource::Server);
+    QCOMPARE(stations.dataSource, QStringLiteral("tencent_live"));
+    QVERIFY(!stations.warning.isPresent());
 
     MapResult<MapRoute> route;
     service.queryRoute({22.53, 113.93}, {22.54, 113.94}, RouteMode::Walking,
@@ -90,7 +104,9 @@ private slots:
     QCOMPARE(route.value.distanceMeters, qint64(1250));
     QCOMPARE(route.value.durationSeconds, 180);
     QCOMPARE(route.value.polyline.size(), 2);
-    QVERIFY(route.notice.contains(QStringLiteral("缓存")));
+    QCOMPARE(route.dataSource, QStringLiteral("tencent_cache"));
+    QVERIFY(route.notice.isEmpty());
+    QVERIFY(!route.warning.isPresent());
   }
 
   void missingContextFailsWithoutNetwork() {
@@ -102,6 +118,20 @@ private slots:
     QVERIFY(called);
     QVERIFY(!result.ok);
     QCOMPARE(result.error.category, MapErrorCategory::InvalidInput);
+  }
+
+  void serverMockWarningIsStructured() {
+    MapProtocolServer server(nullptr, true);
+    QVERIFY(server.start());
+    ServerMapService service(QStringLiteral("127.0.0.1"), server.port(), 1000);
+    service.setUserId(QStringLiteral("7"));
+    MapResult<QVector<MapPoi>> stations;
+    service.searchNearbyChargingStations({22.53, 113.93}, 1000,
+                                         [&stations](const auto &result) { stations = result; });
+    QTRY_VERIFY_WITH_TIMEOUT(stations.ok, 2000);
+    QCOMPARE(stations.dataSource, QStringLiteral("server_mock"));
+    QCOMPARE(stations.warning.code, 1410);
+    QVERIFY(stations.warning.degraded);
   }
 };
 

@@ -29,11 +29,12 @@ quint16 envPort(quint16 fallback) {
 
 MapErrorCategory categoryForCode(int code) {
   if (code == 1100) return MapErrorCategory::InvalidInput;
+  if (code == 1401) return MapErrorCategory::MissingKey;
   if (code == 1402) return MapErrorCategory::Timeout;
-  if (code == 1403 || code == 1404 || code == 1408) return MapErrorCategory::Network;
-  if (code == 1400 || code == 1401) return MapErrorCategory::MissingKey;
-  if (code == 1405) return MapErrorCategory::Api;
-  if (code == 1406 || code == 1407 || code == 1409) return MapErrorCategory::Parse;
+  if (code == 1403) return MapErrorCategory::Network;
+  if (code == 1400 || code == 1404 || code == 1405 || code == 1406 ||
+      code == 1408 || code == 1410) return MapErrorCategory::Api;
+  if (code == 1407 || code == 1409) return MapErrorCategory::Parse;
   if (code == 1000 || code == 1001 || code == 1002 || code == 1003) return MapErrorCategory::Parse;
   return MapErrorCategory::Network;
 }
@@ -105,14 +106,42 @@ MapError ServerMapService::mapError(int code, const QString &message) {
   return {category, message.isEmpty() ? QStringLiteral("服务端地图暂不可用") : message, retryable, 0, code};
 }
 
-MapSource ServerMapService::sourceFor(const QJsonObject &payload) {
-  return payload.value(QStringLiteral("data_source")).toString() == QStringLiteral("server_mock")
-      ? MapSource::Mock : MapSource::Server;
-}
+bool ServerMapService::readResponseMetadata(const QJsonObject &payload, MapSource *source,
+                                            QString *dataSource, MapWarning *warning) {
+  if (!source || !dataSource || !warning || payload.value(QStringLiteral("provider")).toString() != QStringLiteral("tencent"))
+    return false;
+  const QString value = payload.value(QStringLiteral("data_source")).toString();
+  // `tencent_live` describes the server's upstream result, not a client-side
+  // Tencent page. All server-owned sources stay in the Server presentation
+  // path; the exact provider value is retained separately in dataSource.
+  if (value == QStringLiteral("tencent_live")) *source = MapSource::Server;
+  else if (value == QStringLiteral("tencent_cache") || value == QStringLiteral("tencent_stale")) *source = MapSource::Server;
+  else if (value == QStringLiteral("server_mock")) *source = MapSource::Mock;
+  else return false;
+  *dataSource = value;
 
-QString ServerMapService::warningFor(const QJsonObject &payload) {
-  const auto warning = payload.value(QStringLiteral("warning")).toObject();
-  return warning.value(QStringLiteral("message")).toString();
+  *warning = {};
+  const QJsonValue warningValue = payload.value(QStringLiteral("warning"));
+  if (!warningValue.isNull() && !warningValue.isUndefined()) {
+    if (!warningValue.isObject()) return false;
+    const QJsonObject object = warningValue.toObject();
+    if (!object.value(QStringLiteral("code")).isDouble() ||
+        !object.value(QStringLiteral("name")).isString() ||
+        !object.value(QStringLiteral("message")).isString() ||
+        !object.value(QStringLiteral("retryable")).isBool() ||
+        !object.value(QStringLiteral("degraded")).isBool()) return false;
+    warning->code = object.value(QStringLiteral("code")).toInt();
+    warning->name = object.value(QStringLiteral("name")).toString();
+    warning->message = object.value(QStringLiteral("message")).toString();
+    warning->retryable = object.value(QStringLiteral("retryable")).toBool();
+    warning->degraded = object.value(QStringLiteral("degraded")).toBool();
+    if (warning->code <= 0 || warning->name.isEmpty() || warning->message.isEmpty()) return false;
+  }
+  if (value == QStringLiteral("server_mock"))
+    return warning->code == 1410 && warning->degraded;
+  if (value == QStringLiteral("tencent_stale"))
+    return warning->isPresent() && warning->degraded;
+  return !warning->isPresent();
 }
 
 bool ServerMapService::readCoordinate(const QJsonObject &object, GeoCoordinate *coordinate) {
@@ -147,12 +176,16 @@ void ServerMapService::geocode(const QString &address, GeoCallback callback) {
     const Reply reply = watcher->result(); watcher->deleteLater(); watchers_.removeAll(watcher);
     if (generation != generation_) return;
     if (!reply.ok) { callback(MapResult<GeoCoordinate>::failure(mapError(reply.code, reply.error))); return; }
-    GeoCoordinate coordinate;
+    GeoCoordinate coordinate; MapSource source; QString dataSource; MapWarning warning;
+    if (!readResponseMetadata(reply.payload, &source, &dataSource, &warning)) {
+      callback(MapResult<GeoCoordinate>::failure(mapError(1407, QStringLiteral("服务端地图元数据无效")))); return;
+    }
+    Q_UNUSED(source);
     if (!readCoordinate(reply.payload.value(QStringLiteral("resolved_origin")).toObject(), &coordinate)) {
       callback(MapResult<GeoCoordinate>::failure(mapError(1407, QStringLiteral("服务端返回的定位坐标无效")))); return;
     }
     MapResult<GeoCoordinate> result = MapResult<GeoCoordinate>::success(coordinate);
-    result.notice = warningFor(reply.payload);
+    result.notice = warning.message; result.dataSource = dataSource; result.warning = warning;
     callback(result);
   });
   watcher->setFuture(QtConcurrent::run([host, port, timeout, user, value] {
@@ -175,9 +208,12 @@ void ServerMapService::searchNearbyChargingStations(const GeoCoordinate &center,
     const Reply reply = watcher->result(); watcher->deleteLater(); watchers_.removeAll(watcher);
     if (generation != generation_) return;
     if (!reply.ok) { callback(MapResult<QVector<MapPoi>>::failure(mapError(reply.code, reply.error))); return; }
+    MapSource source; QString dataSource; MapWarning warning;
+    if (!readResponseMetadata(reply.payload, &source, &dataSource, &warning)) {
+      callback(MapResult<QVector<MapPoi>>::failure(mapError(1407, QStringLiteral("服务端地图元数据无效")))); return;
+    }
     const auto array = reply.payload.value(QStringLiteral("stations")).toArray();
     QVector<MapPoi> result;
-    const MapSource source = sourceFor(reply.payload);
     for (const auto &value : array) {
       const auto object = value.toObject(); MapPoi poi;
       poi.id = QString::number(object.value(QStringLiteral("id")).toInteger());
@@ -190,7 +226,7 @@ void ServerMapService::searchNearbyChargingStations(const GeoCoordinate &center,
     if (!array.isEmpty() && result.isEmpty()) { callback(MapResult<QVector<MapPoi>>::failure(mapError(1407, QStringLiteral("服务端站点字段无效")))); return; }
     lastPois_ = result;
     MapResult<QVector<MapPoi>> mapped = MapResult<QVector<MapPoi>>::success(result);
-    mapped.notice = warningFor(reply.payload);
+    mapped.notice = warning.message; mapped.dataSource = dataSource; mapped.warning = warning;
     callback(mapped);
   });
   watcher->setFuture(QtConcurrent::run([host, port, timeout, user, center, radiusMeters] {
@@ -222,7 +258,11 @@ void ServerMapService::queryRoute(const GeoCoordinate &origin, const GeoCoordina
     const Reply reply = watcher->result(); watcher->deleteLater(); watchers_.removeAll(watcher);
     if (generation != generation_) return;
     if (!reply.ok) { callback(MapResult<MapRoute>::failure(mapError(reply.code, reply.error))); return; }
-    MapRoute route; route.mode = mode; route.source = sourceFor(reply.payload);
+    MapSource source; QString dataSource; MapWarning warning;
+    if (!readResponseMetadata(reply.payload, &source, &dataSource, &warning)) {
+      callback(MapResult<MapRoute>::failure(mapError(1407, QStringLiteral("服务端地图元数据无效")))); return;
+    }
+    MapRoute route; route.mode = mode; route.source = source;
     route.distanceMeters = reply.payload.value(QStringLiteral("distance_meters")).toInteger(-1);
     route.durationSeconds = reply.payload.value(QStringLiteral("duration_seconds")).toInt(-1);
     const auto line = reply.payload.value(QStringLiteral("polyline")).toArray();
@@ -237,7 +277,8 @@ void ServerMapService::queryRoute(const GeoCoordinate &origin, const GeoCoordina
       callback(MapResult<MapRoute>::failure(mapError(1407, QStringLiteral("服务端路线字段无效")))); return;
     }
     route.summary = QStringLiteral("服务端地图 %1 路线").arg(mode == RouteMode::Driving ? QStringLiteral("驾车") : QStringLiteral("步行"));
-    MapResult<MapRoute> mapped = MapResult<MapRoute>::success(route); mapped.notice = warningFor(reply.payload); callback(mapped);
+    MapResult<MapRoute> mapped = MapResult<MapRoute>::success(route);
+    mapped.notice = warning.message; mapped.dataSource = dataSource; mapped.warning = warning; callback(mapped);
   });
   watcher->setFuture(QtConcurrent::run([host, port, timeout, user, station, origin, mode] {
     return request(host, port, timeout, QStringLiteral("map.route.plan"),

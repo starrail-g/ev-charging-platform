@@ -104,7 +104,7 @@ The original teacher task labels basic real navigation as S1 and optimization/co
 - [x] 01 baseline/window/navigation/session
 - [x] 02 phone-only login validation and Mock failures
 - [x] 03 station, detail and pile status/empty/error states
-- [x] 04 Tencent Maps URL path and labeled offline route fallback
+- [x] 04 Server map result path and explicitly labelled Mock/offline mode
 - [x] 05 reserve → start → stop → settle Mock order flow with duplicate guards
 - [x] 06 service adapter and deterministic Mock data
 - [x] 07 loading/error/empty/unauthorized feedback

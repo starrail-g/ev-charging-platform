@@ -41,14 +41,28 @@ struct MapError {
   int apiStatus{0};
 };
 
+struct MapWarning {
+  int code{0};
+  QString name;
+  QString message;
+  bool retryable{false};
+  bool degraded{false};
+
+  bool isPresent() const { return code != 0; }
+};
+
 template <typename T>
 struct MapResult {
   bool ok{false};
   T value{};
   MapError error{};
   QString notice;
-  static MapResult success(const T &value, const QString &notice = {}) { return {true, value, {}, notice}; }
-  static MapResult failure(const MapError &error) { return {false, {}, error, {}}; }
+  QString dataSource;
+  MapWarning warning{};
+  static MapResult success(const T &value, const QString &notice = {}) {
+    return {true, value, {}, notice, {}, {}};
+  }
+  static MapResult failure(const MapError &error) { return {false, {}, error, {}, {}, {}}; }
 };
 
 } // namespace ev

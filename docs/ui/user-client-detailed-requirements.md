@@ -214,7 +214,7 @@ bash scripts/tencent_poi_probe.sh
 - 在 VM 图形会话 `DISPLAY=:0` 中，真实 `QWebEngineView` 成功加载腾讯 GL JS、一个测试标记和一条固定折线；真实地图套件 11 passed、0 failed。
 - `offscreen` 模式没有可用 WebGL 上下文，因此只用于离线降级烟测，不作为真实 GL 地图验收环境。
 - 测试结束后已清除环境变量；仓库、日志和文档均不保存测试凭据。该凭据曾在仓库外明文披露，正式演示前必须轮换并复跑脱敏检查。
-- 后续人工界面复核发现该测试 Key 达到当日调用上限，腾讯返回 `status=121`。客户端已将其修正为“今日调用额度已用完”，不再误报为“权限不足”，并继续进入明确的 Mock/离线回退。
+- 后续人工界面复核发现该测试 Key 达到当日调用上限，腾讯返回 `status=121`。服务端应将其映射为配额/限流错误；Socket 客户端显示服务端错误或服务端缓存/备用结果，不在本地伪造腾讯结果。
 - 初始 420×760、可按 21:38 比例缩放的窗口中的地图页已改为可滚动内容、紧凑路线控制和单一服务端结果/离线示意图，避免 WebEngine、POI、业务站点及状态文本互相挤压或重复展示。
 
 ## 九、GitHub 相似项目调研
@@ -233,7 +233,7 @@ bash scripts/tencent_poi_probe.sh
 
 - 用户端 Qt Widgets + Mock 主流程：已实现并在 Ubuntu 虚拟机通过构建和 QtTest；
 - 站点、电桩、预约、充电、结算和历史记录：Mock 可演示；
-- 腾讯地图服务端契约：已由 PR #15 冻结，运行时实现和 Schema v0.4 仍待 B 完成；
+- 腾讯地图服务端契约：PR #15 已冻结，PR #19 已在 B 分支实现 WebService、Schema v0.4、审计和模拟网关，等待合并到 `main` 后进行真实 Socket 联调；
 - 用户端地图：已新增 `ServerMapService`，只通过 Protocol v1 `map.station.search`/`map.route.plan` 获取站点、路线和降级来源；地图位置数据不参与订单和计费，业务字段仍通过 `IUserService` 获取；
 - QWebEngineView：当前只渲染本地离线/服务端结果视图，不注入腾讯 Key、不加载腾讯 GL JS；
 - 客户端协议假服务测试已新增；Socket/Mock 严格隔离、管理端同源日间主题和 21:38 可缩放窗口的 Ubuntu qmake6 回归证据待本次 VM 验证后登记。

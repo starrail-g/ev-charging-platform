@@ -15,8 +15,8 @@
 - `A-S1-02` deterministic Qt Widgets Mock user flow: complete.
 - `A-S1-03` Socket Protocol v1 user adapter: complete in the merged baseline for the existing user business operations; final cross-module evidence remains part of `A-S1-04`.
 - `A-S1-04` coordinated server/user/admin regression and clean-environment delivery: pending.
-- `A-S2-01` server-owned map integration: client-side adaptation is implemented in this worktree; B's server runtime, Tencent credential handling, cache/audit, Schema v0.4 and pile simulation remain pending.
-- User-client UI follow-up: Socket and Mock modes are strictly isolated, the visual system now matches the admin day theme, and the window preserves a resizable 21:38 mobile ratio. VM regression evidence is pending.
+- `A-S2-01` server-owned map integration: client-side adaptation is implemented in this worktree. B's PR #19 contains the matching Tencent HTTP, Schema v0.4, cache/audit and pile-simulation runtime; it remains pending until that PR is merged and deployed for real Socket integration.
+- User-client UI follow-up: Socket and Mock modes are strictly isolated, the visual system now matches the admin day theme, and the window preserves a resizable 21:38 mobile ratio. VM qmake6 regression evidence is recorded below.
 - `A-S2-02` analysis result presentation and `A-S2-03` final regression/materials: pending the frozen B/C contracts and final integrated build.
 
 ## User-client map boundary
@@ -46,10 +46,10 @@ QT_QPA_PLATFORM=offscreen ./ev-user-client-tests -txt
 
 - User-client application qmake build: PASS.
 - Existing user-client QtTest: `11 passed, 0 failed, 4 skipped`; skipped cases require a live B service.
-- Server map adapter fake-Protocol test: `4 passed, 0 failed, 0 skipped`.
-- Map adapter/WebEngine test: `10 passed, 0 failed, 1 skipped`; WebEngine offline smoke passed, real Tencent integration is intentionally skipped because Tencent calls are server-owned.
+- Server map adapter fake-Protocol test: `5 passed, 0 failed, 0 skipped`, including structured `server_mock`/1410 metadata.
+- Map adapter/WebEngine test: `11 passed, 0 failed, 1 skipped`; WebEngine offline smoke passed, real Tencent integration is intentionally skipped because Tencent calls are server-owned.
 - Application startup under `QT_QPA_PLATFORM=offscreen` and WebEngine no-sandbox flags remained alive for the smoke window; no crash was observed.
-- UI regression in a clean VM snapshot: qmake6 app build PASS; user tests `11 passed, 0 failed, 4 skipped`; map tests `11 passed, 0 failed, 1 skipped`; server-map tests `4 passed, 0 failed`. Socket login window showed the day theme with demo/Mock hints hidden. X11 resize checks measured 315 x 570 and 399 x 722, preserving the 21:38 ratio.
+- UI regression in a clean VM snapshot: qmake6 app build PASS; user tests `11 passed, 0 failed, 4 skipped`; map tests `11 passed, 0 failed, 1 skipped`; server-map tests `5 passed, 0 failed`. Socket login window showed the day theme with demo/Mock hints hidden. X11 resize checks measured 315 x 570 and 399 x 722, preserving the 21:38 ratio.
 - Local `git diff --check`: PASS. No real key, local `.env`, runtime database, log, Makefile or build output is part of the intended commit.
 
 ## Open work and risks

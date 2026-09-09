@@ -527,7 +527,7 @@ private:
         const MapPoi detail = result.ok ? result.value : poi;
         mapStatus_->setText(QStringLiteral("地图 POI：%1\n%2\n坐标：%3,%4\n该 POI 未关联业务桩数据，请从业务站点列表选择目标。%5%6")
             .arg(detail.title, detail.address).arg(detail.coordinate.latitude).arg(detail.coordinate.longitude)
-            .arg(result.notice.isEmpty() ? QString() : QStringLiteral("\n%1").arg(mapDisplayText(result.notice)))
+            .arg(result.notice.isEmpty() ? QString() : QStringLiteral("\n%1").arg(mapResultNotice(result)))
             .arg(result.ok ? QString() : QStringLiteral("\n详情服务不可用，显示搜索结果。")));
       });
       return;
@@ -833,10 +833,11 @@ private:
       if (requestGeneration != mapRequestGeneration_ || sessionGeneration != session_.generation()) return;
       if (!result.ok) { mapStatus_->setText(QStringLiteral("定位失败：%1").arg(result.error.userMessage)); return; }
       mapOrigin_ = result.value;
-      mapStatus_->setText(result.notice.isEmpty()
+      const QString visibleNotice = mapResultNotice(result);
+      mapStatus_->setText(visibleNotice.isEmpty()
           ? QStringLiteral("定位成功：%1,%2\n正在查询附近充电站 POI…").arg(mapOrigin_.latitude).arg(mapOrigin_.longitude)
-          : QStringLiteral("%1；正在查询附近站点…").arg(mapDisplayText(result.notice)));
-      queryNearbyPois(mapOrigin_, requestGeneration, sessionGeneration, result.notice);
+          : QStringLiteral("%1；正在查询附近站点…").arg(visibleNotice));
+      queryNearbyPois(mapOrigin_, requestGeneration, sessionGeneration, visibleNotice);
     });
   }
 
@@ -847,11 +848,11 @@ private:
         [this, requestGeneration, sessionGeneration, priorNotice](const MapResult<QVector<MapPoi>> &result) {
       if (requestGeneration != mapRequestGeneration_ || sessionGeneration != session_.generation()) return;
       if (!result.ok) { mapStatus_->setText(QStringLiteral("附近 POI 查询失败：%1").arg(result.error.userMessage)); return; }
-      const QString notice = !result.notice.isEmpty() ? result.notice : priorNotice;
+      const QString resultNotice = mapResultNotice(result);
+      const QString notice = !resultNotice.isEmpty() ? resultNotice : priorNotice;
       const QString status = result.value.isEmpty() ? QStringLiteral("附近暂无充电站 POI")
           : QStringLiteral("已加载 %1 个地图 POI").arg(result.value.size());
-      const QString visibleNotice = mapDisplayText(notice);
-      renderMapPois(result.value, visibleNotice.isEmpty() ? status : QStringLiteral("%1；%2").arg(visibleNotice, status));
+      renderMapPois(result.value, notice.isEmpty() ? status : QStringLiteral("%1；%2").arg(notice, status));
     });
   }
 
@@ -895,7 +896,7 @@ private:
       if (requestGeneration != mapRequestGeneration_ || sessionGeneration != session_.generation()) return;
       if (!result.ok) { mapStatus_->setText(QStringLiteral("起点定位失败：%1").arg(result.error.userMessage)); return; }
       mapOrigin_ = result.value;
-      queryRouteFromCoordinates(mapOrigin_, requestGeneration, sessionGeneration, result.notice);
+      queryRouteFromCoordinates(mapOrigin_, requestGeneration, sessionGeneration, mapResultNotice(result));
     });
   }
 
@@ -907,7 +908,8 @@ private:
     mapService_->queryRoute(origin, destination, mode, [this, requestGeneration, sessionGeneration, priorNotice](const MapResult<MapRoute> &result) {
       if (requestGeneration != mapRequestGeneration_ || sessionGeneration != session_.generation()) return;
       if (!result.ok) { mapStatus_->setText(QStringLiteral("路线查询失败：%1").arg(result.error.userMessage)); return; }
-      const QString notice = mapDisplayText(!result.notice.isEmpty() ? result.notice : priorNotice);
+      const QString resultNotice = mapResultNotice(result);
+      const QString notice = !resultNotice.isEmpty() ? resultNotice : priorNotice;
       if (result.value.source != MapSource::Tencent) mapView_->showOffline(notice);
       mapView_->setRoute(result.value);
       const QString source = socketMode_ && result.value.source == MapSource::Mock
@@ -927,6 +929,15 @@ private:
     text.replace(QRegularExpression(QStringLiteral("mock"), QRegularExpression::CaseInsensitiveOption),
                  QStringLiteral("备用数据"));
     return text;
+  }
+
+  template <typename T>
+  QString mapResultNotice(const MapResult<T> &result) const {
+    if (!socketMode_ || !result.warning.isPresent()) return mapDisplayText(result.notice);
+    if (result.warning.code == 1410) return QStringLiteral("服务端备用数据");
+    if (result.warning.code == 1403 && result.warning.degraded)
+      return QStringLiteral("地图上游暂不可用，当前展示服务端缓存结果");
+    return mapDisplayText(result.warning.message);
   }
 
   void updateOrderButtons() {
