@@ -1,5 +1,6 @@
 #include "ev_protocol/frame_codec.h"
 #include "ev_database/database.h"
+#include "map/map_service.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -70,6 +71,7 @@ public:
                               QObject *parent = nullptr)
         : QObject(parent), socket_(socket),
           database_(std::move(databasePath), std::move(schemaPath), std::move(seedPath)),
+          mapService_(&database_),
           adminSessions_(adminSessions)
     {
         socket_->setParent(this);
@@ -114,6 +116,10 @@ private:
             handleStationList(request);
         } else if (request.type == QStringLiteral("pile.list")) {
             handlePileList(request);
+        } else if (request.type == QStringLiteral("map.station.search")) {
+            handleMapStationSearch(request);
+        } else if (request.type == QStringLiteral("map.route.plan")) {
+            handleMapRoutePlan(request);
         } else if (request.type == QStringLiteral("order.active.get")) {
             handleActiveOrder(request);
         } else if (request.type == QStringLiteral("order.history.list")) {
@@ -137,6 +143,8 @@ private:
             handleAdministratorUserList(request);
         } else if (request.type == QStringLiteral("admin.user.status.set")) {
             handleAdministratorUserStatus(request);
+        } else if (request.type == QStringLiteral("admin.map.audit.list")) {
+            handleMapAuditList(request);
         } else if (request.type == QStringLiteral("reservation.create")) {
             handleReservationCreate(request);
         } else if (request.type == QStringLiteral("reservation.confirm")) {
@@ -359,6 +367,84 @@ private:
             sendDatabaseError(request.id, kind, error, QStringLiteral("list piles failed")); return;
         }
         sendResponse(request, QStringLiteral("pile.list.result"), QJsonObject{{QStringLiteral("piles"), piles}});
+    }
+
+    void handleMapStationSearch(const Message &request)
+    {
+        qint64 userId = 0;
+        if (!positiveId(request.payload.value(QStringLiteral("user_id")), &userId)) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("user_id must be a positive integer"));
+            return;
+        }
+        QJsonObject user;
+        QString userError;
+        ErrorKind userKind = ErrorKind::None;
+        if (!database_.getUserProfile(userId, &user, &userError, &userKind)) {
+            sendDatabaseError(request.id, userKind, userError,
+                              QStringLiteral("map search user lookup failed"));
+            return;
+        }
+        QJsonObject result;
+        ev::server::map::MapFailure failure;
+        if (!mapService_.stationSearch(request.id, userId, request.payload, &result, &failure)) {
+            sendError(request.id, failure.code, failure.message);
+            return;
+        }
+        sendResponse(request, QStringLiteral("map.station.search.result"), result);
+    }
+
+    void handleMapRoutePlan(const Message &request)
+    {
+        qint64 userId = 0;
+        if (!positiveId(request.payload.value(QStringLiteral("user_id")), &userId)) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("user_id must be a positive integer"));
+            return;
+        }
+        QJsonObject user;
+        QString userError;
+        ErrorKind userKind = ErrorKind::None;
+        if (!database_.getUserProfile(userId, &user, &userError, &userKind)) {
+            sendDatabaseError(request.id, userKind, userError,
+                              QStringLiteral("map route user lookup failed"));
+            return;
+        }
+        QJsonObject result;
+        ev::server::map::MapFailure failure;
+        if (!mapService_.routePlan(request.id, userId, request.payload, &result, &failure)) {
+            sendError(request.id, failure.code, failure.message);
+            return;
+        }
+        sendResponse(request, QStringLiteral("map.route.plan.result"), result);
+    }
+
+    void handleMapAuditList(const Message &request)
+    {
+        const QJsonValue operation = request.payload.value(QStringLiteral("operation"));
+        const QJsonValue resultStatus = request.payload.value(QStringLiteral("result_status"));
+        const QJsonValue pageToken = request.payload.value(QStringLiteral("page_token"));
+        qint64 limit = 50;
+        if (!hasOnlyFields(request.payload, {QStringLiteral("token"), QStringLiteral("operation"),
+                                             QStringLiteral("result_status"), QStringLiteral("page_token"),
+                                             QStringLiteral("limit")})
+            || (!operation.isUndefined() && !operation.isString())
+            || (!resultStatus.isUndefined() && !resultStatus.isString())
+            || (!pageToken.isUndefined() && !pageToken.isNull() && !pageToken.isString())
+            || (request.payload.contains(QStringLiteral("limit"))
+                && (!positiveId(request.payload.value(QStringLiteral("limit")), &limit) || limit > 100))) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("map audit filters are invalid"));
+            return;
+        }
+        QJsonObject result;
+        ev::server::map::MapFailure failure;
+        if (!mapService_.listAudit(operation.toString(), resultStatus.toString(),
+                                   pageToken.toString(), limit, &result, &failure)) {
+            sendError(request.id, failure.code, failure.message);
+            return;
+        }
+        sendResponse(request, QStringLiteral("admin.map.audit.list.result"), result);
     }
 
     void handleActiveOrder(const Message &request)
@@ -696,18 +782,29 @@ private:
     void sendResponse(const Message &request, const QString &type, const QJsonObject &payload)
     {
         if (!responseFitsFrameLimit(request.id, type, payload)) {
-            sendError(request.id, ErrorCode::InternalError,
+            const ErrorCode sizeCode = type.startsWith(QStringLiteral("map."))
+                || type.startsWith(QStringLiteral("admin.map."))
+                ? ErrorCode::MapResponseTooLarge : ErrorCode::InternalError;
+            sendError(request.id, sizeCode,
                       QStringLiteral("response exceeds protocol payload limit"));
             return;
         }
-        socket_->write(encodeFrame(Message{kProtocolVersion, request.id, type, payload}));
+        const QByteArray frame = encodeFrame(Message{kProtocolVersion, request.id, type, payload});
+        if (frame.isEmpty()) {
+            const ErrorCode sizeCode = type.startsWith(QStringLiteral("map."))
+                || type.startsWith(QStringLiteral("admin.map."))
+                ? ErrorCode::MapResponseTooLarge : ErrorCode::InternalError;
+            sendError(request.id, sizeCode,
+                      QStringLiteral("response exceeds protocol payload limit"));
+            return;
+        }
+        socket_->write(frame);
     }
 
     static bool responseFitsFrameLimit(const QString &id, const QString &type,
                                        const QJsonObject &payload)
     {
-        return QJsonDocument(Message{kProtocolVersion, id, type, payload}.toJson())
-                   .toJson(QJsonDocument::Compact).size() <= kMaxPayloadBytes;
+        return payloadFitsLimit(Message{kProtocolVersion, id, type, payload});
     }
 
     void sendError(const QString &id, ErrorCode code, const QString &message)
@@ -725,6 +822,7 @@ private:
     QTcpSocket *socket_;
     FrameDecoder decoder_;
     ev::database::Database database_;
+    ev::server::map::MapService mapService_;
     AdminSessionStore *adminSessions_;
 };
 

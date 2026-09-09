@@ -2,7 +2,7 @@
 
 ## Scope and conventions
 
-`database/schema/schema.sql` defines SQLite schema version `0.3` for the
+`database/schema/schema.sql` defines SQLite schema version `0.4` for the
 server-side source of truth. The schema is deliberately small enough for the
 stage-I demo while retaining the entities required by the requirements and
 the backend traceability matrix.
@@ -14,7 +14,9 @@ the backend traceability matrix.
 - `schema_meta.schema_version` identifies the schema. Existing v0.1 databases
   must apply `database/migrations/001_v0.1_to_v0.2.sql`, and deployed v0.2
   databases must apply `database/migrations/002_v0.2_to_v0.3.sql`, before use.
-- `database/seeds/dev.sql` is deterministic and may be run repeatedly.
+- `database/seeds/dev.sql` is deterministic and may be run repeatedly. A v0.3
+  database is upgraded transactionally by migration `003_v0.3_to_v0.4.sql` or
+  by the server's first-open compatibility path.
 
 ## Entities
 
@@ -178,11 +180,11 @@ roll back instead of being silently accepted. Run `PRAGMA foreign_key_check`
 after the migration; a successful check returns no rows. Do not pipe the SQL
 file into an executor configured to continue after errors.
 
-## Map and simulation schema boundary (v0.4, pending implementation)
+## Map and simulation schema boundary (v0.4)
 
 The server-side Tencent Maps and pile simulation contract is defined in
 [`map-service-protocol.md`](map-service-protocol.md). The current repository
-schema remains v0.3 until the migration below is implemented and validated.
+schema is now v0.4; the migration below is implemented and validated.
 
 The v0.4 migration must be one transaction and preserve all valid v0.3 rows:
 

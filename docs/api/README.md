@@ -33,8 +33,9 @@ token 在服务端进程内保存，服务重启后失效。建站、重启桩�
 `administrator_id`，且必须与 token 对应的管理员一致。
 
 地图扩展（`map.station.search`、`map.route.plan`、
-`admin.map.audit.list`）目前是待实现的服务端契约，不属于当前运行时能力；完整
-字段、分页、幂等、缓存、1 MiB 响应保护和独立云端桩模拟器边界见
+`admin.map.audit.list`）已在服务端提供确定性 Mock 运行路径；生产 Tencent
+HTTP 适配器和私有 mTLS 模拟器传输仍未接入。完整字段、分页、幂等、缓存、
+1 MiB 响应保护和独立云端桩模拟器边界见
 [`docs/architecture/map-service-protocol.md`](../architecture/map-service-protocol.md)。
 
 ## 登录与查询

@@ -2,10 +2,12 @@
 
 ## Status and relationship to the current mainline
 
-This document is the corrected, implementation-ready extension of Socket
-Protocol v1 proposed by PR #14. It describes a target capability; it does not
-claim that the handlers, Schema v0.4 migration, or simulator are already
-implemented.
+This document is the corrected extension of Socket Protocol v1 proposed by
+PR #14. Schema v0.4, deterministic generation, map-only cache/audit
+persistence, the three public handlers on the explicit server-mock path, and
+the internal simulator proposal boundary are implemented. Production Tencent
+HTTP, event-loop worker isolation, cache-miss coalescing, and the private mTLS
+simulator transport remain deployment work.
 
 The existing user, order, wallet, administrator, and `admin.pile.list`
 contracts remain authoritative. PR #13 has now been merged to `main`

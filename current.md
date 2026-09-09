@@ -4,20 +4,20 @@
 
 - Project: 东软电动汽车充电桩应用管理平台。
 - Current stage: 第一阶段最小闭环开发；真实截止时间为 2026-09-10 24:00。第二阶段截止 2026-09-17 24:00，个人报告截止 2026-09-18 24:00。
-- This file was last refreshed on 2026-09-08 (PR #13 is now merged to `main` as `f3bee707`; map-service contract and B plan refreshed); it was previously updated while processing PR #11 review round 3 (restart button state / Mock same-state semantics / inactive-station scope decision / has_data). The requirements source of truth is `docs/requirements/requirements-matrix.md`. 根目录的项目说明书 `.doc`、需求矩阵 `.xls` 和 `三人分工.md` 仅为本地参考文件，不上传、不提交；仓库内 `docs/` Markdown 才是正式项目材料。
+- This file was refreshed on 2026-09-09 while implementing the B map-service plan on the PR #13 baseline (`main` `f3bee707`). The requirements source of truth is `docs/requirements/requirements-matrix.md`. 根目录的项目说明书 `.doc`、需求矩阵 `.xls` 和 `三人分工.md` 仅为本地参考文件，不上传、不提交；仓库内 `docs/` Markdown 才是正式项目材料。
 
 ## Architecture and boundaries
 
 - `apps/user-client` (A): Qt user UI, session state, station/pile discovery, navigation entry, reservation–charging–billing–settlement interaction, profile and wallet. It never accesses runtime SQLite directly.
 - `apps/admin-client` and `dashboard` (C): management UI and ECharts presentation. They consume server/provided data and do not define database or Socket rules.
-- `server`, `libs/protocol`, `libs/database`, and `database` (B): Socket, authentication, business/state validation, transactions, concurrency and SQLite persistence. B also owns the pending server-side Tencent Maps contract, Schema v0.4, map cache/audit, station import, pile generation, and the authoritative simulator gateway.
+- `server`, `libs/protocol`, `libs/database`, and `database` (B): Socket, authentication, business/state validation, transactions, concurrency and SQLite persistence. B now owns Schema v0.4, deterministic map Mock/cache/audit, station import, pile generation, and the internal authoritative simulator gateway; production Tencent HTTP and private mTLS transport remain pending.
 - `ml` (B/C, S2): 1/6/24-hour load and idle-pile/peak prediction, low-congestion recommendation, load warning, and a callable model-service boundary.
 - Mandatory build protocol: all Qt/C++ modules must use `qmake6`; CMake is forbidden as a build, test, acceptance, or release path. See `docs/meetings/build-system-protocol-2026-09-02.md`.
-- B provides SQLite schema v0.3, deterministic seed/migration, protocol v1 framing/envelope/error codes, and server handlers for login, profile read/update, wallet recharge, station/pile queries, active/history orders, reservation, charging and settlement. Lifecycle writes use `BEGIN IMMEDIATE`, request-ID replay records, frozen-user checks, direct idle-pile charging and settlement rollback paths.
+- B provides SQLite schema v0.4 (including transactional v0.3 upgrade), deterministic seed/migration, protocol v1 framing/envelope/error codes, and server handlers for login, profile read/update, wallet recharge, station/pile queries, active/history orders, reservation, charging and settlement. Lifecycle writes use `BEGIN IMMEDIATE`, request-ID replay records, frozen-user checks, direct idle-pile charging and settlement rollback paths; imported/simulated station snapshots and pile status events are persisted.
 - A user client is a deterministic Qt Widgets + Mock implementation with an opt-in real `SocketUserService` (see A-S1-03 below). A retains Mock/offline fallback until the real Socket adapter is verified end-to-end.
 - C admin client has a qmake shell, repository boundary, Mock data source, login flow and overview states, the 9/4 management action batch (C-S1-005 pile restart / C-S1-007 user freeze-unfreeze), and a local Socket adapter layer (`SocketAdminRepository` + `socketparse`, fake-server tested on Windows and the Ubuntu VM; Mock remains the default via `EV_ADMIN_DATA_SOURCE` until the gate). The phase-1 batch is merged to `main` through PR #11; PR #13 subsequently merged the full-scope, cursor-paged `admin.pile.list` implementation.
 - The clean-database server path can load `EV_DATABASE_SEED_PATH` once during initial creation; existing databases are not reseeded.
-- The corrected PR #14 contract is documented in `docs/architecture/map-service-protocol.md`; it preserves the current `admin.pile.list` cursor/1 MiB contract and adds bounded paging, explicit map idempotency, canonical map errors, and an independent cloud `pile-simulator` proposal boundary. Review follow-up now requires map caches to exclude business pile snapshots, distinguishes same-tick transport retry from new-tick stale-conflict recomputation, and fixes cross-language deterministic generator vectors. It is documentation only; no map runtime or Schema v0.4 code exists yet.
+- The corrected PR #14 contract is documented in `docs/architecture/map-service-protocol.md`; it preserves the current `admin.pile.list` cursor/1 MiB contract and adds bounded paging, explicit map idempotency, canonical map errors, and an independent cloud `pile-simulator` proposal boundary. The deterministic `EV_MAP_SERVER_MOCK=1` handlers, map-only cache with live SQLite aggregation, audit pagination, Schema v0.4, pile generator, and internal gateway are implemented. Production Tencent HTTP, asynchronous worker isolation, cache-miss coalescing, retention cleanup, and private mTLS transport remain open.
 
 ## Current status
 
@@ -45,7 +45,7 @@
 
 ## Validation and evidence
 
-- Ubuntu qmake6 (Qt 6.2.4) server build and real-server `admin.py`/`smoke.py`/`concurrency.py` regression pass; admin-client QtTest build and suites are green: `tst_ui` 24, `tst_launchsmoke` 6, `tst_loginflow` 7, `tst_socketparse` 10, `tst_socketadapter` 16 (including cursor-page aggregation and 1 MiB oversized-row handling). User-client QtTest coverage and GUI startup remain separate desktop/VM checks.
+- Ubuntu qmake6 (Qt 6.2.4) server build and real-server `admin.py`/`smoke.py`/`concurrency.py` regression pass on the pre-map baseline; the new server build, `server/tests/map.py` mock/cache/audit regression, `server/tests/simulation_gateway.pro` direct gateway test, protocol tests, database schema tests, and Python simulator tests pass. Admin-client QtTest suites remain green (`tst_ui` 24, `tst_launchsmoke` 6, `tst_loginflow` 7, `tst_socketparse` 10, `tst_socketadapter` 16). User-client GUI evidence remains a separate desktop/VM check.
 - C phase-1 batch is green on Windows and Ubuntu VM identically: tst_ui 24 / tst_launchsmoke 6 / tst_loginflow 7 / tst_socketparse 10 / tst_socketadapter 16 (9/7 review round 3: restart button state / Mock same-state semantics / admin.pile.list full-scope fetchPiles / has_data mapping; sa/sp counts updated after new cases). Web dashboard: node 35 + serve `--check` green.
 - C-S1-001/002 复验通过并关闭（迁移原子性三场景 / 同批坏帧保留好帧），见 `docs/release/defect-log.md`。
 - Before each commit/PR, scan tracked content for credentials and inspect `git diff --check`; only placeholders may appear in `config/example.env`.
@@ -54,9 +54,9 @@
 
 - `A-S1-04`: coordinated final regression, GUI evidence and clean-environment delivery (2026-09-07 gate and 09-10 integration deadline).
 - C: PR #11 三轮评审修复和 PR #13 的 `admin.pile.list` 修复已合入当前 `main`（`f3bee707`）；剩余 = 9/8–9/10 release materials and clean-environment evidence（`docs/release/stage1-checklist.md`）。
-- B (owned): 原 admin.* handlers 通过 PR #12 合入 `main`，全量桩库存 `admin.pile.list` 通过 PR #13 合入当前 `main`；后续 B 负责地图契约、Schema v0.4、缓存审计、站点导入、模拟器网关和云端模拟器集成。
+- B (owned): 原 admin.* handlers 通过 PR #12 合入 `main`，全量桩库存 `admin.pile.list` 通过 PR #13 合入当前 `main`；当前分支已落地地图契约的 v0.4/Mock/cache/audit/import/generator/gateway 主体。后续优先级是生产 Tencent adapter、私有 mTLS listener、异步 worker、并发 miss 合并、清理任务和最终 A/C 联调。
 - Open technical item: move slow database work off the Socket event-loop thread, or define a bounded worker/lock strategy (B-owned).
-- B map work is planned in `docs/role-b-map-service-plan.md`: protocol/size guard → v0.4 migration → Tencent/cache/audit → station/pile import → map handlers → simulator gateway/cloud simulator → end-to-end validation. The cloud simulator must never write SQLite directly; the server remains the sole business-state writer.
+- B map work is tracked in `docs/role-b-map-service-plan.md`: protocol/size guard → v0.4 migration → map Mock/cache/audit → station/pile import → handlers → simulator gateway/cloud simulator → validation. The cloud simulator never writes SQLite directly; the server remains the sole business-state writer.
 - S2 intelligent-analysis chain: data preparation → model-service contract → predictions/recommendation/warning → B service adaptation → C display → integrated validation. It must not block the S1 basic charging loop.
 
 ## Collaboration and security rules
@@ -68,6 +68,7 @@
 
 ## Recent history
 
+- 2026-09-09：在 `feature/b-map-service` 基于 main `f3bee707` 落地 Schema v0.4、确定性地图 Mock/cache/audit、站点导入与桩生成、模拟器内部 gateway；新增地图 Socket 回归和 gateway qmake6 测试。普通缓存命中重新聚合 SQLite 桩快照，request replay 保留历史响应；审计分页游标固定为 `created_at + id`。
 - B Schema v0.3 protocol/database foundation and profile/wallet endpoints are merged; its smoke and concurrency suites cover transaction rollback, replay, lifecycle, frozen policy and completed-order history. The pile-uniqueness migration `002_v0.2_to_v0.3.sql` handles already-deployed v0.2 databases (C re-verified 2026-09-04).
 - A user-client Mock baseline and opt-in Socket adapter are implemented; PR #9 (P1 follow-up) merged 2026-09-05 as `e577baa`.
 - PR #8 (`994e5ff`, 2026-09-04) restored the unified admin/dashboard UI (reverting PR #7's rollback of PR #6) plus the A-02/A-04/A-06/A-07 gaps, P2-01 cleanup and the AdminRepository contract-to-wire mapping doc.
@@ -82,4 +83,4 @@
 - `runService()` captures the auth generation and user ID, so callbacks after logout/account switching are discarded; station/pile request generations still reject older query results, and pile callbacks also verify the selected station ID.
 - Frozen users may read data and perform reservation cancellation, charging stop and settlement, but UI controls for reservation creation/confirmation, charging start/direct start and wallet recharge are disabled.
 - An optional discard callback restores transient UI state such as the recharge button when an in-flight request is invalidated.
-- Compatibility baseline: current remote `main` is `f3bee707`; it includes PR #11, PR #12, and PR #13. The map-service documents in this PR target that baseline; Schema v0.4 and map runtime remain pending.
+- Compatibility baseline: current remote `main` is `f3bee707`; it includes PR #11, PR #12, and PR #13. This feature branch targets that baseline and contains the map runtime/documentation changes described above; do not claim production Tencent/mTLS/async capabilities until separately implemented.

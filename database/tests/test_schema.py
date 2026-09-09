@@ -17,7 +17,7 @@ MIGRATION = (
 MIGRATION_V03 = (
     ROOT / "database/migrations/002_v0.2_to_v0.3.sql"
 ).read_text(encoding="utf-8")
-V02_SCHEMA = SCHEMA.replace("schema_version', '0.3'", "schema_version', '0.2'")
+V02_SCHEMA = SCHEMA.replace("schema_version', '0.4'", "schema_version', '0.2'")
 V02_SCHEMA = V02_SCHEMA.replace(
     "WHERE status IN ('pending_reservation', 'reserved', 'charging');",
     "WHERE status IN ('pending_reservation', 'reserved', 'charging', 'pending_settlement');",
@@ -39,7 +39,31 @@ V02_SCHEMA = re.sub(
     "",
     V02_SCHEMA,
 )
-V02_FIXTURE = V02_SCHEMA + "\n" + SEED
+# Remove v0.4-only columns and tables from the deployed-v0.2 fixture.
+V02_SCHEMA = re.sub(
+    r"\nCREATE UNIQUE INDEX IF NOT EXISTS ux_stations_provider_poi.*?\n    WHERE provider_poi_id IS NOT NULL;",
+    "",
+    V02_SCHEMA,
+    flags=re.DOTALL,
+)
+V02_SCHEMA = V02_SCHEMA.replace(
+    "    provider TEXT NOT NULL DEFAULT 'internal'\n        CHECK (length(trim(provider)) > 0),\n    provider_poi_id TEXT,\n    map_synced_at TEXT,\n    map_content_hash TEXT\n",
+    "",
+)
+V02_SCHEMA = V02_SCHEMA.replace("    updated_at TEXT NOT NULL,\n);",
+                                "    updated_at TEXT NOT NULL\n);")
+V02_SCHEMA = V02_SCHEMA.replace(
+    "    simulated INTEGER NOT NULL DEFAULT 0 CHECK (simulated IN (0, 1)),\n    status_source TEXT NOT NULL DEFAULT 'seed'\n        CHECK (status_source IN ('seed', 'business', 'simulation', 'admin')),\n    status_updated_at TEXT NOT NULL DEFAULT '',\n",
+    "",
+)
+V02_SCHEMA = re.sub(
+    r"\nCREATE TABLE IF NOT EXISTS map_request_logs.*?\nCREATE INDEX IF NOT EXISTS ix_simulation_tick_records_created ON simulation_tick_records\(created_at\);",
+    "",
+    V02_SCHEMA,
+    flags=re.DOTALL,
+)
+V02_FIXTURE = V02_SCHEMA + "\n" + SEED.replace(
+    "UPDATE charging_piles SET status_updated_at = updated_at WHERE status_updated_at = '';", "")
 
 V01_FIXTURE = """
 PRAGMA foreign_keys = ON;
@@ -92,7 +116,7 @@ INSERT INTO wallet_transactions VALUES
 """
 
 
-class SchemaV03Test(unittest.TestCase):
+class SchemaV04Test(unittest.TestCase):
     def setUp(self):
         self.db = sqlite3.connect(":memory:")
         self.db.executescript(SCHEMA)
@@ -113,7 +137,7 @@ class SchemaV03Test(unittest.TestCase):
             self.db.execute(
                 "SELECT value FROM schema_meta WHERE key='schema_version'"
             ).fetchone(),
-            ("0.3",),
+            ("0.4",),
         )
         self.assertEqual(
             {row[0] for row in self.db.execute(

@@ -19,7 +19,8 @@ local development. `EV_DATABASE_PATH` selects the SQLite file (default:
 and `EV_DATABASE_SEED_PATH` optionally points to repeatable development seed
 data. The repository schema is located automatically for normal source/build
 tree launches. The first connection initializes an empty database with
-`database/schema/schema.sql` and requires schema version `0.3`; when
+`database/schema/schema.sql` and requires schema version `0.4` (a v0.3
+database is upgraded transactionally); when
 `EV_DATABASE_SEED_PATH` is set, the seed is loaded only during that initial
 creation. Existing databases are never reseeded automatically.
 
@@ -33,6 +34,13 @@ process-local session token; every other `admin.*` request must carry that
 token, including read-only queries. Mutation requests additionally carry
 `administrator_id`, which must match the authenticated token subject. See
 `docs/architecture/protocol.md` for framing and the v1 contract.
+
+With `EV_MAP_SERVER_MOCK=1`, the server also exposes deterministic
+`map.station.search`, `map.route.plan`, and authenticated
+`admin.map.audit.list` handlers. This is an explicit development provider;
+production Tencent HTTP integration, asynchronous worker isolation, and the
+private mTLS simulator transport remain deployment work. The cloud simulator
+under `services/pile-simulator` never opens SQLite.
 
 With the server running, validate the basic TCP path:
 

@@ -1,4 +1,4 @@
--- Deterministic development/demo data for schema v0.3.
+-- Deterministic development/demo data for schema v0.4.
 PRAGMA foreign_keys = ON;
 BEGIN;
 
@@ -96,5 +96,7 @@ INSERT OR IGNORE INTO pile_restart_logs
     (id, pile_id, administrator_id, requested_at, result, reason)
 VALUES
     (9001, 103, 1, '2026-08-30T04:00:00Z', 'succeeded', 'demo fault recovery');
+
+UPDATE charging_piles SET status_updated_at = updated_at WHERE status_updated_at = '';
 
 COMMIT;
