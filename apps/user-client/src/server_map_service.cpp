@@ -210,7 +210,7 @@ void ServerMapService::searchNearbyChargingStations(const QString &address, int 
   }
   const QString host = host_; const quint16 port = port_; const int timeout = timeoutMs_;
   auto *watcher = new QFutureWatcher<Reply>(this); remember(watcher);
-  connect(watcher, &QFutureWatcher<Reply>::finished, this, [this, watcher, generation, center, callback = std::move(callback)] {
+  connect(watcher, &QFutureWatcher<Reply>::finished, this, [this, watcher, generation, callback = std::move(callback)] {
     const Reply reply = watcher->result(); watcher->deleteLater(); watchers_.removeAll(watcher);
     if (generation != generation_) return;
     if (!reply.ok) { callback(MapResult<QVector<MapPoi>>::failure(mapError(reply.code, reply.error))); return; }
@@ -256,7 +256,7 @@ void ServerMapService::searchNearbyChargingStations(const GeoCoordinate &center,
   }
   const QString host = host_; const quint16 port = port_; const int timeout = timeoutMs_;
   auto *watcher = new QFutureWatcher<Reply>(this); remember(watcher);
-  connect(watcher, &QFutureWatcher<Reply>::finished, this, [this, watcher, generation, callback = std::move(callback)] {
+  connect(watcher, &QFutureWatcher<Reply>::finished, this, [this, watcher, generation, center, callback = std::move(callback)] {
     const Reply reply = watcher->result(); watcher->deleteLater(); watchers_.removeAll(watcher);
     if (generation != generation_) return;
     if (!reply.ok) { callback(MapResult<QVector<MapPoi>>::failure(mapError(reply.code, reply.error))); return; }
