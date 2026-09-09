@@ -41,6 +41,9 @@ QColor dayColorForStatus(ev::PileStatus status)
 constexpr int kNodeRadius = 9;
 constexpr int kHitSlop = 18; // 点击命中半径（节点半径 + 容差）
 constexpr int kPulseExtent = 16;
+// 真图底图叠加透明度（用户微调 2026-09-09，预期 0.3–0.5，取 0.4）：
+// 底图半透明衬在面板底色上，地图细节隐约可见，节点/文字不透明压在其上
+constexpr qreal kMapImageOpacity = 0.4;
 
 // 地图投影点越界防御带：取景保证全站入图，正常路径不触发；
 // 越界/非有限点以 NaN 占位（保持与 m_stations 对齐），绘制与命中自然跳过。
@@ -298,9 +301,14 @@ void StationTopologyWidget::paintEvent(QPaintEvent *)
         // ---- 真图模式：底图 + 节点（不画网格/连线/拓扑图例，§3.1）----
         const qreal offsetX = (cr.width() - m_mapImage.width()) / 2.0;
         const qreal offsetY = (cr.height() - m_mapImage.height()) / 2.0;
-        if (offsetX >= 0.0 && offsetY >= 0.0)
+        if (offsetX >= 0.0 && offsetY >= 0.0) {
+            // 底图半透明叠加（用户微调）：仅底图受透明度影响，节点与文字不受
+            painter.save();
+            painter.setOpacity(kMapImageOpacity);
             painter.drawImage(QPointF(cr.left() + offsetX, cr.top() + offsetY),
                               m_mapImage);
+            painter.restore();
+        }
     } else {
         // ---- 拓扑模式：背景网格（非信息装饰，只允许使用装饰结构色）----
         QColor gridColor = ev::theme::kDayDecorativeStructure;
@@ -332,7 +340,7 @@ void StationTopologyWidget::paintEvent(QPaintEvent *)
     // 站点节点：状态语义色实心圆 + 深色描边 + 中心表面点；
     // 键盘焦点节点绘制 focus ring（状态不只靠颜色，spec §8.1）
     QFont nameFont = painter.font();
-    nameFont.setPixelSize(11);
+    nameFont.setPixelSize(13); // 站名（用户微调 2026-09-09：11 → 13，地图上更可读）
     painter.setFont(nameFont);
     const bool showFocusRing = hasFocus() && m_focusIndex >= 0;
     for (int i = 0; i < m_stations.size(); ++i) {
@@ -358,8 +366,9 @@ void StationTopologyWidget::paintEvent(QPaintEvent *)
         painter.setBrush(ev::theme::kDaySurface);
         painter.drawEllipse(center, 3.2, 3.2);
 
-        // 站名（承载信息：使用主文字色而非装饰色）
-        painter.setPen(ev::theme::kDayMutedText);
+        // 站名（承载信息：主文字色而非装饰色）。真图模式下底图为地图影像，
+        // 弱化灰对比不足（用户目检反馈），用纯黑保证可读性；拓扑模式保持原色
+        painter.setPen(mapMode ? QColor(Qt::black) : ev::theme::kDayMutedText);
         const QRectF nameRect(center.x() - 70, center.y() + kNodeRadius + 4, 140, 16);
         painter.drawText(nameRect, Qt::AlignHCenter | Qt::AlignTop, station.name);
     }
