@@ -33,8 +33,8 @@ token 在服务端进程内保存，服务重启后失效。建站、重启桩�
 `administrator_id`，且必须与 token 对应的管理员一致。
 
 地图扩展（`map.station.search`、`map.route.plan`、
-`admin.map.audit.list`）已在服务端提供确定性 Mock 运行路径；生产 Tencent
-HTTP 适配器和私有 mTLS 模拟器传输仍未接入。完整字段、分页、幂等、缓存、
+`admin.map.audit.list`）已在服务端同时提供确定性 Mock 和生产 Tencent HTTP
+运行路径。生产模式从服务端环境变量读取 key，调用腾讯 WebService；完整字段、分页、幂等、缓存、
 1 MiB 响应保护和独立云端桩模拟器边界见
 [`docs/architecture/map-service-protocol.md`](../architecture/map-service-protocol.md)。
 

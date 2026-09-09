@@ -35,12 +35,20 @@ token, including read-only queries. Mutation requests additionally carry
 `administrator_id`, which must match the authenticated token subject. See
 `docs/architecture/protocol.md` for framing and the v1 contract.
 
-With `EV_MAP_SERVER_MOCK=1`, the server also exposes deterministic
-`map.station.search`, `map.route.plan`, and authenticated
-`admin.map.audit.list` handlers. This is an explicit development provider;
-production Tencent HTTP integration, asynchronous worker isolation, and the
-private mTLS simulator transport remain deployment work. The cloud simulator
-under `services/pile-simulator` never opens SQLite.
+The server exposes `map.station.search`, `map.route.plan`, and authenticated
+`admin.map.audit.list` handlers. Set `EV_MAP_SERVER_MOCK=1` for deterministic
+development data. In production mode set `TENCENT_MAP_ENABLED=1` and inject
+`TENCENT_MAP_KEY` into the server process; the Qt `QNetworkAccessManager`
+adapter calls Tencent WebService geocoder, place search, and driving/walking
+direction endpoints over HTTPS. `TENCENT_MAP_BASE_URL` is an optional
+loopback-only override for fake HTTP tests, and `TENCENT_MAP_TIMEOUT_MS`
+controls the bounded request timeout. Keys, complete URLs, and raw Tencent
+responses are never logged or persisted. The cloud simulator under
+`services/pile-simulator` never opens SQLite.
+
+Production HTTP calls are synchronous at the current service boundary; moving
+slow upstream and database work to bounded workers remains a follow-up before
+high-concurrency deployment.
 
 With the server running, validate the basic TCP path:
 

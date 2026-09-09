@@ -260,13 +260,13 @@ access SQLite directly. Database work is currently synchronous in the
 connection event loop; moving long-running operations to bounded workers is a
 known follow-up before production deployment.
 
-## Accepted map-service extension (current mock runtime)
+## Accepted map-service extension (current runtime)
 
 The complete server-side Tencent Maps, cache/audit, station-import, pile
 simulation, and independent cloud simulator gateway contract is defined in
 [`map-service-protocol.md`](map-service-protocol.md). The repository implements
-Schema v0.4, the three handlers on the deterministic
-`EV_MAP_SERVER_MOCK=1` path, map error codes, station import, cache/audit
-persistence, and an internal-only simulator gateway boundary. Production
-Tencent HTTP, asynchronous workers, and private mTLS transport remain pending
-and must not be presented as completed.
+Schema v0.4, the three handlers on both the deterministic
+`EV_MAP_SERVER_MOCK=1` path and the server-side Tencent HTTP path, map error
+codes, station import, cache/audit persistence, and an internal-only simulator
+gateway boundary. Production deployment work remains: asynchronous workers,
+cache-miss coalescing, retention cleanup, and private mTLS transport.

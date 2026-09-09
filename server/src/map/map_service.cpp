@@ -336,22 +336,6 @@ bool MapService::stationSearch(const QString &requestId, qint64 userId,
                        QStringLiteral("地图服务未配置"));
             return false;
         }
-        setFailure(failure, ev::protocol::ErrorCode::MapUpstreamUnavailable,
-                   QStringLiteral("生产 Tencent adapter 尚未配置"));
-        return false;
-    }
-
-    if (!address.isEmpty()) {
-        ev::protocol::ErrorCode code = ev::protocol::ErrorCode::MapResponseInvalid;
-        QString clientError;
-        if (!deterministicClient_.geocode(address, &origin, &code, &clientError)) {
-            qint64 ignored = 0;
-            database_->recordMapRequest(requestId, QStringLiteral("map.station.search"), userId,
-                                        normalizedQuery, key, QStringLiteral("error"), {},
-                                        static_cast<int>(code), 0, &ignored, nullptr, nullptr);
-            setFailure(failure, code, clientError);
-            return false;
-        }
     }
 
     QJsonObject cached;
@@ -361,6 +345,28 @@ bool MapService::stationSearch(const QString &requestId, qint64 userId,
         setFailure(failure, ev::protocol::ErrorCode::DatabaseError,
                    QStringLiteral("map cache lookup failed"));
         return false;
+    }
+    if (!address.isEmpty() && (fresh || stale)) {
+        const QJsonObject cachedOrigin = cached.value(QStringLiteral("resolved_origin")).toObject();
+        if (cachedOrigin.value(QStringLiteral("latitude")).isDouble()
+            && cachedOrigin.value(QStringLiteral("longitude")).isDouble()) {
+            origin = cachedOrigin;
+        }
+    }
+    if (!address.isEmpty() && !origin.value(QStringLiteral("latitude")).isDouble()) {
+        ev::protocol::ErrorCode code = ev::protocol::ErrorCode::MapResponseInvalid;
+        QString clientError;
+        TencentClient &client = isMapMockEnabled()
+            ? static_cast<TencentClient &>(deterministicClient_)
+            : static_cast<TencentClient &>(httpClient_);
+        if (!client.geocode(address, &origin, &code, &clientError)) {
+            qint64 ignored = 0;
+            database_->recordMapRequest(requestId, QStringLiteral("map.station.search"), userId,
+                                        normalizedQuery, key, QStringLiteral("error"), {},
+                                        static_cast<int>(code), 0, &ignored, nullptr, nullptr);
+            setFailure(failure, code, clientError);
+            return false;
+        }
     }
     QVector<ev::database::MapPoi> allPois;
     QString dataSource = QStringLiteral("server_mock");
@@ -381,8 +387,11 @@ bool MapService::stationSearch(const QString &requestId, qint64 userId,
             // healthy upstream refreshes the cache rather than extending old
             // map metadata indefinitely.
             upstreamAttempted = true;
-            if (!deterministicClient_.searchStations(origin, radius, &allPois,
-                                                     &upstreamCode, &upstreamError)) {
+            TencentClient &client = isMapMockEnabled()
+                ? static_cast<TencentClient &>(deterministicClient_)
+                : static_cast<TencentClient &>(httpClient_);
+            if (!client.searchStations(origin, radius, &allPois,
+                                       &upstreamCode, &upstreamError)) {
                 allPois = parseCachedPois(cached);
                 origin = cached.value(QStringLiteral("resolved_origin")).toObject();
                 dataSource = cached.value(QStringLiteral("provider_source")).toString()
@@ -395,8 +404,11 @@ bool MapService::stationSearch(const QString &requestId, qint64 userId,
             }
         } else {
             upstreamAttempted = true;
-            if (!deterministicClient_.searchStations(origin, radius, &allPois,
-                                                        &upstreamCode, &upstreamError)) {
+            TencentClient &client = isMapMockEnabled()
+                ? static_cast<TencentClient &>(deterministicClient_)
+                : static_cast<TencentClient &>(httpClient_);
+            if (!client.searchStations(origin, radius, &allPois,
+                                       &upstreamCode, &upstreamError)) {
             qint64 ignored = 0;
             database_->recordMapRequest(requestId, QStringLiteral("map.station.search"), userId,
                                         normalizedQuery, key, QStringLiteral("error"), {},
@@ -404,6 +416,8 @@ bool MapService::stationSearch(const QString &requestId, qint64 userId,
             setFailure(failure, upstreamCode, upstreamError);
             return false;
             }
+            dataSource = isMapMockEnabled() ? QStringLiteral("server_mock")
+                                            : QStringLiteral("tencent_live");
         }
     }
     if (allPois.isEmpty()) {
@@ -510,23 +524,47 @@ bool MapService::routePlan(const QString &requestId, qint64 userId,
                    : QStringLiteral("read route destination failed"));
         return false;
     }
+    const QJsonObject requestedOrigin = address.isEmpty()
+        ? origin
+        : QJsonObject{{QStringLiteral("kind"), QStringLiteral("address")},
+                       {QStringLiteral("value"), address}};
+    const QJsonObject preflightQuery{{QStringLiteral("user_id"), userId},
+                                     {QStringLiteral("origin"), requestedOrigin},
+                                     {QStringLiteral("station_id"), stationId},
+                                     {QStringLiteral("mode"), mode},
+                                     {QStringLiteral("operation"), QStringLiteral("map.route.plan")}};
+    const auto recordRouteFailure = [&](ev::protocol::ErrorCode code) {
+        qint64 ignoredLogId = 0;
+        database_->recordMapRequest(requestId, QStringLiteral("map.route.plan"), userId,
+                                    preflightQuery, QString(), QStringLiteral("error"), {},
+                                    static_cast<int>(code), 0, &ignoredLogId, nullptr, nullptr);
+    };
     if (!address.isEmpty()) {
         ev::protocol::ErrorCode code = ev::protocol::ErrorCode::MapResponseInvalid;
         QString clientError;
         if (!isMapMockEnabled() && qEnvironmentVariable("TENCENT_MAP_KEY").trimmed().isEmpty()) {
+            recordRouteFailure(qEnvironmentVariable("TENCENT_MAP_ENABLED", "0") == QStringLiteral("1")
+                               ? ev::protocol::ErrorCode::MapNotConfigured
+                               : ev::protocol::ErrorCode::MapDisabled);
             setFailure(failure, qEnvironmentVariable("TENCENT_MAP_ENABLED", "0") == QStringLiteral("1")
                        ? ev::protocol::ErrorCode::MapNotConfigured : ev::protocol::ErrorCode::MapDisabled,
                        QStringLiteral("地图服务未配置或未启用"));
             return false;
         }
-        if (!deterministicClient_.geocode(address, &origin, &code, &clientError)) {
+        TencentClient &client = isMapMockEnabled()
+            ? static_cast<TencentClient &>(deterministicClient_)
+            : static_cast<TencentClient &>(httpClient_);
+        if (!client.geocode(address, &origin, &code, &clientError)) {
+            recordRouteFailure(code);
             setFailure(failure, code, clientError);
             return false;
         }
     } else if (!isMapMockEnabled() && qEnvironmentVariable("TENCENT_MAP_ENABLED", "0") != QStringLiteral("1")) {
+        recordRouteFailure(ev::protocol::ErrorCode::MapDisabled);
         setFailure(failure, ev::protocol::ErrorCode::MapDisabled, QStringLiteral("地图服务未启用"));
         return false;
     } else if (!isMapMockEnabled() && qEnvironmentVariable("TENCENT_MAP_KEY").trimmed().isEmpty()) {
+        recordRouteFailure(ev::protocol::ErrorCode::MapNotConfigured);
         setFailure(failure, ev::protocol::ErrorCode::MapNotConfigured, QStringLiteral("地图服务未配置"));
         return false;
     }
@@ -566,8 +604,11 @@ bool MapService::routePlan(const QString &requestId, qint64 userId,
             fromCache = true;
         } else {
             upstreamAttempted = true;
-            if (!deterministicClient_.planRoute(origin, destination, mode, &route,
-                                                &providerCode, &providerError)) {
+            TencentClient &client = isMapMockEnabled()
+                ? static_cast<TencentClient &>(deterministicClient_)
+                : static_cast<TencentClient &>(httpClient_);
+            if (!client.planRoute(origin, destination, mode, &route,
+                                  &providerCode, &providerError)) {
                 route.distanceMeters = routeJson.value(QStringLiteral("distance_meters")).toInteger();
                 route.durationSeconds = routeJson.value(QStringLiteral("duration_seconds")).toInteger();
                 for (const QJsonValue &point : points) {
@@ -584,8 +625,11 @@ bool MapService::routePlan(const QString &requestId, qint64 userId,
         }
     } else {
         upstreamAttempted = true;
-        if (!deterministicClient_.planRoute(origin, destination, mode, &route,
-                                            &providerCode, &providerError)) {
+        TencentClient &client = isMapMockEnabled()
+            ? static_cast<TencentClient &>(deterministicClient_)
+            : static_cast<TencentClient &>(httpClient_);
+        if (!client.planRoute(origin, destination, mode, &route,
+                              &providerCode, &providerError)) {
             qint64 ignored = 0;
             database_->recordMapRequest(requestId, QStringLiteral("map.route.plan"), userId,
                                         query, key, QStringLiteral("error"), {},
@@ -593,8 +637,21 @@ bool MapService::routePlan(const QString &requestId, qint64 userId,
             setFailure(failure, providerCode, providerError);
             return false;
         }
+        dataSource = isMapMockEnabled() ? QStringLiteral("server_mock")
+                                        : QStringLiteral("tencent_live");
     }
+    // Older cache entries may contain Tencent's valid one-point response for
+    // a zero-length route. Normalize it at the service boundary as well so a
+    // cache hit follows the same protocol contract as a live response.
+    if (route.polyline.size() == 1)
+        route.polyline.append({destination.value(QStringLiteral("latitude")).toDouble(),
+                               destination.value(QStringLiteral("longitude")).toDouble()});
     if (route.polyline.size() < 2 || route.polyline.size() > 4096) {
+        qint64 ignoredLogId = 0;
+        database_->recordMapRequest(requestId, QStringLiteral("map.route.plan"), userId,
+                                    query, key, QStringLiteral("error"), dataSource,
+                                    static_cast<int>(ev::protocol::ErrorCode::MapResponseInvalid),
+                                    0, &ignoredLogId, nullptr, nullptr);
         setFailure(failure, ev::protocol::ErrorCode::MapResponseInvalid,
                    QStringLiteral("route polyline is invalid"));
         return false;

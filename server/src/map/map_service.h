@@ -52,6 +52,7 @@ private:
 
     ev::database::Database *database_ = nullptr;
     DeterministicTencentClient deterministicClient_;
+    HttpTencentClient httpClient_;
 };
 
 } // namespace ev::server::map

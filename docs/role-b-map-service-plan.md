@@ -52,12 +52,17 @@ B 不负责 Qt 地图页面或管理端页面；A 负责用户端地图适配，
 验收：新库初始化、v0.3 升级、重复升级、坏数据回滚和 foreign-key check
 已覆盖；30 天清理任务和更强并发写压测仍待补齐。
 
-### B3：腾讯地图适配和缓存（Mock 路径完成，生产适配待完成）
+### B3：腾讯地图适配和缓存（已完成基础 HTTP adapter）
 
 范围：server map service。
 
-- 实现确定性 Mock geocoder、POI search、driving/walking 边界；真实 Tencent
-  HTTP adapter 尚未接入。
+- 实现确定性 Mock geocoder、POI search、driving/walking 边界；生产
+  `HttpTencentClient` 已接入腾讯 WebService geocoder、place search、driving/
+  walking direction。
+- 生产 key 只从 `TENCENT_MAP_KEY` 运行时环境读取；官方 HTTPS 地址为默认值，
+  `TENCENT_MAP_BASE_URL` 仅允许 loopback fake HTTP 测试。
+- 路线 `duration` 分钟转协议秒，腾讯压缩 polyline 严格校验、解码并限制为
+  4096 点；上游 HTTP、配额、权限、超时、坏 JSON 和无结果映射为统一地图错误码。
 - 实现坐标、字段、折线和上游状态校验。
 - 实现 live/cache/stale/mock 四种数据源。
 - 按规范化 origin、radius、page size、page token、station、mode 生成 cache
@@ -66,8 +71,9 @@ B 不负责 Qt 地图页面或管理端页面；A 负责用户端地图适配，
   和异步 worker 尚待完成。
 - 所有上游调用记录脱敏审计，不记录 Key、完整 URL 或原始 JSON。
 
-验收：使用 fake Tencent adapter 覆盖成功、超时、配额、权限、无结果、坏
-JSON、缓存命中、过期和 stale 降级；无真实 Key 也能运行测试。
+验收：`server/tests/tencent_client.pro` 覆盖 fake HTTP 成功、超时、配额、权限、
+坏 JSON、畸形 polyline 和超大响应；`server/tests/map_live.py` 覆盖生产选择链的
+地址解析、POI upsert、实时桩聚合和路线。无真实 Key 也能运行全部回归。
 
 ### B4：站点 upsert、幂等和桩生成（已完成）
 
