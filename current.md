@@ -4,7 +4,7 @@
 
 - Project: 东软电动汽车充电桩应用管理平台。
 - Current stage: 第一阶段最小闭环开发；真实截止时间为 2026-09-10 24:00。第二阶段截止 2026-09-17 24:00，个人报告截止 2026-09-18 24:00。
-- This file was refreshed on 2026-09-09 while aligning A's user-client map integration to the merged PR #19 baseline (`main` `005d6e8`). The requirements source of truth is `docs/requirements/requirements-matrix.md`. 根目录的项目说明书 `.doc`、需求矩阵 `.xls` 和 `三人分工.md` 仅为本地参考文件，不上传、不提交；仓库内 `docs/` Markdown 才是正式项目材料。
+- This file was refreshed on 2026-09-10 after PR #17 was merged into `main` (`83449ab`). The requirements source of truth is `docs/requirements/requirements-matrix.md`. 根目录的项目说明书 `.doc`、需求矩阵 `.xls` 和 `三人分工.md` 仅为本地参考文件，不上传、不提交；仓库内 `docs/` Markdown 才是正式项目材料。
 
 ## Architecture and boundaries
 
@@ -17,6 +17,7 @@
 - A user client is a deterministic Qt Widgets + Mock implementation with an opt-in real `SocketUserService` (see A-S1-03 below). A retains Mock/offline fallback until the real Socket adapter is verified end-to-end.
 - A's PR #17 map path uses `ServerMapService` for server-owned `map.station.search` and `map.route.plan`; the client never receives `TENCENT_MAP_KEY`. Text-address station discovery sends one address-origin station request and consumes `resolved_origin`; text-address routing sends one address-origin route request directly, so an empty nearby-POI result cannot block route planning.
 - Address-origin POI rendering preserves the server's degraded `tencent_stale`/`server_mock` warning when the final station-count status is displayed.
+- The legacy direct-Tencent `map-service-tests.pro` target now implements the two post-PR #17 `IMapService` address overloads with real geocode-then-query compatibility logic, and its coordinate calls are explicit `GeoCoordinate` values. It remains opt-in and isolated; production user-client map traffic uses `ServerMapService`, with `server-map-service-tests` as the primary map adapter gate.
 - C admin client has a qmake shell, repository boundary, Mock data source, login flow and overview states, the 9/4 management action batch (C-S1-005 pile restart / C-S1-007 user freeze-unfreeze), and a local Socket adapter layer (`SocketAdminRepository` + `socketparse`, fake-server tested on Windows and the Ubuntu VM; Mock remains the default via `EV_ADMIN_DATA_SOURCE` until the gate). The phase-1 batch is merged to `main` through PR #11; PR #13 subsequently merged the full-scope, cursor-paged `admin.pile.list` implementation. 2026-09-08 起的销售业绩（近 7/30 日营收）特性在 `feature/admin-revenue` 分支上实现（详见「2026-09-08 管理端销售业绩」节）。
 - The clean-database server path can load `EV_DATABASE_SEED_PATH` once during initial creation; existing databases are not reseeded.
 - The corrected PR #14 contract is documented in `docs/architecture/map-service-protocol.md`; it preserves the current `admin.pile.list` cursor/1 MiB contract and adds bounded paging, explicit map idempotency, canonical map errors, and an independent cloud `pile-simulator` proposal boundary. The deterministic `EV_MAP_SERVER_MOCK=1` handlers, production `HttpTencentClient`, map-only cache with live SQLite aggregation, audit pagination, Schema v0.4, pile generator, and internal gateway are implemented. Asynchronous worker isolation, cache-miss coalescing, retention cleanup, and private mTLS transport remain open.
@@ -194,4 +195,4 @@
 - `runService()` captures the auth generation and user ID, so callbacks after logout/account switching are discarded; station/pile request generations still reject older query results, and pile callbacks also verify the selected station ID.
 - Frozen users may read data and perform reservation cancellation, charging stop and settlement, but UI controls for reservation creation/confirmation, charging start/direct start and wallet recharge are disabled.
 - An optional discard callback restores transient UI state such as the recharge button when an in-flight request is invalidated.
-- Compatibility baseline: current remote `main` is `005d6e8` (PR #19 merge); it includes the latest B map service and C admin-client updates. This feature branch contains A's server-owned map client integration; do not claim private mTLS or async worker isolation until separately implemented.
+- Compatibility baseline: current remote `main` is `83449ab` (PR #17 merge, on top of PR #19's B map service). This feature branch contains only the legacy map-test compatibility fix; do not claim private mTLS or async worker isolation until separately implemented.

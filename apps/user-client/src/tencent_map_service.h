@@ -23,9 +23,11 @@ public:
 
   void cancelPending() override;
   void geocode(const QString &address, GeoCallback callback) override;
+  void searchNearbyChargingStations(const QString &address, int radiusMeters, PoiCallback callback) override;
   void searchNearbyChargingStations(const GeoCoordinate &center, int radiusMeters, PoiCallback callback) override;
   void getPoiDetail(const QString &poiId, PoiDetailCallback callback) override;
   void queryRoute(const GeoCoordinate &origin, const GeoCoordinate &destination, RouteMode mode, RouteCallback callback) override;
+  void queryRouteFromAddress(const QString &originAddress, const GeoCoordinate &destination, RouteMode mode, RouteCallback callback) override;
 
 private:
   using JsonCallback = std::function<void(const QJsonDocument &, int, const MapError &)>;
