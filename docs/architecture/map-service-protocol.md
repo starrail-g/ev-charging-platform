@@ -36,25 +36,30 @@ Independent cloud pile-simulator
     `-- proposes deterministic pile-state changes; never writes SQLite
 ```
 
-- Tencent credentials exist only in server-side environment or ignored local
-  configuration. They never appear in a client response, database row, log,
-  cache key, or Git-tracked file.
+- Tencent WebService credentials exist only in server-side environment or
+  ignored local configuration. They never appear in a client response,
+  database row, log, cache key, or Git-tracked file.
 - The server is the only client-visible map-data authority: POI search,
   route planning, and station search are server-side Tencent calls, and their
   results reach clients only through the Socket protocol as validated map
-  data. Clients never call Tencent for map data and never load
-  credential-bearing Tencent JavaScript; they draw returned geometry locally.
+  data. Clients never call Tencent POI, geocoding, or route APIs. The user
+  client may load Tencent JavaScript API GL with a separate deployment-only
+  `TENCENT_MAP_JS_KEY` to render the base map and draw server-returned geometry;
+  this key is not a server WebService credential and never enters protocol
+  payloads, logs, the database, screenshots, or Git.
 - Base-map rendering (static imagery / SDK / tiles) is a client-side concern
   and is outside the server map service scope: only map-data and business
   payloads travel through the Socket protocol, and the server map service
   never proxies base-map imagery or tiles.
-- Base-map exception, admin client only, display-only: the admin Qt client
+- Base-map display credentials are deployment-only and do not grant clients
+  authority over map data. The admin Qt client
   renders Tencent static-map imagery directly with a dedicated deployment
   key (`TENCENT_STATIC_MAP_KEY`, WebService type). The exception is bounded:
   - the key feeds the static-map image request only and must never be used
     against business map-data APIs (POI search, geocoding, route planning,
     and the like), which remain server-side;
-  - the user client holds no Tencent credential of any kind;
+  - the user client may receive only the dedicated JavaScript API GL key via
+    process environment; it must not receive the server WebService key;
   - the key is deployment configuration and must never enter Git, logs,
     screenshots, or the database, and credential-bearing URLs are built in
     memory only;

@@ -59,19 +59,19 @@ Demo phone is `13800000000`; any legal 11-digit ASCII phone can log in directly.
 
 The user client uses the same day-theme tokens as the admin client: `#EDF0EE` background, `#F7F8F7` surfaces, `#18201D` text, `#0E6E8C` primary actions and `#2A7442` selected/idle state. Inputs, buttons, cards, status panels and map summaries share the same 6-8 px corner radius and visible focus treatment. The top-right shortcut buttons were removed in favor of the bottom navigation. The charging page is the single current-status entry and includes a deterministic completed-charge history plus a summary; opening it from the bottom bar does not show the unfinished-order dialog. That dialog appears only when selecting another pile while an order is charging or awaiting settlement. Cancelling an unconfirmed pile selection returns to the pile detail page.
 
-The initial window is 420 x 760 and preserves a 21:38 mobile aspect ratio while resizing. It is bounded from 315 x 570 to 840 x 1520, disables maximize to avoid ratio-breaking window-manager behavior, and selects a smaller same-ratio initial size when the VMware desktop work area cannot fit 420 x 760.
+The initial window is 420 x 760 as a mobile-style baseline, but resizing is responsive rather than locked to a 21:38 ratio. It has a 340 x 560 usable minimum so compact screens can scroll dense order/profile content, while larger desktop windows may expand naturally. The initial size is reduced to fit the available work area when necessary.
 
 After selecting an idle pile, the confirmation row provides both `确认创建订单` and `预约该充电桩`; both use the adapter's reservation creation path and are guarded against duplicate submission. The `返回充电桩` action is below settlement. A reserved order is visible in the charging page, where it can be started or ended with `取消预约`; cancellation returns the pile to idle and does not enter completed-charge history. When selecting a non-idle pile, the unavailable message is shown before any active-order message. When selecting an idle pile, an existing reservation reports `已有预约`, while charging or pending settlement reports `未完成订单`. History is returned newest-first and each row displays completion time, charging-station address and amount spent, without an order identifier.
 
 ## Map and navigation (A-S2-01)
 
-The map boundary is implemented by `IMapService`, `ServerMapService` and `MockMapService`. The user client no longer calls Tencent directly and never receives a Tencent credential. `ServerMapService` sends Protocol v1 `map.station.search` and `map.route.plan` requests to B's server; the server owns Tencent WebService calls, cache/audit records, POI persistence and pile snapshot aggregation. The adapter validates the server envelope, station coordinates, route distance/time/polyline and `data_source`/`warning` fields. A new request cancels earlier work, and callbacks are accepted only while the map-request generation and login-session generation still match.
+The map boundary is implemented by `IMapService`, `ServerMapService` and `MockMapService`. `ServerMapService` sends Protocol v1 `map.station.search` and `map.route.plan` requests to B's server; the server owns Tencent WebService calls, cache/audit records, POI persistence and pile snapshot aggregation. The adapter validates the server envelope, station coordinates, route distance/time/polyline and `data_source`/`warning` fields. A new request cancels earlier work, and callbacks are accepted only while the map-request generation and login-session generation still match.
 
 `EV_USER_CLIENT_TRANSPORT=socket` selects both the real user service and the server map adapter on the same `EV_SERVER_HOST`/`EV_SERVER_PORT` endpoint. Socket mode never switches to `MockUserService` or `MockMapService`: connection failures remain explicit errors, and locally generated station, route, wallet or order data cannot enter the real session. Demo hints, Mock labels and Mock-only controls are hidden in this mode. Protocol `server_mock` or stale-cache sources remain accepted for compatibility, but are presented to users as redacted server-side backup data rather than local Mock data.
 
 The adapter sends the logged-in numeric `user_id`; route requests additionally send the selected business `station_id` and `mode` (`driving` or `walking`). Address input is represented as the protocol `origin.kind=address` through `map.station.search`; coordinate input is sent as `origin.kind=coordinate`. POI data supplies only position/name/address. Prices, pile counts/statuses and order operations remain server business data and are never inferred from map data.
 
-The `TencentMapService` source remains only as legacy isolated test material from the earlier A-S2-01 implementation; it is not selected by `UserWindow` and is not part of the production map path. `QWebEngineView` now renders the local/offline map surface with server-returned markers and route geometry. The client does not load Tencent GL JS or inject a Key. This respects PR #15's server-only credential boundary and keeps the application usable without external network access.
+The `TencentMapService` source remains only as legacy isolated test material from the earlier A-S2-01 implementation; it is not selected by `UserWindow` and is not part of the production map-data path. In Socket mode, `QWebEngineView` can load Tencent JavaScript API GL with the deployment-only `TENCENT_MAP_JS_KEY`, then render the station markers and route geometry returned by the server on that base map. This display key is separate from the server's `TENCENT_MAP_KEY`: it does not call POI, geocoding, or route APIs and never enters Socket payloads, logs, the database, screenshots, or Git. When the JS key is absent or the page cannot initialize, the same geometry remains available on the offline grid preview.
 
 ```bash
 sudo apt update
@@ -110,15 +110,17 @@ performs real compatibility checks for address-origin POI and route overloads,
 but it is intentionally isolated while the server-owned map boundary remains
 authoritative.
 
-For server-side map acceptance, configure `TENCENT_MAP_KEY` only in B's server environment and run the server's redacted probe. The user client only needs `EV_USER_CLIENT_TRANSPORT=socket`, `EV_SERVER_HOST` and `EV_SERVER_PORT`; no Tencent key is required locally. PR #19 is merged to `main` (`005d6e8`, including the final provider-pagination fix). The client-side runtime check remains a Socket contract and mapping check; it does not replace a fresh server-side live Tencent run. To validate the interactive client map path, use a running B server:
+For server-side map acceptance, configure `TENCENT_MAP_KEY` only in B's server environment and run the server's redacted probe. A real user-client base map additionally requires a JavaScript API GL Key in `TENCENT_MAP_JS_KEY`; without it, the client deliberately uses the offline preview. PR #19 is merged to `main` (`005d6e8`, including the final provider-pagination fix). The client-side runtime check remains a Socket contract and mapping check; it does not replace a fresh server-side live Tencent run. To validate the interactive client map path, use a running B server:
 
 For text-address navigation, the client sends the address directly in the `origin` of one `map.route.plan` request. It does not use a nearby-station search as a geocoder, so a valid address with no charging station within the search radius can still be routed. Text-address station discovery separately sends one address-origin `map.station.search` request and consumes its `resolved_origin` together with the returned POIs.
 
 ```bash
-EV_USER_CLIENT_TRANSPORT=socket ./ev-user-client
+EV_USER_CLIENT_TRANSPORT=socket \
+TENCENT_MAP_JS_KEY='<runtime-js-key>' \
+./ev-user-client
 ```
 
-The original teacher task labels basic real navigation as S1 and optimization/compatibility as A-S2-01. Under the revised PR #15 contract, A-S2-01 on the client means server-protocol adaptation and Mock/offline compatibility; Tencent credential management and upstream calls belong to B.
+The original teacher task labels basic real navigation as S1 and optimization/compatibility as A-S2-01. Under the revised boundary, Tencent POI/geocoding/route credential management and upstream calls belong to B; A owns base-map presentation and may consume only its separate JavaScript API GL display key.
 
 ## Adapter boundary
 
@@ -135,7 +137,7 @@ The original teacher task labels basic real navigation as S1 and optimization/co
 - [x] 07 loading/error/empty/unauthorized feedback
 - [x] 08 qmake6 build, QtTest and user-client startup evidence
 - [x] A-S2-01 server map protocol adapter, server-owned Tencent boundary and QWebEngineView server-result rendering
-- [x] Socket/Mock transport isolation, admin-aligned day theme and resizable 21:38 window
+- [x] Socket/Mock transport isolation, admin-aligned day theme and responsive mobile-style window
 
 Dependency flow: A-S1-01 → A-S1-02-01 → (02,03) → (04,05) → 08; 06 feeds 02–05; 07 feeds 08. B-S1-01/B-S1-02 provide the future real data/Socket replacement contracts; C-S1-03 provides clean-environment build evidence.
 

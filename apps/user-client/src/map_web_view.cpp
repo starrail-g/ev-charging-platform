@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QRegularExpression>
+#include <QTimer>
 #include <QUrl>
 #include <QVariant>
 #include <QVBoxLayout>
@@ -70,11 +71,18 @@ MapWebView::MapWebView(QWidget *parent) : QWidget(parent) {
   layout->addWidget(view_);
 
   connect(view_, &QWebEngineView::loadProgress, this, [this](int progress) {
-    if (realRequested_ && !realPageLoaded_)
+    if (realRequested_ && loadingReal_ && !realPageLoaded_)
       modeLabel_->setText(QStringLiteral("正在加载真实腾讯地图… %1%").arg(progress));
   });
   connect(view_, &QWebEngineView::loadFinished, this, [this](bool ok) {
-    if (!realRequested_) {
+    const bool loadedReal = loadingReal_;
+    pageLoading_ = false;
+    if (renderPending_) {
+      renderPending_ = false;
+      QTimer::singleShot(0, this, [this] { renderPage(realRequested_); });
+      return;
+    }
+    if (!loadedReal) {
       offlinePageLoaded_ = ok;
       emit pageLoadFinished(false, ok);
       return;
@@ -86,9 +94,10 @@ MapWebView::MapWebView(QWidget *parent) : QWidget(parent) {
       emit realPageFailed();
       return;
     }
+    const quint64 generation = loadGeneration_;
     view_->page()->runJavaScript(QStringLiteral("Boolean(window.TMap && window.evMapReady)"),
-                                 [this](const QVariant &value) {
-      if (!realRequested_) return;
+                                 [this, generation](const QVariant &value) {
+      if (!realRequested_ || generation != loadGeneration_) return;
       if (!value.toBool()) {
         realPageLoaded_ = false;
         emit pageLoadFinished(true, false);
@@ -112,13 +121,13 @@ void MapWebView::setServiceBacked(bool serviceBacked) {
 void MapWebView::setMarkers(const QVector<MapPoi> &markers) {
   markers_ = markers;
   if (realRequested_) renderRealPage();
-  else view_->setHtml(makeHtml(false), QUrl(QStringLiteral("qrc:/map/")));
+  else renderPage(false);
 }
 
 void MapWebView::setRoute(const MapRoute &route) {
   route_ = route;
   if (realRequested_) renderRealPage();
-  else view_->setHtml(makeHtml(false), QUrl(QStringLiteral("qrc:/map/")));
+  else renderPage(false);
 }
 
 QString MapWebView::makeHtml(bool real) const {
@@ -169,29 +178,43 @@ QString MapWebView::makeHtml(bool real) const {
   return html;
 }
 
+void MapWebView::renderPage(bool real) {
+  if (pageLoading_) {
+    renderPending_ = true;
+    return;
+  }
+  pageLoading_ = true;
+  loadingReal_ = real;
+  ++loadGeneration_;
+  view_->setHtml(makeHtml(real), real ? QUrl(QStringLiteral("https://map.qq.com/"))
+                                      : QUrl(QStringLiteral("qrc:/map/")));
+}
+
 void MapWebView::renderRealPage() {
   if (apiKey_.isEmpty()) return;
   offlinePageLoaded_ = false;
-  view_->stop();
-  view_->setHtml(makeHtml(true), QUrl(QStringLiteral("https://map.qq.com/")));
+  renderPage(true);
 }
 
 void MapWebView::loadTencent(const QString &apiKey) {
-  Q_UNUSED(apiKey);
-  // Tencent credentials and JavaScript map loading belong to the server after
-  // the PR #15 boundary change. Keep this compatibility entry point offline.
-  showOffline(QStringLiteral("腾讯地图由服务端处理，客户端显示服务端结果/离线地图"));
+  apiKey_ = apiKey.trimmed();
+  if (apiKey_.isEmpty()) {
+    showOffline(QStringLiteral("未配置用户端腾讯地图 JS Key，当前显示离线地图"));
+    return;
+  }
+  realRequested_ = true;
+  realPageLoaded_ = false;
+  renderRealPage();
 }
 
 void MapWebView::showOffline(const QString &reason) {
-  view_->stop();
   realRequested_ = false;
   realPageLoaded_ = false;
   offlinePageLoaded_ = false;
   const QString label = serviceBacked_ ? QStringLiteral("服务端地图预览") : QStringLiteral("Mock/离线地图");
   const QString visibleReason = serviceBacked_ ? serviceSafeText(reason) : reason;
   modeLabel_->setText(visibleReason.isEmpty() ? label : QStringLiteral("%1 · %2").arg(label, visibleReason));
-  view_->setHtml(makeHtml(false), QUrl(QStringLiteral("qrc:/map/")));
+  renderPage(false);
 }
 
 void MapWebView::deactivate() {

@@ -4,7 +4,7 @@
 
 - Project: 东软电动汽车充电桩应用管理平台。
 - Current stage: 第一阶段最小闭环开发；真实截止时间为 2026-09-10 24:00。第二阶段截止 2026-09-17 24:00，个人报告截止 2026-09-18 24:00。
-- This file was refreshed on 2026-09-10 after PR #17 was merged into `main` (`83449ab`). The requirements source of truth is `docs/requirements/requirements-matrix.md`. 根目录的项目说明书 `.doc`、需求矩阵 `.xls` 和 `三人分工.md` 仅为本地参考文件，不上传、不提交；仓库内 `docs/` Markdown 才是正式项目材料。
+- This file was refreshed on 2026-09-10 after PR #20 and PR #21 were merged into `main` (`0b2576d`). The requirements source of truth is `docs/requirements/requirements-matrix.md`. 根目录的项目说明书 `.doc`、需求矩阵 `.xls` 和 `三人分工.md` 仅为本地参考文件，不上传、不提交；仓库内 `docs/` Markdown 才是正式项目材料。
 
 ## Architecture and boundaries
 
@@ -16,27 +16,31 @@
 - B provides SQLite schema v0.4 (including transactional v0.3 upgrade), deterministic seed/migration, protocol v1 framing/envelope/error codes, and server handlers for login, profile read/update, wallet recharge, station/pile queries, active/history orders, reservation, charging and settlement. Lifecycle writes use `BEGIN IMMEDIATE`, request-ID replay records, frozen-user checks, direct idle-pile charging and settlement rollback paths; imported/simulated station snapshots and pile status events are persisted.
 - A user client is a deterministic Qt Widgets + Mock implementation with an opt-in real `SocketUserService` (see A-S1-03 below). A retains Mock/offline fallback until the real Socket adapter is verified end-to-end.
 - A's PR #17 map path uses `ServerMapService` for server-owned `map.station.search` and `map.route.plan`; the client never receives `TENCENT_MAP_KEY`. Text-address station discovery sends one address-origin station request and consumes `resolved_origin`; text-address routing sends one address-origin route request directly, so an empty nearby-POI result cannot block route planning.
+- User-client base-map rendering now has a separate deployment boundary: optional `TENCENT_MAP_JS_KEY` loads Tencent JavaScript API GL only for visualization, while POI/geocoding/route data and the WebService `TENCENT_MAP_KEY` remain server-owned. Live/cache server results no longer force `MapWebView` back to its offline grid, and route geometry drives viewport center/zoom when present.
 - Address-origin POI rendering preserves the server's degraded `tencent_stale`/`server_mock` warning when the final station-count status is displayed.
 - The legacy direct-Tencent `map-service-tests.pro` target now implements the two post-PR #17 `IMapService` address overloads with real geocode-then-query compatibility logic, and its coordinate calls are explicit `GeoCoordinate` values. It remains opt-in and isolated; production user-client map traffic uses `ServerMapService`, with `server-map-service-tests` as the primary map adapter gate.
 - C admin client has a qmake shell, repository boundary, Mock data source, login flow and overview states, the 9/4 management action batch (C-S1-005 pile restart / C-S1-007 user freeze-unfreeze), and a local Socket adapter layer (`SocketAdminRepository` + `socketparse`, fake-server tested on Windows and the Ubuntu VM; Mock remains the default via `EV_ADMIN_DATA_SOURCE` until the gate). The phase-1 batch is merged to `main` through PR #11; PR #13 subsequently merged the full-scope, cursor-paged `admin.pile.list` implementation. 2026-09-08 起的销售业绩（近 7/30 日营收）特性在 `feature/admin-revenue` 分支上实现（详见「2026-09-08 管理端销售业绩」节）。
 - The clean-database server path can load `EV_DATABASE_SEED_PATH` once during initial creation; existing databases are not reseeded.
+- Development seed stations 1 and 2 now use Shenzhen demo metadata and coordinates so the seeded inventory and Tencent-imported simulated stations share one map region. Their stable IDs, piles, orders and regression contracts are retained; this is a metadata migration rather than a cascading inventory deletion.
 - The corrected PR #14 contract is documented in `docs/architecture/map-service-protocol.md`; it preserves the current `admin.pile.list` cursor/1 MiB contract and adds bounded paging, explicit map idempotency, canonical map errors, and an independent cloud `pile-simulator` proposal boundary. The deterministic `EV_MAP_SERVER_MOCK=1` handlers, production `HttpTencentClient`, map-only cache with live SQLite aggregation, audit pagination, Schema v0.4, pile generator, and internal gateway are implemented. Asynchronous worker isolation, cache-miss coalescing, retention cleanup, and private mTLS transport remain open.
 - 2026-09-09 follow-up fixed the Tencent place-search boundary to the official `nearby(...)` syntax, normalized valid single-point zero-length routes to two protocol points, and audited route preflight/polyline failures. Real Tencent POI and route integration passed with a locally injected key; the key is not retained.
 
 ## Current status
 
 - `A-S1-01` (需求矩阵/边界/任务记录)、`A-S1-02` (Mock baseline + `SocketUserService` 覆盖 B PR #4 用户契约) 已完成；`A-S1-03` 真实 Socket 适配已随 PR #9 合入 `main`（`e577baa`，2026-09-05/06），含 P1 修复：UI 线程 Socket 异步化（QtConcurrent + generation 防旧回包）、mutation 请求 ID 跨可重试失败保留、`pending_reservation` 恢复、免密手机号登录与注册入口移除。`A-S1-04` 跨模块最终回归待进行。A 用户端 Mock 地图页面深色圆角下拉样式沿用。
-- B PR #4 提供 Schema v0.3 protocol/database 基线；PR #8（`994e5ff`）恢复统一 admin/dashboard UI 及其评审修复。PR #12、PR #13 已合入，分别提供 admin 会话/管理接口和 1 MiB 安全的全量 `admin.pile.list` 游标分页；PR #19 已合入当前 `main`（`005d6e8`），提供 Schema v0.4 地图服务、缓存/审计、站点导入、桩生成和模拟器网关。
+- 2026-09-10 user-client map display fix is implemented on `user-client-final-polish`: `EV_MAP_SERVER_MOCK=0` runtime Socket probes returned `tencent_live` Shenzhen POIs and a valid two-point driving polyline; the prior missing base map was caused by `loadTencent()` being hard-disabled and live server sources being forced back to offline rendering. Source and ignored `build/final` binary are updated; final GUI acceptance still requires a runtime JavaScript API GL key.
+- B PR #4 提供 Schema v0.3 protocol/database 基线；PR #8（`994e5ff`）恢复统一 admin/dashboard UI 及其评审修复。PR #12、PR #13 已合入，分别提供 admin 会话/管理接口和 1 MiB 安全的全量 `admin.pile.list` 游标分页；PR #19 提供 Schema v0.4 地图服务、缓存/审计、站点导入、桩生成和模拟器网关，PR #20 已将持久桩模拟器集群链路合入当前 `main`（`0b2576d`），PR #21 随后修复旧地图适配器测试兼容性。
 - The 2026-09-04 final-decision addendum in `docs/meetings/protocol-summary-2026-09-02.md` overrides the older stop-release/frozen wording; `docs/architecture/protocol.md`, A's `SocketUserService` and C's Mock are aligned to it.
 - C phase-1 批（管理操作 + Socket 适配 + Task-12 交付文档）已通过 PR #11 合入 `main`。**评审轮次：①（9/6，A）服务端 token 契约（PR #12）与 administrator_id-only 适配不匹配 → 已修并推送（`fc9d28c` merge main + `ec09270` token 适配，9/6 21:48；LoginResult.token / buildPayload 附 token、mutation 附 administrator_id / 1100 清会话；fake-server sa 15/15 + 真实 main 服务端冒烟，逐字证据见 docs/requirements/current.md §2）；②（9/7，A）文档问题（sa 计数、README 环境变量用法、证据外部路径与闸门预跑记录）→ 本批 docs commit 修正；③（9/7，B 三连）重启按钮态/Mock 同态语义（`f62ee97`）、inactive 站 fan-out 与 has_data（`a7706b3`）、口径 A 全量桩视图（初版 `admin.pile.list` 后续已修为 1 MiB 安全的游标分页聚合；sp 10 / sa 16）。**
 - 9/7 18:00 接口闸门以登录/概览/桩状态/动作为准；管理端已具备 token 契约适配，闸门当天以 main 服务端真联调验证。
 
 ## A-S1-02 delivered scope
 
-- User-window navigation with a 420×760 mobile-style layout, centralized `SessionManager`, phone-only login/logout and 11-digit ASCII phone validation.
+- User-window navigation with a 420×760 mobile-style default and responsive resizing (minimum 340×560, no forced aspect ratio), centralized `SessionManager`, phone-only login/logout and 11-digit ASCII phone validation.
+- 2026-09-10 user-client UI pass is implemented on `user-client-final-polish`: order/profile pages use scrollable content, station/map lists use expanding or preferred size policies instead of rigid height caps, and shared input/button/combobox tokens provide 40px controls, larger popups and visible focus states. Bottom navigation remains fixed while dense pages scroll.
 - Deterministic Mock station/pile query with loading, empty, unavailable, timeout and service-error feedback; station cards show dynamic idle/total counts and pile details show type, power, status and price.
 - Adapter-only order flow: create/reserve, start charging, stop charging, settle, cancel reservation, current-order status and newest-first completed history with completion time, station address and amount.
-- Mock/offline navigation route with explicit Mock labeling and local-only `TENCENT_MAP_KEY` configuration placeholder. No real key is stored in source, documentation or Git.
+- Mock/offline navigation route with explicit fallback labeling; Socket mode may load the base map with a deployment-only `TENCENT_MAP_JS_KEY`, while the server-owned `TENCENT_MAP_KEY` never enters the client. No real key is stored in source, logs or Git.
 - Profile nickname/avatar and wallet Mock operations; no UI code contains SQL or direct SQLite access.
 - Review fixes applied: all business methods reject empty user IDs; profile/avatar changes persist in Mock; route mode is passed to the Mock service and coordinates are range/finite checked. Login behavior follows the documented phone-only Mock flow.
 - Monetary DTOs use integer cents (`walletBalanceCents`, `priceCentsPerKwh`, `amountCents`). Mock reservation now returns `PendingReservation` and requires `confirmReservation`; settlement checks balance, deducts cents atomically on success, and leaves the order pending on insufficient balance.
@@ -55,7 +59,7 @@
 - 持久化对象：v0.4 的 `charging_piles.simulated/status_source/status_updated_at`、`pile_status_events`、`simulation_state` 和 `simulation_tick_records` 支撑资格、快照版本、审计和 tick 幂等；站点首次地图导入时由固定 seed 生成 4–12 个模拟桩，并保证 active station 至少一个 idle 桩。
 - 当前实现边界：Python 端已增加 SQLite-free `SimulatorCluster` 常驻循环：复用现有 `EV_SERVER_HOST`/`EV_SERVER_PORT`，注册并接收服务端快照，接收 `simulator.command` 并 ACK，周期提交 `simulator.tick`，断线后重新注册。服务端 `main.cpp` 已将 `simulator.register/snapshot/tick/pile.report/command.result` 接入公共 dispatcher，新增共享会话注册表；现有用户端/管理端消息和配置架构未改动。服务端仍是唯一状态写入者，长期 mTLS、heartbeat 指标和 stale 冲突自动重算尚未实现。
 - 2026-09-10 P1 修复：`DeterministicPlanner` 先过滤非 active 或 seed 不匹配站点，再登记 `expected_versions`；因此单个 inactive/不同 seed 站点不会阻断其他匹配站点。新增两条 Python 回归，覆盖 matching active + inactive 与 matching active + different-seed，确认 matching station proposal 可继续被接受。
-- 已验证：`services/pile-simulator` 的 Python unittest 6/6 通过（生成、transition、planner、cluster 命令向量及 inactive/different-seed 版本守卫回归）；`qmake6` Qt 6.2.4 配置 `server/tests/simulation_gateway.pro`，`make -j2` 后运行 `simulation-gateway-test database/schema/schema.sql` 通过。另以 `qmake6 server/server.pro` + `make -j2` 构建服务端，用户端主程序 `qmake6 apps/user-client/user-client.pro` + `make -j2` 已通过，`server-map-service-tests` 在 `QT_QPA_PLATFORM=offscreen` 下 6 通过/1 跳过，真实服务端 `smoke.py` 通过。新合并的旧 `map-service-tests.pro` 仍因 `TencentMapService` 未实现当前 `IMapService` 两个纯虚接口及花括号重载歧义而无法编译，暂不改用户端。
+- 已验证：`services/pile-simulator` 的 Python unittest 6/6 通过（生成、transition、planner、cluster 命令向量及 inactive/different-seed 版本守卫回归）；`qmake6` Qt 6.2.4 配置 `server/tests/simulation_gateway.pro`，`make -j2` 后运行 `simulation-gateway-test database/schema/schema.sql` 通过。另以 `qmake6 server/server.pro` + `make -j2` 构建服务端，用户端主程序 `qmake6 apps/user-client/user-client.pro` + `make -j2` 已通过，`server-map-service-tests` 在 `QT_QPA_PLATFORM=offscreen` 下 6 通过/1 跳过，真实服务端 `smoke.py` 通过。PR #21 后旧 `map-service-tests.pro` 已可由 qmake6 + `make -j2` 构建；安装 `libqt6webenginecore6-bin` 后，`QT_QPA_PLATFORM=offscreen QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu ./ev-map-service-tests -txt` 全部 11 项通过、1 项按 Protocol v1 服务端边界跳过、0 失败，WebEngine 离线冒烟已恢复。
 
 ## 2026-09-08 管理端销售业绩（近 7/30 日营收）—— `feature/admin-revenue`（PR #16 open）
 
@@ -150,6 +154,7 @@
 - **feature/admin-revenue（PR #16，2026-09-09 刷新）Windows 实测**：tst_ui 34 / tst_launchsmoke 6 / tst_loginflow 7 / tst_socketparse 12 / tst_socketadapter 19（改造前基线 24/6/7/10/16；销售业绩特性新增 9+2+3 例 + ¥ 回归 1 例，见 `tests/integration/role-c-regression.md` §5）。Ubuntu VM QtTest 复跑与真实服务端 Socket 联调**待验证**，本地产物不冒充已合入/已联调。
 - C-S1-001/002 复验通过并关闭（迁移原子性三场景 / 同批坏帧保留好帧），见 `docs/release/defect-log.md`。
 - Before each commit/PR, scan tracked content for credentials and inspect `git diff --check`; only placeholders may appear in `config/example.env`.
+- User-client validation: Qt 6.2.4 / qmake6 clean build of `apps/user-client/user-client.pro` passed after the responsive UI change; `tests/user-client-tests.pro` passed 11/11 with 4 optional Socket integration cases skipped. The offscreen application startup remained alive without a crash (WebEngine reports the expected missing OpenGL context in offscreen mode). Map tests passed 11, skipped 1 (real-GL skipped because `TENCENT_MAP_JS_KEY` was absent); server-map adapter tests passed 6/6 with the opt-in running-server case skipped. The updated ignored final binary launched under offscreen WebEngine, and the final package SHA-256 manifest passed completely.
 
 ## Dependencies and TODO
 
@@ -174,6 +179,10 @@
 
 ## Recent history
 
+- 2026-09-10：优化用户端 UI 响应式布局：默认仍为 420×760 手机式入口，但解除 21:38 强制比例并设置 340×560 最小可用尺寸；订单/个人中心改为可滚动内容，列表取消不必要的最大高度；统一输入框、按钮、区域/路线选择栏的 40px 控件高度、间距、弹出列表、焦点和禁用态；底部导航固定可见。qmake6 主程序构建与用户端 QtTest 11/11 通过。
+
+- 2026-09-10：修复用户端真实地图展示链路：新增独立运行时 `TENCENT_MAP_JS_KEY` 加载腾讯 JavaScript API GL；不再把服务端 `tencent_live/tencent_cache` 结果误判为必须离线展示；真实与离线路线视口均优先按 polyline 范围居中缩放。服务端仍独占 WebService Key 和 POI/地理编码/路线调用。当前运行服务端实测深圳 POI 与驾车路线返回 `tencent_live` 和有效折线；真实底图 GUI 目检待注入 JS Key。
+- 2026-09-10：移除演示数据中的沈阳站点范围：`database/seeds/dev.sql` 的站点 1/2 改为深圳演示站，并同步最终构建包 seed；外部运行库同样事务迁移名称、地址和坐标，保留既有桩/订单 ID。运行库 `integrity_check` 与 `foreign_key_check` 通过，22 个站点现均落在深圳 bbox 内；原库备份位于 `/tmp/ev-charging-demo-before-shenyang-removal-20260910.sqlite`。
 - 2026-09-09：PR #19 合入 `main` `005d6e8`，包含 Schema v0.4、确定性地图 Mock/cache/audit、站点导入与桩生成、模拟器内部 gateway、生产 Tencent HTTP adapter 及最终 POI 分页修复。
 - 2026-09-09：接入生产 `HttpTencentClient`：服务端运行时读取 `TENCENT_MAP_KEY`，调用官方 geocoder/POI/driving/walking WebService，统一错误映射，路线分钟→秒和 polyline 解码；新增 fake HTTP qmake6 单测和生产模式 `map_live.py` 端到端测试。真实 key 未写入仓库。
 - 2026-09-09：真实联调发现 POI `boundary=circle(...)` 不被腾讯接受（status 348）；已改为官方 `nearby(...)`，补充单点路线兼容及路线失败审计，修复后真实 `map_live.py` 通过。
@@ -184,7 +193,10 @@
 - 2026-09-09：修复用户端地址型 POI 查询覆盖服务端降级提示的问题，最终状态保留 warning 与 POI 数量信息。
 - 2026-09-10：同步 `origin/main` 至 `83449ab`（PR #17，用户端服务端地图适配）；确认 `simulator.*` 与 `map.station.search/map.route.plan` 无消息冲突。补齐模拟器命令幂等、停止后待结算占用、结算释放通知，并重新通过 server qmake6 构建、用户端服务端地图适配测试、smoke、模拟器 4/4 回归，以及真实预约→`reserve`→取消→`release` 命令镜像冒烟。
 - 2026-09-10：确认桩模拟器 P1 评审属实并修复 planner 版本守卫过滤；新增 inactive/不同 seed 站点回归，桩模拟器 Python unittest 达到 6/6。
-- 2026-09-10：安装 Qt 6.2.4 WebEngine 后，用户端主程序 qmake6 构建通过；兼容性复跑确认 PR #17 的旧 `map-service-tests` 测试目标存在接口不一致编译问题，已记录为用户端既有待修项，不纳入本次桩模拟器改动。
+- 2026-09-10：基于当前完成版 B 端实现生成答辩汇报 PPT `docs/release/B端后端实现与答辩汇报.pptx`，覆盖服务端、Protocol v1、Schema v0.4、事务一致性、地图服务、桩模拟器、测试证据和已知边界；未沿用早期 `presentation-outline.md` 口径。
+- 2026-09-10：重新构建最终演示包 `build/final/`；在干净临时目录用 qmake6/Qt 6.2.4 重建 server、admin-client、响应式 user-client、模拟器网关测试、Tencent adapter 测试及管理端/用户端地图测试，用户端服务测试 11 passed、地图 11 passed/1 skipped、服务端地图 6 passed/1 skipped、管理端测试 6/7/12/19/72 全部通过，服务端 smoke 与 Dashboard check 通过。最终包已同步到仓库外 `/home/bit/projects/work/build/ev-charging-platform-final`，用户端新二进制为 778104 bytes，两个包的 SHA-256 清单均已复核。
+- 2026-09-10：同步最新 `origin/main` `0b2576d`：PR #20 合入持久桩模拟器集群链路，PR #21 修复 PR #17 遗留的旧地图测试适配器接口兼容问题。当前功能分支与本地 `main` 均已快进到该提交，本地 `current.md` 修改和未跟踪材料保留；旧地图测试 qmake6 构建通过，7/7 个非 WebEngine 功能用例通过，完整 WebEngine 冒烟仍受缺少 Qt 6 `QtWebEngineProcess` 限制。
+- 2026-09-10：安装 Ubuntu Qt 6 WebEngine 运行包 `libqt6webenginecore6-bin` 后，旧地图测试在 Qt 6.2.4 下完整通过：11 passed、1 skipped（腾讯真实集成按 Protocol v1 服务端边界跳过）、0 failed；`QtWebEngineProcess` 已从 `/usr/lib/qt6/libexec/QtWebEngineProcess` 正常启动。
 - B Schema v0.3 protocol/database foundation and profile/wallet endpoints are merged; its smoke and concurrency suites cover transaction rollback, replay, lifecycle, frozen policy and completed-order history. The pile-uniqueness migration `002_v0.2_to_v0.3.sql` handles already-deployed v0.2 databases (C re-verified 2026-09-04).
 - A user-client Mock baseline and opt-in Socket adapter are implemented; PR #9 (P1 follow-up) merged 2026-09-05 as `e577baa`.
 - PR #8 (`994e5ff`, 2026-09-04) restored the unified admin/dashboard UI (reverting PR #7's rollback of PR #6) plus the A-02/A-04/A-06/A-07 gaps, P2-01 cleanup and the AdminRepository contract-to-wire mapping doc.
@@ -199,4 +211,4 @@
 - `runService()` captures the auth generation and user ID, so callbacks after logout/account switching are discarded; station/pile request generations still reject older query results, and pile callbacks also verify the selected station ID.
 - Frozen users may read data and perform reservation cancellation, charging stop and settlement, but UI controls for reservation creation/confirmation, charging start/direct start and wallet recharge are disabled.
 - An optional discard callback restores transient UI state such as the recharge button when an in-flight request is invalidated.
-- Compatibility baseline: current remote `main` is `83449ab` (PR #17 merge, on top of PR #19's B map service). This feature branch contains only the legacy map-test compatibility fix; do not claim private mTLS or async worker isolation until separately implemented.
+- Compatibility baseline: current remote `main` is `0b2576d` (PR #20 persistent simulator cluster plus PR #21 legacy map-test compatibility fix, on top of PR #17 and PR #19). The local `feature/pile-simulator-cluster` and `main` refs are synchronized to this commit; do not claim private mTLS or async worker isolation until separately implemented.

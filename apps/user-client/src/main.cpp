@@ -5,6 +5,7 @@
 #include "socket_user_service.h"
 
 #include <QApplication>
+#include <QAbstractItemView>
 #include <cmath>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -23,9 +24,9 @@
 #include <QPushButton>
 #include <QPixmap>
 #include <QRegularExpression>
-#include <QResizeEvent>
 #include <QScreen>
 #include <QScrollArea>
+#include <QSizePolicy>
 #include <QtMath>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -40,14 +41,11 @@ public:
   UserWindow() {
     setWindowTitle(QStringLiteral("充电用户端"));
     socketMode_ = qEnvironmentVariable("EV_USER_CLIENT_TRANSPORT").compare(QStringLiteral("socket"), Qt::CaseInsensitive) == 0;
-    setWindowFlag(Qt::WindowMaximizeButtonHint, false);
-    setMinimumSize(kMinUnits * kAspectWidth, kMinUnits * kAspectHeight);
-    setMaximumSize(kMaxUnits * kAspectWidth, kMaxUnits * kAspectHeight);
+    setMinimumSize(kMinWidth, kMinHeight);
     const QRect available = QGuiApplication::primaryScreen()->availableGeometry();
-    const int initialUnits = qBound(kMinUnits,
-        qMin(20, qMin(available.width() * 9 / (10 * kAspectWidth),
-                      available.height() * 9 / (10 * kAspectHeight))), kMaxUnits);
-    resize(initialUnits * kAspectWidth, initialUnits * kAspectHeight);
+    const int initialWidth = qMin(kDefaultWidth, qMax(kMinWidth, available.width() * 9 / 10));
+    const int initialHeight = qMin(kDefaultHeight, qMax(kMinHeight, available.height() * 9 / 10));
+    resize(initialWidth, initialHeight);
     if (socketMode_) {
       service_ = &socketService_;
       mapService_ = &serverMapService_;
@@ -69,31 +67,12 @@ public:
     showLogin();
   }
 
-protected:
-  void resizeEvent(QResizeEvent *event) override {
-    QMainWindow::resizeEvent(event);
-    if (aspectResizeInProgress_) return;
-    const QSize previous = event->oldSize();
-    const QSize requested = event->size();
-    const int widthDelta = previous.isValid() ? qAbs(requested.width() - previous.width()) : requested.width();
-    const int heightDeltaAsWidth = previous.isValid()
-        ? qRound(qAbs(requested.height() - previous.height()) * qreal(kAspectWidth) / kAspectHeight) : 0;
-    const int requestedUnits = widthDelta >= heightDeltaAsWidth
-        ? qRound(qreal(requested.width()) / kAspectWidth)
-        : qRound(qreal(requested.height()) / kAspectHeight);
-    const int units = qBound(kMinUnits, requestedUnits, kMaxUnits);
-    const QSize constrained(units * kAspectWidth, units * kAspectHeight);
-    if (constrained == requested) return;
-    aspectResizeInProgress_ = true;
-    resize(constrained);
-    aspectResizeInProgress_ = false;
-  }
-
 private:
-  static constexpr int kAspectWidth = 21;
-  static constexpr int kAspectHeight = 38;
-  static constexpr int kMinUnits = 15;
-  static constexpr int kMaxUnits = 40;
+  static constexpr int kDefaultWidth = 420;
+  static constexpr int kDefaultHeight = 760;
+  static constexpr int kMinWidth = 340;
+  static constexpr int kMinHeight = 560;
+  static constexpr int kAvatarSize = 72;
 
   MockUserService mockService_;
   SocketUserService socketService_;
@@ -102,7 +81,6 @@ private:
   IUserService *service_{&mockService_};
   IMapService *mapService_{&mockMapService_};
   bool socketMode_{false};
-  bool aspectResizeInProgress_{false};
   SessionManager session_;
   QStackedWidget *stack_{};
   QWidget *login_{}, *home_{}, *detail_{}, *map_{}, *orderPage_{}, *profile_{};
@@ -128,6 +106,40 @@ private:
   QVector<MapPoi> mapPois_;
   QList<QFutureWatcherBase *> activeWatchers_;
 
+  void configureInput(QLineEdit *edit) {
+    edit->setMinimumHeight(40);
+    edit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  }
+
+  void configureCombo(QComboBox *combo) {
+    combo->setMinimumHeight(40);
+    combo->setMinimumWidth(96);
+    combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    combo->setMinimumContentsLength(4);
+    combo->setMaxVisibleItems(8);
+    combo->setEditable(false);
+    if (combo->view()) {
+      combo->view()->setMinimumWidth(160);
+      combo->view()->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    }
+  }
+
+  void configureButton(QPushButton *button, int minimumHeight = 40) {
+    button->setMinimumHeight(minimumHeight);
+    button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  }
+
+  void configureList(QListWidget *list, bool expanding = true) {
+    list->setSizePolicy(QSizePolicy::Expanding,
+                        expanding ? QSizePolicy::Expanding : QSizePolicy::Preferred);
+    list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    list->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    list->setWordWrap(true);
+    list->setTextElideMode(Qt::ElideRight);
+    list->setSpacing(8);
+  }
+
   QWidget *passwordRow(QLineEdit *&edit) {
     auto *row = new QWidget;
     auto *layout = new QHBoxLayout(row);
@@ -137,7 +149,9 @@ private:
     auto *eye = new QPushButton(QStringLiteral("👁"), row);
     eye->setCheckable(true);
     eye->setToolTip(QStringLiteral("显示/隐藏密码"));
-    eye->setFixedWidth(42);
+    configureInput(edit);
+    configureButton(eye, 40);
+    eye->setMaximumWidth(48);
     connect(eye, &QPushButton::toggled, row, [edit](bool visible) {
       edit->setEchoMode(visible ? QLineEdit::Normal : QLineEdit::Password);
     });
@@ -147,14 +161,23 @@ private:
   }
 
   void addBottomNav(QVBoxLayout *layout, QWidget *parent) {
-    auto *bar = new QHBoxLayout;
+    auto *barWidget = new QWidget(parent);
+    barWidget->setObjectName(QStringLiteral("bottomNav"));
+    barWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto *bar = new QHBoxLayout(barWidget);
+    bar->setContentsMargins(0, 8, 0, 0);
+    bar->setSpacing(8);
     auto *homeButton = new QPushButton(QStringLiteral("⌂\n首页"), parent);
     auto *chargeButton = new QPushButton(QStringLiteral("⚡\n充电"), parent);
     auto *mineButton = new QPushButton(QStringLiteral("♙\n我的"), parent);
+    for (auto *button : {homeButton, chargeButton, mineButton}) {
+      button->setProperty("navButton", true);
+      configureButton(button, 56);
+    }
     bar->addWidget(homeButton);
     bar->addWidget(chargeButton);
     bar->addWidget(mineButton);
-    layout->addLayout(bar);
+    layout->addWidget(barWidget);
     connect(homeButton, &QPushButton::clicked, this, &UserWindow::showHome);
     connect(chargeButton, &QPushButton::clicked, this, &UserWindow::showOrderPage);
     connect(mineButton, &QPushButton::clicked, this, &UserWindow::showProfile);
@@ -162,6 +185,7 @@ private:
 
   QPushButton *nav(const QString &text, QWidget *parent, void (UserWindow::*slot)()) {
     auto *button = new QPushButton(text, parent);
+    configureButton(button);
     connect(button, &QPushButton::clicked, this, slot);
     return button;
   }
@@ -202,6 +226,7 @@ private:
     login_ = new QWidget;
     auto *layout = new QVBoxLayout(login_);
     layout->setContentsMargins(24, 28, 24, 18);
+    layout->setSpacing(12);
     auto *title = new QLabel(QStringLiteral("⚡\n充电用户端"), login_);
     title->setObjectName(QStringLiteral("title"));
     title->setAlignment(Qt::AlignCenter);
@@ -211,12 +236,17 @@ private:
     subtitle->setAlignment(Qt::AlignCenter);
     layout->addWidget(subtitle);
     auto *form = new QFormLayout;
+    form->setContentsMargins(0, 8, 0, 0);
+    form->setHorizontalSpacing(10);
+    form->setVerticalSpacing(8);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     phone_ = new QLineEdit;
+    configureInput(phone_);
     phone_->setPlaceholderText(QStringLiteral("请输入 11 位手机号"));
     form->addRow(QStringLiteral("手机号"), phone_);
     layout->addLayout(form);
     loginButton_ = new QPushButton(QStringLiteral("登录"), login_);
-    loginButton_->setMinimumHeight(42);
+    configureButton(loginButton_, 44);
     layout->addWidget(loginButton_);
     loginStatus_ = new QLabel(login_);
     loginStatus_->setWordWrap(true);
@@ -244,31 +274,48 @@ private:
     layout->addWidget(orderSummary_);
 
     auto *locationCard = new QVBoxLayout;
+    locationCard->setContentsMargins(0, 4, 0, 0);
+    locationCard->setSpacing(8);
     locationStatus_ = new QLabel(QStringLiteral("⌖ 当前位置：深圳市"), home_);
+    locationStatus_->setObjectName(QStringLiteral("sectionLabel"));
     locationCard->addWidget(locationStatus_);
     auto *locationRow = new QHBoxLayout;
+    locationRow->setSpacing(8);
     region_ = new QComboBox(home_);
     region_->addItems({QStringLiteral("深圳市"), QStringLiteral("南山区"), QStringLiteral("福田区"), QStringLiteral("宝安区")});
+    region_->setAccessibleName(QStringLiteral("定位区域"));
+    region_->setToolTip(QStringLiteral("选择定位区域"));
+    configureCombo(region_);
     address_ = new QLineEdit(home_);
+    configureInput(address_);
     address_->setPlaceholderText(QStringLiteral("手动输入地址重新定位"));
     auto *locate = new QPushButton(QStringLiteral("定位"), home_);
-    locationRow->addWidget(region_);
-    locationRow->addWidget(address_);
-    locationRow->addWidget(locate);
+    configureButton(locate);
+    locationRow->addWidget(region_, 0);
+    locationRow->addWidget(address_, 1);
+    locationRow->addWidget(locate, 0);
     locationCard->addLayout(locationRow);
     layout->addLayout(locationCard);
+    connect(region_, &QComboBox::currentTextChanged, this, [this](const QString &region) {
+      if (address_ && address_->text().trimmed().isEmpty())
+        locationStatus_->setText(QStringLiteral("⌖ 当前位置：%1").arg(region));
+    });
 
     query_ = new QLineEdit(home_);
+    configureInput(query_);
     query_->setPlaceholderText(QStringLiteral("搜索站点名称或地址"));
     auto *search = new QPushButton(QStringLiteral("查询"), home_);
+    configureButton(search);
     auto *searchRow = new QHBoxLayout;
+    searchRow->setSpacing(8);
     searchRow->addWidget(query_);
     searchRow->addWidget(search);
     layout->addLayout(searchRow);
 
     stationList_ = new QListWidget(home_);
     stationList_->setObjectName(QStringLiteral("stationCards"));
-    stationList_->setSpacing(7);
+    configureList(stationList_);
+    stationList_->setMinimumHeight(140);
     stationList_->setAlternatingRowColors(false);
     layout->addWidget(stationList_);
 
@@ -301,12 +348,14 @@ private:
     layout->addWidget(detailTitle_);
     pileList_ = new QListWidget(detail_);
     pileList_->setObjectName(QStringLiteral("pileCards"));
-    pileList_->setSpacing(5);
+    configureList(pileList_);
+    pileList_->setMinimumHeight(140);
     layout->addWidget(pileList_);
     pileStatus_ = new QLabel(detail_);
     pileStatus_->setWordWrap(true);
     layout->addWidget(pileStatus_);
     auto *buttons = new QHBoxLayout;
+    buttons->setSpacing(8);
     buttons->addWidget(nav(QStringLiteral("地图导航"), detail_, &UserWindow::showMap));
     buttons->addWidget(nav(QStringLiteral("返回首页"), detail_, &UserWindow::showHome));
     layout->addLayout(buttons);
@@ -325,39 +374,51 @@ private:
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     auto *content = new QWidget(scroll);
     auto *layout = new QVBoxLayout(content);
-    layout->setContentsMargins(4, 4, 4, 8);
-    layout->setSpacing(8);
+    layout->setContentsMargins(6, 6, 6, 12);
+    layout->setSpacing(10);
     auto *title = new QLabel(QStringLiteral("一键导航 · 服务端地图"), content);
     title->setObjectName(QStringLiteral("title"));
     layout->addWidget(title);
     fromLocation_ = new QLineEdit(content);
+    configureInput(fromLocation_);
     fromLocation_->setPlaceholderText(QStringLiteral("起点：地址或 纬度,经度"));
     fromLocation_->setText(QStringLiteral("22.530,113.930"));
     layout->addWidget(fromLocation_);
     auto *locate = new QPushButton(QStringLiteral("定位并查询附近地图 POI"), content);
+    configureButton(locate);
     layout->addWidget(locate);
     mapView_ = new MapWebView(content);
     mapView_->setServiceBacked(socketMode_);
+    mapView_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     layout->addWidget(mapView_);
-    layout->addWidget(new QLabel(QStringLiteral("地图 POI（仅位置数据，不能直接下单）"), content));
+    auto *poiLabel = new QLabel(QStringLiteral("地图 POI（仅位置数据，不能直接下单）"), content);
+    poiLabel->setObjectName(QStringLiteral("sectionLabel"));
+    layout->addWidget(poiLabel);
     mapPoiList_ = new QListWidget(content);
-    mapPoiList_->setMinimumHeight(100);
-    mapPoiList_->setMaximumHeight(130);
+    configureList(mapPoiList_, false);
+    mapPoiList_->setMinimumHeight(96);
     layout->addWidget(mapPoiList_);
-    layout->addWidget(new QLabel(QStringLiteral("业务站点（可作为导航终点）"), content));
+    auto *stationLabel = new QLabel(QStringLiteral("业务站点（可作为导航终点）"), content);
+    stationLabel->setObjectName(QStringLiteral("sectionLabel"));
+    layout->addWidget(stationLabel);
     mapStationList_ = new QListWidget(content);
+    configureList(mapStationList_, false);
     mapStationList_->setToolTip(QStringLiteral("点击站点标记选择终点"));
-    mapStationList_->setMinimumHeight(110);
-    mapStationList_->setMaximumHeight(150);
+    mapStationList_->setMinimumHeight(104);
     layout->addWidget(mapStationList_);
     mapStatus_ = new QLabel(content);
     mapStatus_->setWordWrap(true);
     mapStatus_->setObjectName(QStringLiteral("statusPanel"));
     layout->addWidget(mapStatus_);
     auto *routeRow = new QHBoxLayout;
+    routeRow->setSpacing(8);
     routeMode_ = new QComboBox(content);
     routeMode_->addItems({QStringLiteral("驾车"), QStringLiteral("步行")});
+    routeMode_->setAccessibleName(QStringLiteral("路线方式"));
+    routeMode_->setToolTip(QStringLiteral("选择出行方式"));
+    configureCombo(routeMode_);
     auto *route = new QPushButton(QStringLiteral("查询路线"), content);
+    configureButton(route);
     routeRow->addWidget(routeMode_, 1);
     routeRow->addWidget(route, 1);
     layout->addLayout(routeRow);
@@ -385,8 +446,16 @@ private:
 
   void buildOrder() {
     orderPage_ = new QWidget;
-    auto *layout = new QVBoxLayout(orderPage_);
-    layout->setContentsMargins(14, 14, 14, 8);
+    auto *rootLayout = new QVBoxLayout(orderPage_);
+    rootLayout->setContentsMargins(14, 14, 14, 8);
+    auto *scroll = new QScrollArea(orderPage_);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto *content = new QWidget(scroll);
+    auto *layout = new QVBoxLayout(content);
+    layout->setContentsMargins(0, 0, 0, 12);
+    layout->setSpacing(9);
     auto *title = new QLabel(QStringLiteral("当前充电状态"), orderPage_);
     title->setObjectName(QStringLiteral("title"));
     layout->addWidget(title);
@@ -399,6 +468,8 @@ private:
     confirmRow->setContentsMargins(0, 0, 0, 0);
     confirmOrderButton_ = new QPushButton(QStringLiteral("确认创建订单"), orderPage_);
     reserveButton_ = new QPushButton(QStringLiteral("预约该充电桩"), orderPage_);
+    configureButton(confirmOrderButton_);
+    configureButton(reserveButton_);
     confirmRow->addWidget(confirmOrderButton_);
     confirmRow->addWidget(reserveButton_);
     layout->addWidget(confirmationControls_);
@@ -408,6 +479,8 @@ private:
     settleButton_ = new QPushButton(QStringLiteral("结算"), orderPage_);
     returnPileButton_ = new QPushButton(QStringLiteral("返回充电桩"), orderPage_);
     cancelReservationButton_ = new QPushButton(QStringLiteral("取消预约"), orderPage_);
+    for (auto *button : {startButton_, directStartButton_, stopButton_, settleButton_, returnPileButton_, cancelReservationButton_})
+      configureButton(button);
     layout->addWidget(startButton_);
     layout->addWidget(directStartButton_);
     layout->addWidget(stopButton_);
@@ -420,14 +493,17 @@ private:
     historySummary_->setObjectName(QStringLiteral("statusPanel"));
     layout->addWidget(historySummary_);
     historyList_ = new QListWidget(orderPage_);
-    historyList_->setMaximumHeight(150);
+    configureList(historyList_, false);
+    historyList_->setMinimumHeight(100);
     layout->addWidget(historyList_);
     layout->addStretch();
+    scroll->setWidget(content);
+    rootLayout->addWidget(scroll, 1);
     confirmationControls_->setVisible(false);
     returnPileButton_->setVisible(false);
     cancelReservationButton_->setVisible(false);
     directStartButton_->setVisible(false);
-    addBottomNav(layout, orderPage_);
+    addBottomNav(rootLayout, orderPage_);
     connect(confirmOrderButton_, &QPushButton::clicked, this, &UserWindow::confirmOrder);
     connect(reserveButton_, &QPushButton::clicked, this, &UserWindow::reservePile);
     connect(returnPileButton_, &QPushButton::clicked, this, [this] { showStationDetail(); });
@@ -441,14 +517,23 @@ private:
 
   void buildProfile() {
     profile_ = new QWidget;
-    auto *layout = new QVBoxLayout(profile_);
-    layout->setContentsMargins(14, 14, 14, 8);
+    auto *rootLayout = new QVBoxLayout(profile_);
+    rootLayout->setContentsMargins(14, 14, 14, 8);
+    auto *scroll = new QScrollArea(profile_);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto *content = new QWidget(scroll);
+    auto *layout = new QVBoxLayout(content);
+    layout->setContentsMargins(0, 0, 0, 12);
+    layout->setSpacing(10);
     auto *title = new QLabel(QStringLiteral("我的"), profile_);
     title->setObjectName(QStringLiteral("title"));
     layout->addWidget(title);
     auto *accountCard = new QHBoxLayout;
+    accountCard->setSpacing(12);
     avatarLabel_ = new QLabel(QStringLiteral("用"), profile_);
-    avatarLabel_->setFixedSize(84, 84);
+    avatarLabel_->setFixedSize(kAvatarSize, kAvatarSize);
     avatarLabel_->setAlignment(Qt::AlignCenter);
     avatarLabel_->setObjectName(QStringLiteral("avatarBadge"));
     accountCard->addWidget(avatarLabel_);
@@ -457,29 +542,39 @@ private:
     accountCard->addWidget(profileLabel_);
     layout->addLayout(accountCard);
     nickname_ = new QLineEdit(profile_);
+    configureInput(nickname_);
     nickname_->setPlaceholderText(QStringLiteral("修改昵称"));
     auto *save = new QPushButton(QStringLiteral("保存昵称"), profile_);
     auto *avatar = new QPushButton(QStringLiteral("选择头像"), profile_);
+    configureButton(save);
+    configureButton(avatar);
     auto *profileButtons = new QHBoxLayout;
+    profileButtons->setSpacing(8);
     profileButtons->addWidget(nickname_);
     profileButtons->addWidget(save);
-    profileButtons->addWidget(avatar);
     layout->addLayout(profileButtons);
+    layout->addWidget(avatar);
     auto *wallet = new QHBoxLayout;
+    wallet->setSpacing(8);
     rechargeAmount_ = new QDoubleSpinBox(profile_);
+    rechargeAmount_->setMinimumHeight(40);
+    rechargeAmount_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     rechargeAmount_->setRange(1.0, 10000.0);
     rechargeAmount_->setDecimals(2);
     rechargeAmount_->setPrefix(QStringLiteral("¥ "));
     rechargeButton_ = new QPushButton(socketMode_ ? QStringLiteral("充值") : QStringLiteral("充值（Mock）"), profile_);
     auto *recharge = rechargeButton_;
+    configureButton(recharge);
     wallet->addWidget(rechargeAmount_);
     wallet->addWidget(recharge);
     layout->addLayout(wallet);
     if (!socketMode_)
       layout->addWidget(new QLabel(QStringLiteral("余额和账号信息为本地演示数据"), profile_));
     layout->addStretch();
-    layout->addWidget(nav(QStringLiteral("退出登录"), profile_, &UserWindow::logout));
-    addBottomNav(layout, profile_);
+    scroll->setWidget(content);
+    rootLayout->addWidget(scroll, 1);
+    rootLayout->addWidget(nav(QStringLiteral("退出登录"), profile_, &UserWindow::logout));
+    addBottomNav(rootLayout, profile_);
     connect(save, &QPushButton::clicked, this, &UserWindow::saveProfile);
     connect(avatar, &QPushButton::clicked, this, &UserWindow::chooseAvatar);
     connect(recharge, &QPushButton::clicked, this, &UserWindow::recharge);
@@ -617,8 +712,11 @@ private:
     mapPoiList_->clear();
     mapService_->setUserId(session_.user().id);
     mapService_->setTargetStationId(selectedStation_.id);
-    mapView_->showOffline(socketMode_ ? QStringLiteral("等待服务端返回站点与路线数据")
-                                      : QStringLiteral("当前使用本地演示地图"));
+    const QString mapJsKey = qEnvironmentVariable("TENCENT_MAP_JS_KEY").trimmed();
+    if (socketMode_ && !mapJsKey.isEmpty()) mapView_->loadTencent(mapJsKey);
+    else mapView_->showOffline(socketMode_
+        ? QStringLiteral("未配置用户端腾讯地图 JS Key，当前显示服务端数据的离线预览")
+        : QStringLiteral("当前使用本地演示地图"));
     const quint64 requestGeneration = ++stationRequestGeneration_;
     runService<QVector<Station>>([this] { return service_->stations(QString()); }, [this, requestGeneration](const Result<QVector<Station>> &result) {
       if (requestGeneration != stationRequestGeneration_) return;
@@ -651,7 +749,7 @@ private:
                                .arg(session_.user().walletBalanceCents / 100.0, 0, 'f', 2));
     nickname_->setText(session_.user().displayName);
     if (!session_.user().avatarPath.isEmpty()) {
-      avatarLabel_->setPixmap(QPixmap(session_.user().avatarPath).scaled(84, 84, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
+      avatarLabel_->setPixmap(QPixmap(session_.user().avatarPath).scaled(kAvatarSize, kAvatarSize, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
       avatarLabel_->setText({});
     } else {
       avatarLabel_->setPixmap({});
@@ -708,7 +806,7 @@ private:
         const QString distance = station.distanceKm >= 0.0 ? QString::number(station.distanceKm) + QStringLiteral(" km") : QStringLiteral("距离待定位");
         auto *item = new QListWidgetItem(QStringLiteral("站点 %1  ·  %2\n%3\n空闲 %4/%5   ·   %6   ·   %7").arg(index++).arg(station.name).arg(station.address).arg(station.availablePiles).arg(station.totalPiles).arg(distance).arg(station.open ? QStringLiteral("营业中") : QStringLiteral("暂停营业")), stationList_);
         QFont font = item->font(); font.setBold(true); item->setFont(font);
-        item->setSizeHint(QSize(0, 86)); item->setData(Qt::UserRole, station.id);
+        item->setData(Qt::UserRole, station.id);
       }
       homeStatus_->setText(QStringLiteral("已加载 %1 个站点 · 空闲桩数/总桩数 · 按距离由近及远").arg(result.value.size()));
     });
@@ -880,8 +978,6 @@ private:
                            socketMode_ ? MapSource::Server : MapSource::Mock});
     }
     mapView_->setMarkers(markers);
-    if (!pois.isEmpty() && pois.first().source != MapSource::Tencent)
-      mapView_->showOffline(status);
     mapStatus_->setText(status);
   }
 
@@ -904,7 +1000,6 @@ private:
       if (!result.ok) { mapStatus_->setText(QStringLiteral("路线查询失败：%1").arg(result.error.userMessage)); return; }
       const QString notice = mapResultNotice(result);
       if (result.hasResolvedOrigin && isValidCoordinate(result.resolvedOrigin)) mapOrigin_ = result.resolvedOrigin;
-      if (result.value.source != MapSource::Tencent) mapView_->showOffline(notice);
       mapView_->setRoute(result.value);
       const QString source = socketMode_ && result.value.source == MapSource::Mock
           ? QStringLiteral("服务端备用路线") : mapSourceText(result.value.source);
@@ -926,7 +1021,6 @@ private:
       if (!result.ok) { mapStatus_->setText(QStringLiteral("路线查询失败：%1").arg(result.error.userMessage)); return; }
       const QString resultNotice = mapResultNotice(result);
       const QString notice = !resultNotice.isEmpty() ? resultNotice : priorNotice;
-      if (result.value.source != MapSource::Tencent) mapView_->showOffline(notice);
       mapView_->setRoute(result.value);
       const QString source = socketMode_ && result.value.source == MapSource::Mock
           ? QStringLiteral("服务端备用路线") : mapSourceText(result.value.source);
@@ -1041,7 +1135,7 @@ private:
     const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("选择头像"), QString(), QStringLiteral("图片 (*.png *.jpg *.jpeg)"));
     if (path.isEmpty()) return;
     session_.setAvatarPath(path);
-    avatarLabel_->setPixmap(QPixmap(path).scaled(84, 84, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
+    avatarLabel_->setPixmap(QPixmap(path).scaled(kAvatarSize, kAvatarSize, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
     avatarLabel_->setText({});
   }
 

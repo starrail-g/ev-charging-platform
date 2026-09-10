@@ -372,7 +372,17 @@ private slots:
   }
 
   void webEngineRealIntegration() {
-    QSKIP("Tencent WebService and GL JS are server-owned after Protocol v1 map contract; use B server acceptance instead");
+    const QString key = qEnvironmentVariable("TENCENT_MAP_JS_KEY").trimmed();
+    if (key.isEmpty()) QSKIP("TENCENT_MAP_JS_KEY is not configured");
+    MapWebView view;
+    view.setMarkers({{QStringLiteral("poi"), QStringLiteral("测试站"), QStringLiteral("测试地址"),
+                      {22.530233, 113.930267}, 0, MapSource::Server}});
+    MapRoute route;
+    route.source = MapSource::Server;
+    route.polyline = {{22.529916, 113.930188}, {22.530202, 113.930337}};
+    view.setRoute(route);
+    view.loadTencent(key);
+    QTRY_VERIFY_WITH_TIMEOUT(view.isRealPageLoaded(), 15000);
   }
 };
 

@@ -49,7 +49,9 @@
       caption.textContent = payload.caption + ' · ' + payload.markers.length + ' 个标记' +
         (payload.line.length > 1 ? ' · 已加载路线' : '');
       mapNode.appendChild(caption);
-      const coordinates = payload.markers.map(m => [m.lat, m.lng]).concat(payload.line);
+      const coordinates = payload.line.length > 1
+        ? payload.line
+        : payload.markers.map(m => [m.lat, m.lng]);
       if (!coordinates.length) return;
       const lats = coordinates.map(p => p[0]);
       const lngs = coordinates.map(p => p[1]);
@@ -74,10 +76,28 @@
         mapNode.appendChild(button);
       });
     }
+    function mapViewport() {
+      const coordinates = payload.line.length > 1
+        ? payload.line
+        : payload.markers.map(marker => [marker.lat, marker.lng]);
+      if (!coordinates.length) {
+        return { center: new TMap.LatLng(payload.centerLat, payload.centerLng), zoom: 13 };
+      }
+      const lats = coordinates.map(point => point[0]);
+      const lngs = coordinates.map(point => point[1]);
+      const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+      const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+      const centerLat = (minLat + maxLat) / 2;
+      const centerLng = (minLng + maxLng) / 2;
+      const longitudeScale = Math.max(.2, Math.cos(centerLat * Math.PI / 180));
+      const span = Math.max(maxLat - minLat, (maxLng - minLng) * longitudeScale, .00001);
+      const zoom = Math.max(3, Math.min(18, Math.floor(Math.log2(360 / span)) - 1));
+      return { center: new TMap.LatLng(centerLat, centerLng), zoom };
+    }
     function drawTencent() {
       if (!window.TMap) { mapNode.textContent = '腾讯地图脚本未加载'; return; }
-      const center = new TMap.LatLng(payload.centerLat, payload.centerLng);
-      window.evMap = new TMap.Map(mapNode, { center: center, zoom: 13 });
+      const viewport = mapViewport();
+      window.evMap = new TMap.Map(mapNode, { center: viewport.center, zoom: viewport.zoom });
       if (payload.markers.length) {
         const markerLayer = new TMap.MultiMarker({
           map: window.evMap,

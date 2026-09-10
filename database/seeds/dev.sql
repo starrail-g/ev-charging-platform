@@ -24,9 +24,9 @@ VALUES
 INSERT OR IGNORE INTO stations
     (id, name, address, latitude, longitude, status, created_at, updated_at)
 VALUES
-    (1, '软件园一号站', '沈阳市浑南区软件园路1号', 41.7192, 123.4315,
+    (1, '深圳演示一号站', '广东省深圳市南山区桃园路1号西海明珠花园', 22.530233, 113.930267,
      'active', '2026-08-20T01:00:00Z', '2026-09-01T00:00:00Z'),
-    (2, '市府广场站', '沈阳市沈河区市府大路1号', 41.8057, 123.4290,
+    (2, '深圳演示二号站', '广东省深圳市南山区桃园路1号', 22.530031, 113.929516,
      'active', '2026-08-20T01:00:00Z', '2026-09-01T00:00:00Z');
 
 INSERT OR IGNORE INTO charging_piles
