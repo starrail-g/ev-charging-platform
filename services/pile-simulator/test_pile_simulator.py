@@ -5,6 +5,7 @@ from pile_simulator import (
     DeterministicPlanner,
     PileSnapshot,
     StationSnapshot,
+    SimulatorCluster,
     generate_piles,
     generator_digest,
     transition,
@@ -48,6 +49,54 @@ class ContractVectorTest(unittest.TestCase):
         self.assertEqual(planner.proposal(1842, [station]), planner.proposal(1842, [station]))
         self.assertEqual(planner.proposal(1842, [station])["expected_versions"], {"42": 7})
         self.assertEqual(planner.proposal(1842, [station])["changes"], [])
+
+    def test_cluster_applies_server_commands_and_tick(self):
+        cluster = SimulatorCluster("sim-1", "demo-2026-09")
+        cluster.register_snapshot({"stations": [{
+            "station_id": 42, "snapshot_version": 7,
+            "seed_id": "demo-2026-09", "status": "active",
+            "piles": [{"pile_id": 4201, "status": "idle", "simulated": True,
+                       "active_order": False}]
+        }]})
+        ack = cluster.apply_command({"command_id": "c1", "command": "reserve",
+                                     "pile_id": 4201, "order_id": 9})
+        self.assertTrue(ack["accepted"])
+        self.assertEqual(ack["status"], "reserved")
+        self.assertTrue(cluster.apply_command({"command_id": "c2", "command": "start_charging",
+                                               "pile_id": 4201})["accepted"])
+        self.assertTrue(cluster.apply_command({"command_id": "c3", "command": "stop_charging",
+                                               "pile_id": 4201, "order_id": 9})["accepted"])
+        self.assertTrue(cluster.apply_command({"command_id": "c4", "command": "settle",
+                                               "pile_id": 4201, "order_id": 9})["accepted"])
+        proposal = cluster.build_tick()
+        self.assertEqual(proposal["expected_versions"], {"42": 7})
+        self.assertTrue(all(change["pile_id"] == 4201 for change in proposal["changes"]))
+
+    def test_planner_excludes_inactive_station_from_version_guard(self):
+        matching = StationSnapshot(
+            42, 7, "demo-2026-09", "active",
+            (PileSnapshot(4201, 42, "idle", True, False),),
+        )
+        inactive = StationSnapshot(
+            43, 19, "demo-2026-09", "inactive",
+            (PileSnapshot(4301, 43, "idle", True, False),),
+        )
+        proposal = DeterministicPlanner("sim-1", "demo-2026-09").proposal(
+            1842, [matching, inactive])
+        self.assertEqual(proposal["expected_versions"], {"42": 7})
+
+    def test_planner_excludes_different_seed_from_version_guard(self):
+        matching = StationSnapshot(
+            42, 7, "demo-2026-09", "active",
+            (PileSnapshot(4201, 42, "idle", True, False),),
+        )
+        other_seed = StationSnapshot(
+            44, 23, "legacy-seed", "active",
+            (PileSnapshot(4401, 44, "idle", True, False),),
+        )
+        proposal = DeterministicPlanner("sim-1", "demo-2026-09").proposal(
+            1842, [matching, other_seed])
+        self.assertEqual(proposal["expected_versions"], {"42": 7})
 
 
 if __name__ == "__main__":

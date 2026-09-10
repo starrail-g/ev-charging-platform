@@ -1,6 +1,7 @@
 #include "ev_protocol/frame_codec.h"
 #include "ev_database/database.h"
 #include "map/map_service.h"
+#include "map/simulation_gateway.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -14,6 +15,7 @@
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QDateTime>
+#include <QUuid>
 #include <QTcpServer>
 #include <QTcpSocket>
 
@@ -22,6 +24,45 @@
 
 using namespace ev::protocol;
 using ev::database::ErrorKind;
+
+class SimulationSessionRegistry final {
+public:
+    void attach(const QString &simulatorId, QTcpSocket *socket)
+    {
+        if (simulatorId.isEmpty() || !socket) return;
+        for (auto it = sessions_.begin(); it != sessions_.end();) {
+            if (it.value() == socket || it.key() == simulatorId) it = sessions_.erase(it);
+            else ++it;
+        }
+        sessions_.insert(simulatorId, socket);
+        socketIds_.insert(socket, simulatorId);
+    }
+
+    void detach(QTcpSocket *socket)
+    {
+        const QString id = socketIds_.take(socket);
+        if (!id.isEmpty() && sessions_.value(id) == socket) sessions_.remove(id);
+    }
+
+    bool sendCommand(const QJsonObject &payload)
+    {
+        bool sent = false;
+        const QByteArray frame = encodeFrame(Message{kProtocolVersion,
+                                                     payload.value(QStringLiteral("command_id")).toString(),
+                                                     QStringLiteral("simulator.command"), payload});
+        for (auto it = sessions_.begin(); it != sessions_.end();) {
+            if (!it.value() || it.value()->state() == QAbstractSocket::UnconnectedState) {
+                socketIds_.remove(it.value()); it = sessions_.erase(it); continue;
+            }
+            it.value()->write(frame); sent = true; ++it;
+        }
+        return sent;
+    }
+
+private:
+    QHash<QString, QTcpSocket*> sessions_;
+    QHash<QTcpSocket*, QString> socketIds_;
+};
 
 class AdminSessionStore final {
 public:
@@ -68,15 +109,19 @@ class ClientConnection final : public QObject {
 public:
     explicit ClientConnection(QTcpSocket *socket, QString databasePath, QString schemaPath,
                               QString seedPath, AdminSessionStore *adminSessions,
+                              SimulationSessionRegistry *simulators,
                               QObject *parent = nullptr)
         : QObject(parent), socket_(socket),
           database_(std::move(databasePath), std::move(schemaPath), std::move(seedPath)),
           mapService_(&database_),
-          adminSessions_(adminSessions)
+          adminSessions_(adminSessions), simulators_(simulators)
     {
         socket_->setParent(this);
         connect(socket_, &QTcpSocket::readyRead, this, [this] { readAvailable(); });
-        connect(socket_, &QTcpSocket::disconnected, this, &QObject::deleteLater);
+        connect(socket_, &QTcpSocket::disconnected, this, [this] {
+            if (simulators_) simulators_->detach(socket_);
+            deleteLater();
+        });
         connect(socket_, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
             qWarning() << "socket error" << socket_->errorString();
         });
@@ -98,7 +143,17 @@ private:
     void handle(const Message &request)
     {
         qInfo() << "request" << request.id << request.type;
-        if (request.type == QStringLiteral("health")) {
+        if (request.type == QStringLiteral("simulator.register")) {
+            handleSimulatorRegister(request);
+        } else if (request.type == QStringLiteral("simulator.tick")) {
+            handleSimulatorTick(request);
+        } else if (request.type == QStringLiteral("simulator.pile.report")) {
+            handleSimulatorReport(request);
+        } else if (request.type == QStringLiteral("simulator.command.result")) {
+            handleSimulatorCommandResult(request);
+        } else if (request.type == QStringLiteral("simulator.snapshot.get")) {
+            handleSimulatorSnapshot(request);
+        } else if (request.type == QStringLiteral("health")) {
             sendResponse(request, QStringLiteral("health.result"),
                          QJsonObject{{QStringLiteral("status"), QStringLiteral("ok")},
                                      {QStringLiteral("service"), QStringLiteral("ev-server")}});
@@ -213,6 +268,118 @@ private:
         }
         sendResponse(request, QStringLiteral("user.login.result"),
                      QJsonObject{{QStringLiteral("user"), user}});
+    }
+
+    void handleSimulatorRegister(const Message &request)
+    {
+        const QString simulatorId = request.payload.value(QStringLiteral("simulator_id")).toString().trimmed();
+        if (simulatorId.isEmpty() || simulatorId.size() > 128) {
+            sendError(request.id, ErrorCode::InvalidRequest, QStringLiteral("simulator_id is required"));
+            return;
+        }
+        if (simulators_) simulators_->attach(simulatorId, socket_);
+        QJsonObject snapshot; QString error; ErrorKind kind = ErrorKind::None;
+        if (!database_.getSimulationSnapshot(&snapshot, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error, QStringLiteral("read simulator snapshot failed"));
+            return;
+        }
+        snapshot.insert(QStringLiteral("simulator_id"), simulatorId);
+        sendResponse(request, QStringLiteral("simulator.register.result"), snapshot);
+    }
+
+    void handleSimulatorSnapshot(const Message &request)
+    {
+        QJsonObject snapshot; QString error; ErrorKind kind = ErrorKind::None;
+        if (!database_.getSimulationSnapshot(&snapshot, &error, &kind)) {
+            sendDatabaseError(request.id, kind, error, QStringLiteral("read simulator snapshot failed"));
+            return;
+        }
+        sendResponse(request, QStringLiteral("simulator.snapshot.result"), snapshot);
+    }
+
+    void handleSimulatorTick(const Message &request)
+    {
+        QJsonObject result; ErrorCode code = ErrorCode::InternalError; QString error;
+        if (!simulationGateway_.apply(request.payload, &result, &code, &error)) {
+            sendError(request.id, code, error);
+            return;
+        }
+        sendResponse(request, QStringLiteral("simulator.tick.result"), result);
+    }
+
+    void handleSimulatorReport(const Message &request)
+    {
+        const QJsonObject payload = request.payload;
+        qint64 pileId = 0;
+        qint64 stationId = 0;
+        qint64 expectedVersion = 0;
+        qint64 tickId = QDateTime::currentMSecsSinceEpoch();
+        if (!positiveId(payload.value(QStringLiteral("pile_id")), &pileId)
+            || !payload.value(QStringLiteral("from")).isString()
+            || !payload.value(QStringLiteral("to")).isString()) {
+            sendError(request.id, ErrorCode::InvalidRequest,
+                      QStringLiteral("pile report requires pile_id, from and to"));
+            return;
+        }
+        if (payload.value(QStringLiteral("tick_id")).isDouble())
+            tickId = payload.value(QStringLiteral("tick_id")).toInteger();
+        QJsonObject snapshot; QString snapshotError; ErrorKind snapshotKind = ErrorKind::None;
+        if (!database_.getSimulationSnapshot(&snapshot, &snapshotError, &snapshotKind)) {
+            sendDatabaseError(request.id, snapshotKind, snapshotError,
+                              QStringLiteral("read simulator snapshot failed"));
+            return;
+        }
+        for (const QJsonValue &stationValue : snapshot.value(QStringLiteral("stations")).toArray()) {
+            const QJsonObject station = stationValue.toObject();
+            for (const QJsonValue &pileValue : station.value(QStringLiteral("piles")).toArray()) {
+                if (pileValue.toObject().value(QStringLiteral("pile_id")).toInteger() == pileId) {
+                    stationId = station.value(QStringLiteral("station_id")).toInteger();
+                    expectedVersion = station.value(QStringLiteral("snapshot_version")).toInteger();
+                    break;
+                }
+            }
+            if (stationId > 0) break;
+        }
+        if (stationId <= 0) {
+            sendError(request.id, ErrorCode::NotFound, QStringLiteral("pile not found in simulator snapshot"));
+            return;
+        }
+        QJsonObject proposal{{QStringLiteral("simulator_id"), payload.value(QStringLiteral("simulator_id"))},
+                             {QStringLiteral("seed_id"), payload.value(QStringLiteral("seed_id"))},
+                             {QStringLiteral("tick_id"), tickId},
+                             {QStringLiteral("expected_versions"),
+                              QJsonObject{{QString::number(stationId), expectedVersion}}},
+                             {QStringLiteral("changes"), QJsonArray{QJsonObject{
+                                  {QStringLiteral("pile_id"), pileId},
+                                  {QStringLiteral("from"), payload.value(QStringLiteral("from"))},
+                                  {QStringLiteral("to"), payload.value(QStringLiteral("to"))},
+                                  {QStringLiteral("reason"), payload.value(QStringLiteral("reason"))}}}}};
+        QJsonObject result; ErrorCode code = ErrorCode::InternalError; QString error;
+        if (!simulationGateway_.apply(proposal, &result, &code, &error)) {
+            sendError(request.id, code, error);
+            return;
+        }
+        sendResponse(request, QStringLiteral("simulator.pile.report.result"), result);
+    }
+
+    void handleSimulatorCommandResult(const Message &request)
+    {
+        // Command ACKs are intentionally lightweight for the demo path. The
+        // server has already committed the user/admin business transaction;
+        // retain the ACK as an observable response for the simulator client.
+        sendResponse(request, QStringLiteral("simulator.command.result.ack"),
+                     QJsonObject{{QStringLiteral("accepted"), true},
+                                 {QStringLiteral("command_id"), request.payload.value(QStringLiteral("command_id"))}});
+    }
+
+    void notifySimulator(const QString &command, qint64 pileId, qint64 orderId = 0)
+    {
+        if (!simulators_ || pileId <= 0) return;
+        QJsonObject payload{{QStringLiteral("command_id"), QUuid::createUuid().toString(QUuid::WithoutBraces)},
+                            {QStringLiteral("command"), command},
+                            {QStringLiteral("pile_id"), pileId}};
+        if (orderId > 0) payload.insert(QStringLiteral("order_id"), orderId);
+        simulators_->sendCommand(payload);
     }
 
     static bool positiveId(const QJsonValue &value, qint64 *id)
@@ -664,6 +831,7 @@ private:
                               QStringLiteral("restart charging pile failed"));
             return;
         }
+        notifySimulator(QStringLiteral("restart"), pileId);
         sendResponse(request, QStringLiteral("admin.pile.restart.result"),
                      QJsonObject{{QStringLiteral("pile"), pile}});
     }
@@ -724,6 +892,7 @@ private:
         if (!database_.createReservation(request.id, userId, pileId, &order, &pile, &error, &kind)) {
             sendDatabaseError(request.id, kind, error, QStringLiteral("create reservation failed")); return;
         }
+        notifySimulator(QStringLiteral("reserve"), pileId, order.value(QStringLiteral("id")).toInteger());
         sendResponse(request, QStringLiteral("reservation.create.result"), QJsonObject{{QStringLiteral("order"), order}, {QStringLiteral("pile"), pile}});
     }
 
@@ -742,6 +911,7 @@ private:
         if (!requestIds(request.payload, &userId, &orderId, QStringLiteral("order_id"))) { sendError(request.id, ErrorCode::InvalidRequest, QStringLiteral("user_id and order_id must be positive integers")); return; }
         QJsonObject order, pile; QString error; ErrorKind kind = ErrorKind::None;
         if (!database_.cancelReservation(request.id, userId, orderId, &order, &pile, &error, &kind)) { sendDatabaseError(request.id, kind, error, QStringLiteral("cancel reservation failed")); return; }
+        notifySimulator(QStringLiteral("release"), pile.value(QStringLiteral("id")).toInteger(), orderId);
         sendResponse(request, QStringLiteral("reservation.cancel.result"), QJsonObject{{QStringLiteral("order"), order}, {QStringLiteral("pile"), pile}});
     }
 
@@ -756,6 +926,7 @@ private:
         }
         QJsonObject order, pile; QString error; ErrorKind kind = ErrorKind::None;
         if (!database_.startCharging(request.id, userId, orderId, pileId, &order, &pile, &error, &kind)) { sendDatabaseError(request.id, kind, error, QStringLiteral("start charging failed")); return; }
+        notifySimulator(QStringLiteral("start_charging"), pile.value(QStringLiteral("id")).toInteger(), order.value(QStringLiteral("id")).toInteger());
         sendResponse(request, QStringLiteral("charging.start.result"), QJsonObject{{QStringLiteral("order"), order}, {QStringLiteral("pile"), pile}});
     }
 
@@ -767,6 +938,7 @@ private:
         if (!endedValue.isUndefined() && !endedValue.isString()) { sendError(request.id, ErrorCode::InvalidRequest, QStringLiteral("ended_at must be an ISO-8601 string")); return; }
         QJsonObject order; QString error; ErrorKind kind = ErrorKind::None;
         if (!database_.stopCharging(request.id, userId, orderId, endedValue.toString(), &order, &error, &kind)) { sendDatabaseError(request.id, kind, error, QStringLiteral("stop charging failed")); return; }
+        notifySimulator(QStringLiteral("stop_charging"), order.value(QStringLiteral("pile_id")).toInteger(), orderId);
         sendResponse(request, QStringLiteral("charging.stop.result"), QJsonObject{{QStringLiteral("order"), order}, {QStringLiteral("estimated_amount_cents"), order.value(QStringLiteral("total_amount_cents"))}});
     }
 
@@ -776,6 +948,7 @@ private:
         if (!requestIds(request.payload, &userId, &orderId, QStringLiteral("order_id"))) { sendError(request.id, ErrorCode::InvalidRequest, QStringLiteral("user_id and order_id must be positive integers")); return; }
         QJsonObject order; qint64 balance = 0; QString error; ErrorKind kind = ErrorKind::None;
         if (!database_.settleCharging(request.id, userId, orderId, &order, &balance, &error, &kind)) { sendDatabaseError(request.id, kind, error, QStringLiteral("settle charging failed")); return; }
+        notifySimulator(QStringLiteral("settle"), order.value(QStringLiteral("pile_id")).toInteger(), orderId);
         sendResponse(request, QStringLiteral("charging.settle.result"), QJsonObject{{QStringLiteral("order"), order}, {QStringLiteral("balance_cents"), balance}});
     }
 
@@ -824,6 +997,8 @@ private:
     ev::database::Database database_;
     ev::server::map::MapService mapService_;
     AdminSessionStore *adminSessions_;
+    SimulationSessionRegistry *simulators_;
+    ev::server::map::SimulationGateway simulationGateway_{&database_};
 };
 
 int main(int argc, char **argv)
@@ -832,6 +1007,7 @@ int main(int argc, char **argv)
     QCoreApplication::setApplicationName(QStringLiteral("ev-server"));
     QTcpServer server;
     AdminSessionStore adminSessions;
+    SimulationSessionRegistry simulators;
     const QString databasePath = qEnvironmentVariable("EV_DATABASE_PATH",
                                                        QStringLiteral("var/ev-charging.db"));
     const QString seedPath = qEnvironmentVariable("EV_DATABASE_SEED_PATH");
@@ -875,10 +1051,10 @@ int main(int argc, char **argv)
     }
     qInfo() << "ev-server listening on" << host.toString() << listenPort;
     QObject::connect(&server, &QTcpServer::newConnection, &server,
-                     [&server, databasePath, schemaPath, seedPath, &adminSessions] {
+                     [&server, databasePath, schemaPath, seedPath, &adminSessions, &simulators] {
         while (server.hasPendingConnections())
             new ClientConnection(server.nextPendingConnection(), databasePath, schemaPath, seedPath,
-                                 &adminSessions, &server);
+                                 &adminSessions, &simulators, &server);
     });
     return app.exec();
 }

@@ -17,6 +17,7 @@ import socket
 import struct
 import sys
 import time
+import uuid
 import unicodedata
 from dataclasses import dataclass
 from typing import Iterable, Mapping
@@ -141,9 +142,9 @@ class DeterministicPlanner:
         expected_versions: dict[str, int] = {}
         changes: list[dict] = []
         for station in sorted(stations, key=lambda item: item.station_id):
-            expected_versions[str(station.station_id)] = station.version
             if station.seed_id != self.seed_id or station.status != "active":
                 continue
+            expected_versions[str(station.station_id)] = station.version
             for pile in sorted(station.piles, key=lambda item: item.pile_id):
                 if not pile.simulated or pile.active_order or pile.status not in {"idle", "fault", "offline"}:
                     continue
@@ -188,6 +189,154 @@ class LengthPrefixedGateway:
             return json.loads(_recv_exact(sock, size).decode("utf-8"))
 
 
+@dataclass
+class PileRuntime:
+    pile_id: int
+    station_id: int
+    status: str
+    simulated: bool
+    active_order: bool = False
+    order_id: int | None = None
+
+
+class SimulatorCluster:
+    """In-memory cluster runtime. The server remains the state authority."""
+
+    def __init__(self, simulator_id: str, seed_id: str):
+        self.simulator_id = simulator_id
+        self.seed_id = seed_id
+        self.stations: list[StationSnapshot] = []
+        self._piles: dict[int, PileRuntime] = {}
+        # A stable simulator_id may reconnect after old tick ids have already
+        # been persisted. Milliseconds keep a restarted demo cluster moving
+        # forward instead of colliding with tick 1, 2, ... from the prior run.
+        self._tick_id = int(time.time() * 1000)
+
+    def register_snapshot(self, snapshot: Mapping) -> None:
+        self.stations = _snapshot_from_json(snapshot)
+        self._piles = {
+            pile.pile_id: PileRuntime(pile.pile_id, pile.station_id, pile.status,
+                                      pile.simulated, pile.active_order)
+            for station in self.stations for pile in station.piles
+        }
+
+    def apply_command(self, payload: Mapping) -> dict:
+        pile_id = int(payload.get("pile_id", 0))
+        pile = self._piles.get(pile_id)
+        command = str(payload.get("command", ""))
+        accepted = pile is not None
+        if accepted:
+            if command == "reserve" and pile.status in {"idle", "reserved"}:
+                pile.status, pile.active_order = "reserved", True
+            elif command == "release" and pile.status in {"idle", "reserved"}:
+                pile.status, pile.active_order, pile.order_id = "idle", False, None
+            elif command == "start_charging" and pile.status in {"idle", "reserved", "charging"}:
+                pile.status, pile.active_order = "charging", True
+            elif command == "stop_charging" and pile.status in {"charging", "idle"}:
+                # The server order remains pending_settlement after stop.
+                pile.status, pile.active_order = "idle", True
+            elif command == "settle" and pile.status == "idle":
+                pile.active_order, pile.order_id = False, None
+            elif command == "restart" and pile.status in {"fault", "offline", "idle"}:
+                pile.status = "idle"
+            else:
+                accepted = False
+            if accepted and payload.get("order_id") is not None:
+                pile.order_id = int(payload["order_id"])
+        return {"command_id": payload.get("command_id"), "simulator_id": self.simulator_id,
+                "pile_id": pile_id, "accepted": accepted,
+                "status": pile.status if pile else "unknown"}
+
+    def build_tick(self) -> dict:
+        self._tick_id += 1
+        stations = []
+        for station in self.stations:
+            piles = tuple(PileSnapshot(p.pile_id, p.station_id, p.status, p.simulated,
+                                       p.active_order) for p in self._piles.values()
+                          if p.station_id == station.station_id)
+            stations.append(StationSnapshot(station.station_id, station.version,
+                                            station.seed_id, station.status, piles))
+        return DeterministicPlanner(self.simulator_id, self.seed_id).proposal(self._tick_id, stations)
+
+    def apply_tick_result(self, result: Mapping) -> None:
+        for change in result.get("changes", []):
+            pile = self._piles.get(int(change["pile_id"]))
+            if pile:
+                pile.status = str(change["to"])
+        versions = result.get("snapshot_versions", {})
+        self.stations = [StationSnapshot(s.station_id, int(versions.get(str(s.station_id), s.version)),
+                                         s.seed_id, s.status,
+                                         tuple(PileSnapshot(p.pile_id, p.station_id, p.status,
+                                                            p.simulated, p.active_order)
+                                               for p in self._piles.values()
+                                               if p.station_id == s.station_id)) for s in self.stations]
+
+
+class PersistentGateway:
+    """Long-lived development connection used by the demo cluster."""
+
+    def __init__(self, host: str, port: int, cluster: SimulatorCluster, interval: float = 2.0):
+        self.host, self.port, self.cluster, self.interval = host, port, cluster, interval
+
+    @staticmethod
+    def _message(message_type: str, payload: Mapping) -> bytes:
+        body = json.dumps({"v": 1, "id": str(uuid.uuid4()), "type": message_type,
+                           "payload": payload}, separators=(",", ":")).encode()
+        return struct.pack(">I", len(body)) + body
+
+    @staticmethod
+    def _read_available(sock: socket.socket, buffer: bytearray) -> list[dict]:
+        messages = []
+        try:
+            data = sock.recv(65536)
+            if not data:
+                raise ConnectionError("gateway closed the connection")
+            buffer.extend(data)
+        except socket.timeout:
+            return messages
+        while len(buffer) >= 4:
+            size = struct.unpack(">I", buffer[:4])[0]
+            if len(buffer) < 4 + size:
+                break
+            del buffer[:4]
+            messages.append(json.loads(bytes(buffer[:size]).decode()))
+            del buffer[:size]
+        return messages
+
+    def run(self) -> None:
+        while True:
+            try:
+                with socket.create_connection((self.host, self.port), timeout=3) as sock:
+                    sock.settimeout(0.2)
+                    sock.sendall(self._message("simulator.register", {"simulator_id": self.cluster.simulator_id}))
+                    buffer = bytearray()
+                    next_tick = time.monotonic() + self.interval
+                    while True:
+                        for message in self._read_available(sock, buffer):
+                            message_type = message.get("type", "")
+                            payload = message.get("payload", {})
+                            if message_type == "simulator.register.result":
+                                self.cluster.register_snapshot(payload)
+                            elif message_type == "simulator.snapshot.result":
+                                self.cluster.register_snapshot(payload)
+                            elif message_type == "simulator.command":
+                                result = self.cluster.apply_command(payload)
+                                sock.sendall(self._message("simulator.command.result", result))
+                            elif message_type == "simulator.tick.result" and payload.get("accepted"):
+                                self.cluster.apply_tick_result(payload)
+                            elif message_type == "error" and int(payload.get("code", 0)) == 1201:
+                                # A business request may have advanced the
+                                # station snapshot. Refresh before the next
+                                # deterministic tick instead of replaying a
+                                # stale proposal forever.
+                                sock.sendall(self._message("simulator.snapshot.get", {}))
+                        if time.monotonic() >= next_tick and self.cluster.stations:
+                            sock.sendall(self._message("simulator.tick", self.cluster.build_tick()))
+                            next_tick = time.monotonic() + self.interval
+            except (OSError, ConnectionError, json.JSONDecodeError):
+                time.sleep(1.0)
+
+
 def _recv_exact(sock: socket.socket, size: int) -> bytes:
     chunks: list[bytes] = []
     remaining = size
@@ -227,13 +376,21 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--simulator-id", default="pile-simulator-dev-1")
     parser.add_argument("--seed-id", default="demo-2026-09")
-    parser.add_argument("--tick-id", type=int, required=True)
+    parser.add_argument("--tick-id", type=int)
+    parser.add_argument("--interval-seconds", type=float, default=2.0)
     parser.add_argument("--snapshot", type=argparse.FileType("r"), default=sys.stdin,
                         help="gateway snapshot JSON; SQLite is never opened")
     parser.add_argument("--gateway-host")
     parser.add_argument("--gateway-port", type=int)
     args = parser.parse_args(argv)
 
+    if args.gateway_host and args.gateway_port and args.tick_id is None:
+        cluster = SimulatorCluster(args.simulator_id, args.seed_id)
+        PersistentGateway(args.gateway_host, args.gateway_port, cluster,
+                          max(0.1, args.interval_seconds)).run()
+        return 0
+    if args.tick_id is None:
+        parser.error("--tick-id is required for one-shot mode")
     snapshot = json.load(args.snapshot)
     planner = DeterministicPlanner(args.simulator_id, args.seed_id)
     proposal = planner.proposal(args.tick_id, _snapshot_from_json(snapshot))
