@@ -29,6 +29,7 @@ signals:
   void pageLoadFinished(bool realMode, bool ok);
 
 private:
+  void renderPage(bool real);
   void renderRealPage();
   QString makeHtml(bool real) const;
 
@@ -41,6 +42,10 @@ private:
   bool realPageLoaded_{false};
   bool offlinePageLoaded_{false};
   bool serviceBacked_{false};
+  bool pageLoading_{false};
+  bool loadingReal_{false};
+  bool renderPending_{false};
+  quint64 loadGeneration_{0};
 };
 
 } // namespace ev
