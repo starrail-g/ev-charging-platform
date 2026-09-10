@@ -226,6 +226,18 @@ void TencentMapService::searchNearbyChargingStations(const GeoCoordinate &center
   });
 }
 
+void TencentMapService::searchNearbyChargingStations(const QString &address, int radiusMeters, PoiCallback callback) {
+  geocode(address, [this, radiusMeters, callback = std::move(callback)](const MapResult<GeoCoordinate> &located) mutable {
+    if (!located.ok) { callback(MapResult<QVector<MapPoi>>::failure(located.error)); return; }
+    searchNearbyChargingStations(located.value, radiusMeters,
+        [located, callback = std::move(callback)](MapResult<QVector<MapPoi>> result) mutable {
+      result.resolvedOrigin = located.value;
+      result.hasResolvedOrigin = true;
+      callback(result);
+    });
+  });
+}
+
 void TencentMapService::getPoiDetail(const QString &poiId, PoiDetailCallback callback) {
   if (poiId.trimmed().isEmpty()) { callback(MapResult<MapPoi>::failure(error(MapErrorCategory::InvalidInput, QStringLiteral("POI 编号无效"), false))); return; }
   QUrlQuery query; query.addQueryItem(QStringLiteral("id"), poiId.trimmed());
@@ -265,6 +277,19 @@ void TencentMapService::queryRoute(const GeoCoordinate &origin, const GeoCoordin
     if (distance < 0.0 || durationMinutes < 0.0 || durationMinutes > 35791394.0) { callback(MapResult<MapRoute>::failure(error(MapErrorCategory::Parse, QStringLiteral("路线距离或时间无效"), true, httpStatus, status))); return; }
     MapRoute route; route.mode = mode; route.distanceMeters = qRound64(distance); route.durationSeconds = qRound(durationMinutes * 60.0); route.polyline = readPolyline(routeObject); route.source = MapSource::Tencent; route.summary = QStringLiteral("腾讯地图 %1 路线").arg(mode == RouteMode::Driving ? QStringLiteral("驾车") : QStringLiteral("步行"));
     Q_UNUSED(origin); Q_UNUSED(destination); callback(MapResult<MapRoute>::success(route));
+  });
+}
+
+void TencentMapService::queryRouteFromAddress(const QString &originAddress, const GeoCoordinate &destination,
+                                              RouteMode mode, RouteCallback callback) {
+  geocode(originAddress, [this, destination, mode, callback = std::move(callback)](const MapResult<GeoCoordinate> &located) mutable {
+    if (!located.ok) { callback(MapResult<MapRoute>::failure(located.error)); return; }
+    queryRoute(located.value, destination, mode,
+        [located, callback = std::move(callback)](MapResult<MapRoute> result) mutable {
+      result.resolvedOrigin = located.value;
+      result.hasResolvedOrigin = true;
+      callback(result);
+    });
   });
 }
 

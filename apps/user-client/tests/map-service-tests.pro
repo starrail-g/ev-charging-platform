@@ -23,4 +23,6 @@ RESOURCES += $$PWD/../resources/map_resources.qrc
 DESTDIR = $$OUT_PWD
 include(../../../libs/protocol/protocol.pri)
 # Legacy client-side Tencent adapter regression target. The production user
-# client uses server-map-service-tests and never loads this adapter.
+# client uses server-map-service-tests and never loads this adapter. Keep this
+# target opt-in; it exists only for direct WebService adapter regression tests.
+CONFIG += no_default_target

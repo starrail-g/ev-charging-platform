@@ -187,7 +187,7 @@ private slots:
     QVERIFY(poiServer.start());
     TencentMapService poiService(nullptr, poiServer.baseUrl(), 500);
     MapResult<QVector<MapPoi>> pois;
-    poiService.searchNearbyChargingStations({22.53, 113.93}, 1000,
+    poiService.searchNearbyChargingStations(GeoCoordinate{22.53, 113.93}, 1000,
         [&pois](const auto &value) { pois = value; });
     QTRY_VERIFY_WITH_TIMEOUT(pois.ok, 1000);
     QCOMPARE(pois.value.size(), 1);
@@ -197,7 +197,7 @@ private slots:
 
     MapResult<QVector<MapPoi>> invalidRadius;
     bool invalidDone = false;
-    poiService.searchNearbyChargingStations({22.53, 113.93}, 5000,
+    poiService.searchNearbyChargingStations(GeoCoordinate{22.53, 113.93}, 5000,
         [&invalidRadius, &invalidDone](const auto &value) { invalidRadius = value; invalidDone = true; });
     QVERIFY(invalidDone);
     QVERIFY(!invalidRadius.ok);
@@ -208,7 +208,7 @@ private slots:
     TencentMapService missingFieldService(nullptr, missingFieldServer.baseUrl(), 500);
     MapResult<QVector<MapPoi>> missingField;
     bool missingDone = false;
-    missingFieldService.searchNearbyChargingStations({22.53, 113.93}, 1000,
+    missingFieldService.searchNearbyChargingStations(GeoCoordinate{22.53, 113.93}, 1000,
         [&missingField, &missingDone](const auto &value) { missingField = value; missingDone = true; });
     QTRY_VERIFY_WITH_TIMEOUT(missingDone, 1000);
     QVERIFY(!missingField.ok);
@@ -336,7 +336,7 @@ private slots:
     TencentMapService emptyPrimary(nullptr, emptyServer.baseUrl(), 500);
     ResilientMapService emptyService(&emptyPrimary, &fallback);
     MapResult<QVector<MapPoi>> pois;
-    emptyService.searchNearbyChargingStations({22.53, 113.93}, 1000,
+    emptyService.searchNearbyChargingStations(GeoCoordinate{22.53, 113.93}, 1000,
         [&pois](const auto &value) { pois = value; });
     QTRY_VERIFY_WITH_TIMEOUT(pois.ok, 1000);
     QVERIFY(!pois.value.isEmpty());
