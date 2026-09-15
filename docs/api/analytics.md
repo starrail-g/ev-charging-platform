@@ -26,6 +26,8 @@
     "coverage": "complete",
     "data_start": "2026-06-16T00:00:00Z",
     "data_end_exclusive": "2026-09-14T00:00:00Z",
+    "available_start": "2026-06-16T00:00:00Z",
+    "available_end_exclusive": "2026-09-15T00:00:00Z",
     "generated_at": "2026-09-15T08:00:00Z",
     "is_realtime": false,
     "stale": false
@@ -53,6 +55,12 @@
 ```
 
 - 上述 `data.*` 字段结构为契约；数值为 2026-09-01 窗口样例（来自 fixture A 手算基准，非生产结果）。
+- **窗口三类口径（2026-09-15 起）**：`data_start/data_end_exclusive` = 生成窗口（manifest 原值）；
+  `available_start/available_end_exclusive` = **发布覆盖窗口**（生成窗口 ∪ 末端结算追加日 + 1 天，右开）——
+  API 的覆盖校验与 `error.available_range` 以后者为准；**默认查询窗口** = 覆盖窗口中「最新 ≤90 天」
+  的一段（响应 `meta.default_start/default_end_exclusive` 明示；覆盖本身不超 90 天时即全覆盖窗口）。
+  数仓按设计保留 `settled_at ≥ 生成窗口末端` 的结算行（不静默丢收入），若只暴露生成窗口会出现
+  “收入进了 overview、对应结算日却查不到”的缺口；旧批次缺 `available_*` 时回退生成窗口（行为不变）。
 - `revenueDaily` / `loadHourly` 覆盖**完整查询窗口**（只在 manifest 证明窗口完整时补零；批次缺失不出行）；
   `loadHourly` 带完整 UTC 时间戳，不假设只有 0–23 时。
 - 金额一律整数分（`revenueCents`）；电量 `revenueDaily.energyWh` 为整数 Wh，`overview.energyKwh` 为 k kWh 展示值
@@ -65,19 +73,20 @@
 |---|---|
 | 日期非法（非 `YYYY-MM-DD`）/ `start >= end` / 窗口 > 90 天 | **400**，结构化错误（见下） |
 | `station_id` 非正整数 | 400 |
+| `batch_id` 非法（绝对路径 / 路径分隔符 / `..` / 越出 `published/` 目录） | **400**，`error.code=invalid_batch_id`（读取范围固定为 `published/<batch>/quality.json`，拒绝越界） |
 | `station_id` 合法但不存在 / 窗口内无业务记录 | **200 + `"status":"empty"`**（`data` 为完整窗口的空结构） |
-| 窗口超出批次 coverage | **400**，`error.available_range` 给出可用范围，不悄悄补零 |
-| 无成功快照 / 快照文件损坏 | **503**（`empty`/`503` 均**不得**回退 demo 数据伪装成功） |
+| 窗口超出**发布覆盖窗口**（`available_*`） | **400**，`error.available_range` 给出可用范围，不悄悄补零 |
+| 无成功快照 / 快照文件损坏 / JSON 合法但内部结构坏（容器或记录字段类型不合法） | **503**，`error.code=snapshot_corrupt`（统一结构化错误，不得 HTML 500；`empty`/`503` 均**不得**回退 demo 数据伪装成功） |
 | 批次旧但可读 | 200，`meta.stale=true`（过期判定取配置），页面显示数据日期 |
 
 错误结构：
 
 ```json
 {"status": "error", "error": {"code": "invalid_window", "message": "start must be before end",
- "available_range": {"start": "2026-06-16", "end": "2026-09-14"}}}
+ "available_range": {"start": "2026-06-16", "end": "2026-09-15"}}}
 ```
 
-`code` 枚举：`invalid_date`、`invalid_window`、`window_too_large`、`invalid_station_id`、
+`code` 枚举：`invalid_date`、`invalid_window`、`window_too_large`、`invalid_station_id`、`invalid_batch_id`、
 `out_of_coverage`、`snapshot_missing`、`snapshot_corrupt`。
 
 ## 4. 前端映射（dashboard/js/api-data-provider.js）
@@ -88,6 +97,10 @@
 - `stations/piles` → 与现有 demo 视图模型同形（camelCase，字段见上）；`stationUtilization` → 站级利用率；
 - `adaptDashboardData` 扩展为按 `source_type` 校验：`synthetic_warehouse` 数据必须携带
   `meta.batch_id/generated_at/coverage`；`demo_fixture` 保持原演示路径；
+- `meta.available_start/available_end_exclusive` → 筛选控件 min/max（可查询覆盖窗口）；
+  `meta.default_start/default_end_exclusive` → 初始值与“重置”的默认窗口（覆盖超 90 天时收敛到
+  最新一段，保证“重置→应用”永远合法）；旧批次缺省逐级回退 `data_start/data_end_exclusive`；
+  **空结果响应同样先应用覆盖窗口**，否则分享链接首开命中空结果后“重置”无法恢复全窗口；
 - 无预测时隐藏预测区域；"实时"字样一律禁止（`is_realtime:false`）。
 
 ## 5. 数据源与降级标注（屏幕必须可见）

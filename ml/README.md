@@ -67,10 +67,11 @@ PYTHONPATH=/tmp/ev-s2-site python3 ml/models/build_outputs.py \
 
 PYTHONPATH=/tmp/ev-s2-site python3 ml/service/build_dashboard_snapshot.py \
   --database /tmp/ev-s2-final/ev-analysis.sqlite \
+  --dws /tmp/ev-s2-final-pipeline/dws \
   --output /tmp/ev-s2-final-analysis/ads/dashboard.json
 
 PYTHONPATH=/tmp/ev-s2-site EV_ANALYSIS_ARTIFACT_DIR=/tmp/ev-s2-final-analysis/ads \
   flask --app ml.service.app run --host 127.0.0.1 --port 61501
 ```
 
-已验证（2026-09-15 收口复跑，逐字引自 VM 输出；证据包在仓库外 `build/stage2/evidence/g2-2026-09-15/`）：`python3 -m pytest ml/tests -q` 为 **18 passed**（2026-09-15 R2 复审复跑；含 3 条 Spark 管线用例：分摊守恒 / 零订单小时分母 / quarantine 守恒与快照同口径）；完整分层输出 **DWD 25,005 行（有效 19,543、隔离 5,462，守恒 balanced）**、**DWS `station_hourly` 30,142 行 + `station_day` 1,260 行（小时/日网格全量展开，分母含零订单时段）**、ADS 日营收 90 行；Spark 训练 **24,430/5,712 行，验证 MAE 16.30、RMSE 30.78**；预测产物 42 条（14 站 × 1/6/24h，`target_hour` 三档各异）、推荐 3 条、预警 1 条；Flask 只读 API（health / forecast 契约与降级 / dashboard snapshot 契约）由 `ml/tests/test_service.py` 用例覆盖通过；Dashboard 快照来自 Schema v0.4 SQLite（14 站点、102 桩），并提供 `analytics` 工作台数据（用户、设备、订单、能源、收益、站点、服务代理指标），不依赖 `demo.json` 作为正常数据源。运行库、Parquet、模型和日志均位于仓库外，不纳入 Git。
+已验证（2026-09-15 收口复跑 + 2026-09-16 评审修复批复跑，逐字引自 VM 输出；证据包在仓库外 `build/stage2/evidence/`）：`python3 -m pytest ml/tests -q` 为 **22 passed**（评审修复批 VM 复跑；含 5 条 Spark 管线用例：分摊守恒 / 零订单小时分母 / quarantine 守恒与快照同口径 / NULL 判定落盘回归（缺失与不可解析数值）/ 守恒中止单测）；完整分层输出 **输入 25,005 行（正式 DWD 有效 19,543 / 隔离 5,462，守恒 balanced）**、**DWS `station_hourly` 30,142 行 + `station_day` 1,260 行（小时/日网格全量展开，分母含零订单时段）**、ADS 日营收 90 行；Spark 训练 **24,430/5,712 行，验证 MAE 16.30、RMSE 30.78**；预测产物 42 条（14 站 × 1/6/24h，`target_hour` 三档各异）、推荐 3 条、预警 1 条；Flask 只读 API（health / forecast 契约与降级 / dashboard snapshot 契约）由 `ml/tests/test_service.py` 用例覆盖通过；Dashboard 快照来自 Schema v0.4 SQLite（14 站点、102 桩），并提供 `analytics` 工作台数据（用户、设备、订单、能源、收益、站点、服务代理指标），不依赖 `demo.json` 作为正常数据源。运行库、Parquet、模型和日志均位于仓库外，不纳入 Git。

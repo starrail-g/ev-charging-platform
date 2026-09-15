@@ -94,6 +94,10 @@ HDFS 根：`/ev-stage2/batches/<batch-id>/`；本地产物根：`EV_ANALYTICS_RO
 - 利用率 = 窗口内 `Σ charge_seconds / Σ capacity_pile_seconds`（先按桩截断区间再汇总，≤100%）；
 - 小时分摊：`allocated_wh = energy_wh × overlap_seconds / (ended-started)`，每单 Σ 分配 = 源电量；
 - 空白日期仅在 manifest 证明窗口完整时补零；批次缺失返回 unknown；桩快照不从当前表推断历史在线率。
+- **发布覆盖窗口（2026-09-15 起）**：`available_start/available_end_exclusive` = 生成窗口 ∪
+  末端结算追加日 + 1 天（右开）。导出（export_ads.py）按实际数据范围写入发布快照 meta；
+  API 默认查询窗口、覆盖校验与前端筛选控件均以此为准，保证窗口末端结算收入可查询
+  （生成窗口 `data_start/data_end_exclusive` 原值仍保留在 meta 中）。
 
 ## 5. 目录与发布
 
