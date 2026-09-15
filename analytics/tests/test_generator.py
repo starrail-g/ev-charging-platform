@@ -15,7 +15,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+from analytics.generate_data import hour_weight, weighted_slot_offsets
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 GEN = REPO / "analytics" / "generate_data.py"
@@ -134,6 +136,19 @@ class GeneratorCase(unittest.TestCase):
             if w["source_record_id"] in labeled:
                 continue
             self.assertGreaterEqual(int(w["balance_after_cents"]), 0)
+
+    def test_time_of_day_curves_have_weekday_weekend_shape(self):
+        monday = datetime(2026, 9, 14, tzinfo=timezone.utc)
+        saturday = datetime(2026, 9, 12, tzinfo=timezone.utc)
+        self.assertGreater(hour_weight(monday.replace(hour=8)), hour_weight(monday.replace(hour=2)))
+        self.assertGreater(hour_weight(monday.replace(hour=18)), hour_weight(monday.replace(hour=2)))
+        self.assertGreater(hour_weight(saturday.replace(hour=13)), hour_weight(saturday.replace(hour=8)))
+        self.assertLess(hour_weight(saturday.replace(hour=8)), hour_weight(monday.replace(hour=8)))
+
+        offsets = weighted_slot_offsets(monday, monday + timedelta(days=14), 200)
+        self.assertEqual(len(offsets), 200)
+        self.assertEqual(offsets, sorted(offsets))
+        self.assertGreater(len(set(offsets)), 190)
 
     def test_low_profile_regression_dq05_dq11_collision(self):
         """回归（9/15）：low 档 + seed 20260914 曾因 DQ05 将 power_kw 脏化为带空格字符串、

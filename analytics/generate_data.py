@@ -93,6 +93,55 @@ def billing_cents(energy_wh: int, price_cents: int, service_fee_cents: int) -> i
     return (energy_wh * price_cents + 999) // 1000 + service_fee_cents
 
 
+# G3：确定性工作日/周末时段曲线。数值是相对权重，实际订单槽位由加权分位点生成。
+WEEKDAY_HOUR_WEIGHTS = (0.35, 0.30, 0.30, 0.35, 0.45, 0.65, 1.00, 1.55,
+                         1.75, 1.45, 1.05, 1.30, 1.40, 1.25, 1.00, 0.90,
+                         1.05, 1.55, 1.80, 1.85, 1.65, 1.15, 0.75, 0.50)
+WEEKEND_HOUR_WEIGHTS = (0.30, 0.28, 0.28, 0.32, 0.40, 0.52, 0.65, 0.85,
+                         1.00, 1.10, 1.30, 1.60, 1.75, 1.65, 1.45, 1.30,
+                         1.25, 1.45, 1.70, 1.80, 1.70, 1.35, 0.90, 0.55)
+
+
+def hour_weight(value: datetime) -> float:
+    """返回 UTC 时段相对权重；周六/周日使用周末曲线。"""
+    weights = WEEKEND_HOUR_WEIGHTS if value.weekday() >= 5 else WEEKDAY_HOUR_WEIGHTS
+    return weights[value.hour]
+
+
+def weighted_slot_offsets(start: datetime, end: datetime, count: int) -> list[float]:
+    """按小时曲线生成单桩有序槽位偏移（秒），结果不依赖随机状态。"""
+    if count <= 0:
+        return []
+    total_seconds = (end - start).total_seconds()
+    if count == 1:
+        return [total_seconds * 0.5]
+    bins = []
+    for index in range(int(total_seconds // 3600) + 1):
+        bucket_start = start + timedelta(hours=index)
+        bucket_end = min(end, bucket_start + timedelta(hours=1))
+        seconds = max(0.0, (bucket_end - bucket_start).total_seconds())
+        bins.append((seconds, hour_weight(bucket_start)))
+    weighted_total = sum(seconds * weight for seconds, weight in bins)
+    if weighted_total <= 0:
+        return [total_seconds * i / (count - 1) for i in range(count)]
+    offsets = []
+    cumulative = 0.0
+    bin_index = 0
+    elapsed = 0.0
+    for slot in range(count):
+        target = weighted_total * slot / (count - 1)
+        while (bin_index < len(bins) - 1
+               and cumulative + bins[bin_index][0] * bins[bin_index][1] < target):
+            seconds, weight = bins[bin_index]
+            cumulative += seconds * weight
+            elapsed += seconds
+            bin_index += 1
+        seconds, weight = bins[bin_index]
+        within = 0.0 if weight <= 0 else (target - cumulative) / weight
+        offsets.append(min(total_seconds, elapsed + within))
+    return offsets
+
+
 def git_commit(repo_root: Path) -> str:
     try:
         return subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(repo_root),
@@ -258,13 +307,14 @@ class Generator:
             count = per[idx]
             if count == 0:
                 continue
-            step = self.window_seconds / count
-            max_dur = int(min(7200, max(600, step * 0.5)))
+            offsets = weighted_slot_offsets(self.t0, self.t1, count)
+            min_step = min((b - a for a, b in zip(offsets, offsets[1:])), default=self.window_seconds)
+            max_dur = int(min(7200, max(600, min_step * 0.5)))
             open_last = self.rng.random() < 0.10
             st_gap = (gap_station is not None and pile["station_id"] == gap_station)
 
             for kk in range(count):
-                slot0 = self.t0 + timedelta(seconds=kk * step)
+                slot0 = self.t0 + timedelta(seconds=offsets[kk])
                 if st_gap and gap_start <= slot0 < gap_end:
                     continue  # 采集缺口：不出行
                 is_last = kk == count - 1
@@ -279,8 +329,9 @@ class Generator:
                     continue
 
                 dur = self.rng.randint(600, max_dur)
+                slot_gap = offsets[kk + 1] - offsets[kk] if kk + 1 < count else min_step
                 start = slot0 + timedelta(seconds=self.rng.uniform(
-                    0, max(0.0, step - dur - 300)))
+                    0, max(0.0, slot_gap - dur - 300)))
                 end = start + timedelta(seconds=dur)
                 reserved = start - timedelta(seconds=self.rng.randint(120, 7200))
 
