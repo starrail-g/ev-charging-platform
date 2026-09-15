@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Export a Dashboard snapshot from the validated Schema v0.4 SQLite copy."""
+"""Export a Dashboard snapshot from the validated Schema v0.4 SQLite copy.
+
+站点利用率直接消费 DWS 产物（`--dws/station_day` 的 Σcharge_seconds / Σcapacity_pile_seconds）：
+与数据链严格同源——有效订单集合、网格窗口（含零订单小时）与容量分母全部取自 DWS，
+快照不再自行从业务库推算（业务库含被 quarantine 的行，集合与链上不同）。
+其余业务指标仍来自 Schema v0.4 业务库。
+"""
 
 from __future__ import annotations
 
@@ -10,13 +16,42 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def load_dws_utilization(dws_dir: Path) -> dict[int, dict[str, float]]:
+    """读取 DWS `station_day`：站点利用率与数据链严格同源。
+
+    返回 {station_id: {charge_seconds, capacity_pile_seconds, utilization}}；
+    利用率 = Σ分摊充电秒数 / Σ容量秒数（分母含零订单小时，窗口 = DWS 网格窗口）。
+    """
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(dws_dir / "station_day",
+                          columns=["station_id", "charge_seconds", "capacity_pile_seconds"])
+    per_station: dict[int, list[int]] = {}
+    for row in table.to_pylist():
+        acc = per_station.setdefault(int(row["station_id"]), [0, 0])
+        acc[0] += int(row["charge_seconds"] or 0)
+        acc[1] += int(row["capacity_pile_seconds"] or 0)
+    return {
+        station_id: {
+            "charge_seconds": acc[0],
+            "capacity_pile_seconds": acc[1],
+            "utilization": round(min(1.0, acc[0] / acc[1]), 4) if acc[1] else 0.0,
+        }
+        for station_id, acc in per_station.items()
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", type=Path, required=True)
+    parser.add_argument("--dws", type=Path, required=True,
+                        help="run_pipeline 输出的 dws/ 目录（利用率与链上严格同源）")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     connection = sqlite3.connect(args.database)
     connection.row_factory = sqlite3.Row
+    # 利用率与链上严格同源：直接消费 DWS station_day（有效集合 / 网格窗口 / 容量分母）。
+    dws_utilization = load_dws_utilization(args.dws)
     stations = [dict(row) for row in connection.execute(
         "SELECT id, name, address, latitude, longitude, status FROM stations ORDER BY id")]
     piles = [dict(row) for row in connection.execute(
@@ -34,10 +69,9 @@ def main() -> int:
         "GROUP BY hour ORDER BY hour")]
     utilization = [dict(row) for row in connection.execute(
         "SELECT s.id AS station_id, s.name, "
-        "COALESCE(SUM(CASE WHEN o.status='completed' THEN o.energy_wh ELSE 0 END), 0) AS energy_wh, "
-        "COUNT(DISTINCT p.id) AS device_count, COUNT(DISTINCT o.id) AS order_count "
+        "COALESCE(SUM(CASE WHEN o.status='completed' THEN o.energy_wh ELSE 0 END), 0) AS energy_wh "
         "FROM stations s LEFT JOIN charging_piles p ON p.station_id=s.id "
-        "LEFT JOIN charging_orders o ON o.pile_id=p.id AND o.status='completed' "
+        "LEFT JOIN charging_orders o ON o.pile_id=p.id "
         "GROUP BY s.id, s.name ORDER BY s.id")]
 
     for pile in piles:
@@ -48,7 +82,10 @@ def main() -> int:
         station["code"] = f"S{station['id']}"
         station["pileCount"] = sum(1 for pile in piles if pile["stationId"] == station["id"])
     for row in utilization:
-        row["utilization"] = min(1.0, row.pop("order_count") / max(1, row.pop("device_count") * 90))
+        stats = dws_utilization.get(row["station_id"], {})
+        row["charge_seconds"] = int(stats.get("charge_seconds", 0))
+        row["capacity_pile_seconds"] = int(stats.get("capacity_pile_seconds", 0))
+        row["utilization"] = stats.get("utilization", 0.0)
     values = [int(row["revenue_cents"]) for row in revenue]
 
     users_summary = {
@@ -149,7 +186,9 @@ def main() -> int:
         "LEFT JOIN charging_orders o ON o.pile_id=p.id "
         "GROUP BY s.id, s.name, s.status ORDER BY revenue_cents DESC")]
     for row in station_rows:
-        row["utilization"] = round(min(1.0, int(row.pop("order_count")) / max(1, int(row["device_count"]) * 90)), 4)
+        # 与 stationUtilization 同源（DWS），不在快照内重复推算。
+        row["utilization"] = dws_utilization.get(row["station_id"], {}).get("utilization", 0.0)
+        row.pop("order_count")
         row["device_count"] = int(row["device_count"])
         row["revenue_cents"] = int(row["revenue_cents"])
         row["energy_kwh"] = round(float(row["energy_kwh"]), 3)
@@ -257,7 +296,7 @@ def main() -> int:
     }
     snapshot = {
         "demo": False,
-        "meta": {"name": "schema-v0.4-analysis-snapshot", "version": 1, "source": "validated SQLite Schema v0.4"},
+        "meta": {"name": "schema-v0.4-analysis-snapshot", "version": 1, "source": "validated SQLite Schema v0.4; utilization from DWS station_day"},
         "updatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "overview": {"revenueCents": sum(values[-7:]), "avgStationUtilization": round(sum(r["utilization"] for r in utilization) / max(1, len(utilization)), 4)},
         "stations": stations, "piles": piles, "stationUtilization": utilization,
