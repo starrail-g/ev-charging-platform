@@ -165,9 +165,9 @@
 
 ### 2026-09-15 第二阶段收口快照（三块式）
 
-- ① 已提交（本地 `feature/stage2-pipeline`，**未 push、未开 PR**）：c1 `3445be4`（`analytics/` 数据链）、c2 `039bf05`（`scripts/stage2/` 流水线与发布校验）、c3 `f0b9aa1`（大屏分析模式）、c4 `541f03e`（契约文档）；合并 `bc6d61e`（合入 `origin/main` `35c50ab`；冲突仅 `dashboard/js/app.js`×3 + `dashboard/css/app.css`×1，逐块解决）。
-- ② 仅本地工作树（未提交，待审查后按批落库）：f 批（G2→R2→复审三轮修复）＝ml 三时域跨日修复 + 区间∩桶分摊与 quarantine 互斥落盘 + 快照直接消费 DWS + `start_stage2.sh` 版本指纹与裸环境回退链（JAVA_HOME / spark-submit / pyspark / SPARK_HOME）+ 端口参数化 + Dashboard `/api/*` 同源代理与站点目录独立加载（`station-catalog.js`）+ 文档计数更正；`docs/meetings/interface-gate-2026-09-07.md` 为遗留修改。
-- ③ 待办：用户审查 → f 批提交推送 → 完整回归 + 新批次 `s2-rel-*` 证据 → 单 PR → A 复核 → 合入 `main`；A：PyCharm/录屏证据与贡献度材料；可选 G3（时段曲线）。
+- ① 已提交（分支 `feature/stage2-pipeline`，**已随分支推送、未开 PR**）：c1 `3445be4`（`analytics/` 数据链）、c2 `039bf05`（`scripts/stage2/` 流水线与发布校验）、c3 `f0b9aa1`（大屏分析模式）、c4 `541f03e`（契约文档）；合并 `bc6d61e`（合入 `origin/main` `35c50ab`；冲突仅 `dashboard/js/app.js`×3 + `dashboard/css/app.css`×1，逐块解决）。
+- ② 已提交并推送（`feature/stage2-pipeline`，head `71dee12`，5 笔）：`9657474` 跨日预测 / `c29f3b1` 窗口统一与 DWS 同源快照 / `fd55c7d` Dashboard 代理+标签+站点目录 / `77822f1` 一键启动指纹与裸环境加固 / `71dee12` 文档计数；工作树其余仅 `docs/meetings/interface-gate-2026-09-07.md` 遗留修改。
+- ③ 待办：完整回归 + 新批次 `s2-rel-*` 证据 → 单 PR → A 复核 → 合入 `main`；A：PyCharm/录屏证据与贡献度材料；可选 G3（时段曲线）。
 - 复跑证据（2026-09-15，VM Ubuntu 22.04 / Spark 3.4.1）：`ml/tests` **18 passed**（含 3 条 Spark 用例）；全链 25k 回执 DWD 19,543 / 隔离 5,462（守恒且互斥=0）、DWS `station_hourly` 30,142 + `station_day` 1,260、训练 24,430/5,712（MAE 16.30 / RMSE 30.78）；快照与 DWS 逐站严格相等（14/14，avgUtil 0.113）；R2 复审补强：node **55/55**（含分享链接 6 用例）、`/api/*` 代理 VM 实读 200、**F6 整栈验收全绿**（真实服务 + 健康检查，含 ev-server wire 探针）、share-link E2E PASS；证据包在仓库外 `build/stage2/evidence/g2-2026-09-15/{r2,r3,f5}/`。
 
 - `A-S1-04`: coordinated final regression, GUI evidence and clean-environment delivery (2026-09-07 gate and 09-10 integration deadline).
