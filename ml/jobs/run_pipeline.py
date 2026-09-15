@@ -5,6 +5,10 @@
 <output>/dws/station_hourly、<output>/dws/station_day、<output>/ads/revenue_daily、
 <output>/ads/load_features、<output>/reports/quality_report.json。
 
+守恒（输入 = 有效 + 隔离）/ 互斥（两侧 source_row_id 无交集）/ 原因完备（无效行必带
+quality_code）任一失败即中止流水线（非零退出）：报告仍先落盘留证，但不产出可被下游
+消费的“成功”回执（PR #24 评审 P1）。
+
 利用率口径：Σ 区间∩桶分摊充电秒数 /（桩数 × 3600），小时/日网格全量展开——分母含零订单小时；
 秒数、电量、金额按重叠占比分别分摊（表达式与 analytics/jobs/build_warehouse.py 同源）。
 """
@@ -121,7 +125,11 @@ def order_dwd(spark: SparkSession, ods: Path) -> DataFrame:
         .withColumn("event_date", F.to_date("settled_ts"))
         .withColumn("start_hour", F.hour("started_ts"))
         .withColumn("energy_kwh", F.col("o.energy_wh") / F.lit(1000.0))
-        .withColumn("quality_valid", (
+        # SQL 三值逻辑防线（PR #24 评审 P1）：缺字段/数值不可解析时比较结果为 NULL，
+        # 整个 AND 也随之 NULL——filter(valid) 与 filter(~valid) 都不会保留该行，
+        # “输入 = 有效 + 隔离” 被破坏且无人察觉。这里显式 coalesce 为非空布尔：
+        # “未知”一律判为无效，落入隔离区并由 quality_code 注明原因。
+        .withColumn("quality_valid", F.coalesce((
             (F.col("o.status") == F.lit("completed")) & F.col("order_id").isNotNull()
             & F.col("o.order_no").isNotNull() & F.col("user_id_typed").isNotNull()
             & F.col("pile_id_typed").isNotNull() & F.col("pile_station_id").isNotNull()
@@ -131,9 +139,10 @@ def order_dwd(spark: SparkSession, ods: Path) -> DataFrame:
             & (F.col("o.energy_wh") >= 0) & (F.col("o.total_amount_cents") > 0)
             & (F.col("duration_minutes") >= 0) & (F.col("duration_minutes") <= 24 * 60)
             & (F.col("order_id_duplicate_count") == 1)
-        ))
+        ), F.lit(False)))
         .withColumn("quality_code", F.when(F.col("order_id_duplicate_count") > 1, "DUPLICATE_ORDER")
                     .when(F.col("order_id").isNull(), "NULL_ORDER_ID")
+                    .when(F.col("o.order_no").isNull(), "NULL_ORDER_NO")
                     .when(F.col("pile_station_id").isNull(), "ORPHAN_PILE")
                     .when(F.col("station_id_lookup").isNull(), "ORPHAN_STATION")
                     .when(F.col("user_id_lookup").isNull(), "ORPHAN_USER")
@@ -141,8 +150,11 @@ def order_dwd(spark: SparkSession, ods: Path) -> DataFrame:
                           | F.col("ended_ts").isNull() | F.col("settled_ts").isNull(), "BAD_TIMESTAMP")
                     .when(F.col("duration_minutes") < 0, "END_BEFORE_START")
                     .when(F.col("duration_minutes") > 24 * 60, "LONG_SESSION")
+                    .when(F.col("o.energy_wh").isNull(), "NULL_ENERGY")
                     .when(F.col("o.energy_wh") < 0, "NEGATIVE_ENERGY")
+                    .when(F.col("o.total_amount_cents").isNull(), "NULL_TOTAL")
                     .when(F.col("o.total_amount_cents") <= 0, "INVALID_TOTAL")
+                    .when(F.col("o.status").isNull(), "NULL_STATUS")
                     .when(F.col("o.status") != "completed", "NON_COMPLETED_ORDER")
                     .otherwise(F.lit(None).cast("string")))
         .select(
@@ -314,6 +326,27 @@ def build_pipeline(ods_dir: Path, output_dir: Path, master: str) -> dict[str, ob
         spark.stop()
 
 
+def check_conservation(report: dict[str, object]) -> None:
+    """守恒 / 互斥 / 原因完备性硬校验：任一失败即抛 RuntimeError，调用方非零退出。
+
+    口径（PR #24 评审 P1）：
+    - 守恒：input_rows == dwd_rows + quarantine_rows（两侧均为实际落盘读回计数）；
+    - 互斥：DWD 与隔离区的 source_row_id 交集为空；
+    - 原因完备：所有无效行必须带 quality_code——“无原因地消失/入隔离”不可对账。
+    """
+    conservation = report["conservation"]
+    problems = []
+    if not conservation["balanced"]:
+        problems.append(f"not balanced: input={conservation['input_rows']} "
+                        f"dwd={conservation['dwd_rows']} quarantine={conservation['quarantine_rows']}")
+    if not conservation["exclusive"]:
+        problems.append("dwd and quarantine overlap on source_row_id")
+    if conservation["invalid_without_reason"]:
+        problems.append(f"{conservation['invalid_without_reason']} invalid rows without quality_code")
+    if problems:
+        raise RuntimeError("conservation check failed: " + "; ".join(problems))
+
+
 def run_build(spark: SparkSession, ods_dir: Path, output_dir: Path) -> dict[str, object]:
     dwd = order_dwd(spark, ods_dir).cache()
     dwd_path = output_dir / "dwd" / "charging_orders"
@@ -378,6 +411,10 @@ def run_build(spark: SparkSession, ods_dir: Path, output_dir: Path) -> dict[str,
 
     input_rows = dwd.count()
     quality_rows = dwd.groupBy("quality_valid", "quality_code").count().orderBy("quality_valid", "quality_code").collect()
+    quality_counts = [row.asDict(recursive=True) for row in quality_rows]
+    # 无效行必须携带原因码：无码 = 无法对账的“静默归类”，与守恒失败同等对待。
+    invalid_without_reason = sum(
+        1 for row in quality_counts if row["quality_valid"] is False and row["quality_code"] is None)
     # 计数与互斥性从两个实际落盘产物读回核验（不再只依赖内存分类计数）
     dwd_written = spark.read.parquet(str(dwd_path)).count()
     quarantine_written = spark.read.parquet(str(quarantine_path)).count()
@@ -399,8 +436,9 @@ def run_build(spark: SparkSession, ods_dir: Path, output_dir: Path) -> dict[str,
             "quarantine_rows": quarantine_written,
             "balanced": input_rows == dwd_written + quarantine_written,
             "exclusive": overlap == 0,
+            "invalid_without_reason": invalid_without_reason,
         },
-        "quality_counts": [row.asDict(recursive=True) for row in quality_rows],
+        "quality_counts": quality_counts,
         "dws_rows": hourly.count(),
         "dws_station_day_rows": station_day.count(),
         "window_hours": hours.count(),
@@ -413,6 +451,9 @@ def run_build(spark: SparkSession, ods_dir: Path, output_dir: Path) -> dict[str,
     }
     (output_dir / "reports").mkdir(parents=True, exist_ok=True)
     (output_dir / "reports" / "quality_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # 报告先落盘（保留失败现场证据），再硬校验：守恒/互斥/原因完备任一失败 → 中止流水线，
+    # 不再“记录 balanced: false 后照常返回成功”。
+    check_conservation(report)
     return report
 
 

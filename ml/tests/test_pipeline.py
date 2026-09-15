@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import importlib.util
 import json
 import sqlite3
@@ -83,6 +84,60 @@ def _dwd(spark, rows):
 
 def _piles(spark, rows):
     return spark.createDataFrame(rows, PILE_SCHEMA)
+
+
+ODS_ENVELOPE = ["source_table", "source_database_sha256", "generation_seed", "source_row_id"]
+
+
+def _write_ods_fixture(base: Path) -> None:
+    """最小 ODS：一条合法订单 + 三类“判定结果可能为 NULL”的脏行（评审 P1 反例）。
+
+    脏行形态与 ODS 原始字符串口径一致：
+    - 缺失数值（energy_wh 为空）→ NULL 判定；
+    - 不可解析数值（total_amount_cents="abc"）→ PERMISSIVE 读为 NULL 判定；
+    - 缺失状态（status 为空）→ 比较为 NULL 判定。
+    """
+    base.mkdir(parents=True, exist_ok=True)
+    digest = "0" * 64
+    seed = 20260914
+
+    def write(name: str, columns: list[str], rows: list[list[object]]) -> None:
+        with (base / name).open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow([*ODS_ENVELOPE, *columns])
+            for row in rows:
+                writer.writerow([name[:-4], digest, seed, row[0], *row])
+
+    write("stations.csv",
+          ["id", "name", "address", "latitude", "longitude", "status", "created_at", "updated_at", "provider"],
+          [[1, "测试站", "测试路1号", 30.5, 114.3, "active",
+            "2026-09-01T00:00:00Z", "2026-09-01T00:00:00Z", "synthetic"]])
+    write("users.csv",
+          ["id", "phone", "nickname", "balance_cents", "status", "created_at", "updated_at"],
+          [[1, "13800000000", "用户1", 0, "active", "2026-09-01T00:00:00Z", "2026-09-01T00:00:00Z"]])
+    write("charging_piles.csv",
+          ["id", "station_id", "pile_code", "pile_type", "power_kw", "unit_price_cents_per_kwh",
+           "status", "total_charge_count", "total_charge_seconds", "created_at", "updated_at",
+           "simulated", "status_source", "status_updated_at"],
+          [[11, 1, "P-1-A", "fast", 120.0, 120, "idle", 0, 0,
+            "2026-09-01T00:00:00Z", "2026-09-01T00:00:00Z", 1, "synthetic", "2026-09-01T00:00:00Z"]])
+    write("charging_orders.csv",
+          ["id", "order_no", "user_id", "pile_id", "status", "reserved_at", "started_at", "ended_at",
+           "energy_wh", "unit_price_cents_per_kwh", "service_fee_cents", "total_amount_cents",
+           "settled_at", "created_at", "updated_at"],
+          [
+              [1, "O-1", 1, 11, "completed", "", "2026-09-10T08:00:00Z", "2026-09-10T09:00:00Z",
+               1000, 120, 0, 120, "2026-09-10T09:00:00Z", "2026-09-10T08:00:00Z", "2026-09-10T09:00:00Z"],
+              [2, "O-2", 1, 11, "completed", "", "2026-09-10T10:00:00Z", "2026-09-10T11:00:00Z",
+               "", 120, 0, 120, "2026-09-10T11:00:00Z", "2026-09-10T10:00:00Z", "2026-09-10T11:00:00Z"],
+              [3, "O-3", 1, 11, "completed", "", "2026-09-10T12:00:00Z", "2026-09-10T13:00:00Z",
+               1000, 120, 0, "abc", "2026-09-10T13:00:00Z", "2026-09-10T12:00:00Z", "2026-09-10T13:00:00Z"],
+              [4, "O-4", 1, 11, "", "", "2026-09-10T14:00:00Z", "2026-09-10T15:00:00Z",
+               1000, 120, 0, 120, "2026-09-10T15:00:00Z", "2026-09-10T14:00:00Z", "2026-09-10T15:00:00Z"],
+          ])
+    # run_pipeline 优先消费原始事件流（含脏行）；无该文件时才回退 charging_orders.csv。
+    (base / "charging_orders_raw.csv").write_text(
+        (base / "charging_orders.csv").read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def test_allocation_conserves_seconds_energy_and_revenue(spark) -> None:
@@ -211,3 +266,41 @@ def test_pipeline_quarantine_conservation_and_snapshot_same_source(spark, tmp_pa
     assert db_all > dws_101                        # 业务库含被隔离完成单（tiny 用例必现）
     assert row_101["charge_seconds"] == dws_101    # 快照展示的是 DWS 口径
     connection.close()
+
+
+def test_quarantine_covers_missing_and_unparseable_values(spark, tmp_path: Path) -> None:
+    """评审 P1 反例落盘回归：缺失/不可解析数值与缺失状态 → 判定非空、入隔离且带原因。
+
+    修复前三值逻辑下这些行 quality_valid 为 NULL：filter(valid) 与 filter(~valid) 都不保留，
+    “输入 = 有效 + 隔离”被破坏。本用例从两个落盘产物读回逐条核验。
+    """
+    ods = tmp_path / "ods-null"
+    _write_ods_fixture(ods)
+    output = tmp_path / "pipeline-null"
+    report = RUN_PIPELINE.run_build(spark, ods, output)
+
+    dwd_written = spark.read.parquet(str(output / "dwd" / "charging_orders"))
+    quarantine_written = spark.read.parquet(str(output / "dwd" / "quarantine_charging_orders"))
+    assert report["conservation"]["balanced"] is True
+    assert report["conservation"]["exclusive"] is True
+    assert report["conservation"]["invalid_without_reason"] == 0
+    assert report["input_rows"] == 4
+    assert dwd_written.count() == 1 and quarantine_written.count() == 3
+    assert {row["quality_valid"] for row in dwd_written.select("quality_valid").collect()} == {True}
+    reasons = {row["quality_code"] for row in quarantine_written.select("quality_code").collect()}
+    assert reasons == {"NULL_ENERGY", "NULL_TOTAL", "NULL_STATUS"}   # 无 None：原因必须完备
+    # 报告从落盘产物读回核验，且与返回报告同口径
+    saved = json.loads((output / "reports" / "quality_report.json").read_text(encoding="utf-8"))
+    assert saved["conservation"] == report["conservation"]
+
+
+def test_conservation_check_aborts_on_failure() -> None:
+    """守恒/互斥/原因完备任一失败 → RuntimeError（中止流水线，不再“记录 false 却成功”）。"""
+    healthy = {"conservation": {"input_rows": 3, "dwd_rows": 2, "quarantine_rows": 1,
+                                "balanced": True, "exclusive": True, "invalid_without_reason": 0}}
+    RUN_PIPELINE.check_conservation(healthy)          # 健康报告不得抛错
+    for override in ({"balanced": False}, {"exclusive": False}, {"invalid_without_reason": 1}):
+        broken = json.loads(json.dumps(healthy))
+        broken["conservation"].update(override)
+        with pytest.raises(RuntimeError):
+            RUN_PIPELINE.check_conservation(broken)
