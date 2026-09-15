@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>充电网络实时态势（演示）</title>
+  <title>充电网络实时态势</title>
   <link rel="stylesheet" href="css/generated/theme.css">
   <link rel="stylesheet" href="css/app.css">
 </head>
@@ -15,7 +15,7 @@
   <header class="command-header">
     <h1 class="command-title">充电网络实时态势</h1>
     <div class="command-meta">
-      <span id="sourceBadge" class="command-chip" title="数据口径与 Qt 管理端 Mock 同源">演示数据</span>
+      <span id="sourceBadge" class="command-chip" title="数据口径：第一阶段 Schema v0.4 SQLite 快照">Schema v0.4</span>
       <span id="mapModeBadge" class="command-chip">地图模式未知</span>
       <span id="freshness" class="command-freshness"></span>
     </div>
@@ -36,7 +36,25 @@
   </section>
 
   <main class="dashboard-shell">
-    <section class="panorama" aria-label="充电网络实时态势主区">
+    <div class="workspace-layout">
+      <aside class="workspace-nav" aria-label="二阶段分析导航">
+        <div class="workspace-nav-brand">
+          <span class="workspace-kicker">EV · INTELLIGENCE</span>
+          <strong>分析工作台</strong>
+          <span>Schema v0.4 数据域</span>
+        </div>
+        <nav class="workspace-nav-list">
+          <button type="button" class="workspace-nav-item is-active" data-workspace-page="overview" aria-current="page"><span class="nav-index">01</span><span><b>网络总览</b><small>实时态势与健康度</small></span></button>
+          <button type="button" class="workspace-nav-item" data-workspace-page="forecast"><span class="nav-index">02</span><span><b>智能预测</b><small>负荷 · 推荐 · 预警</small></span></button>
+          <button type="button" class="workspace-nav-item" data-workspace-page="audience"><span class="nav-index">03</span><span><b>用户与设备</b><small>分群 · 运行效率</small></span></button>
+          <button type="button" class="workspace-nav-item" data-workspace-page="operations"><span class="nav-index">04</span><span><b>订单与能源</b><small>转化 · 用能画像</small></span></button>
+          <button type="button" class="workspace-nav-item" data-workspace-page="business"><span class="nav-index">05</span><span><b>收益与站点</b><small>营收 · 经营排行</small></span></button>
+          <button type="button" class="workspace-nav-item" data-workspace-page="service"><span class="nav-index">06</span><span><b>评价与服务</b><small>履约 · 用户反馈</small></span></button>
+        </nav>
+        <div class="workspace-nav-foot"><span class="live-dot"></span><span>数据链路正常</span><span id="navFreshness">—</span></div>
+      </aside>
+      <div class="workspace-content">
+    <section class="panorama" data-workspace-section="overview" aria-label="充电网络实时态势主区">
       <!-- 左栏：网络健康与关键指标（1920 全景态竖排；1366 起自动转顶部横向指标条） -->
       <section id="overview-metrics" class="metric-strip" aria-label="网络健康与关键指标"></section>
 
@@ -47,7 +65,7 @@
         <aside id="focus-detail" class="focus-detail" hidden aria-label="异常聚焦详情"></aside>
       </div>
 
-      <!-- 右栏：实时关注 + 站点利用率排行 + 预测预留 -->
+      <!-- 右栏：实时关注 + 站点利用率排行 + 预测摘要 -->
       <aside class="right-rail" aria-label="实时关注与经营摘要">
         <div class="rail-block rail-alerts">
           <h2 class="rail-title">实时关注<span id="attentionCount" class="count"></span></h2>
@@ -57,39 +75,178 @@
           <h2 class="rail-title">站点利用率<span class="count">平均 <span id="avgUtilization"></span></span></h2>
           <ol id="utilizationList" class="util-list"></ol>
         </div>
-        <div class="rail-block" aria-label="智能预测与调度">
-          <h2 class="rail-title">智能预测与调度 <span class="model-chip">模型待接入</span></h2>
-          <p class="model-note">预测模型尚未接入演示环境，此处不展示虚构的预测结果；模型接入后将呈现真实预测与调度建议。</p>
+        <div class="rail-block rail-analysis" aria-label="智能预测与调度">
+          <h2 class="rail-title">智能预测与调度 <span id="analysisStatus" class="model-chip">加载中</span></h2>
+          <div id="analysisSummary" class="analysis-summary" aria-live="polite">
+            <p class="model-note">正在读取分析服务产物。</p>
+          </div>
         </div>
       </aside>
     </section>
 
     <!-- 底部：经营与运行板块（全景态三图并列；紧凑态为页签，默认 24h 负荷） -->
-    <section id="operations-strip" class="operations-strip" aria-label="运行与经营效率">
+    <section id="operations-strip" class="operations-strip" data-workspace-section="overview" aria-label="运行与经营效率">
       <nav class="ops-tabs" aria-label="趋势图页签">
         <button type="button" class="ops-tab is-active" data-chart-tab="chart-load" aria-pressed="true">24 小时充电负荷</button>
         <button type="button" class="ops-tab" data-chart-tab="chart-states" aria-pressed="false">桩状态分布</button>
         <button type="button" class="ops-tab" data-chart-tab="chart-revenue" aria-pressed="false">营收趋势</button>
       </nav>
       <div class="panel chart-panel" data-chart-panel="chart-load">
-        <h2 class="panel-title">24 小时充电负荷 <span class="demo-badge">演示</span></h2>
-        <div id="chart-load" class="chart-box" role="img" aria-label="24 小时充电负荷折线图（演示数据）"></div>
+        <h2 class="panel-title">24 小时充电负荷 <span class="demo-badge">Schema 快照</span></h2>
+        <div id="chart-load" class="chart-box" role="img" aria-label="24 小时充电负荷折线图（Schema v0.4 快照）"></div>
       </div>
       <div class="panel chart-panel" data-chart-panel="chart-states">
-        <h2 class="panel-title">桩状态分布 <span class="demo-badge">演示</span></h2>
-        <div id="chart-states" class="chart-box" role="img" aria-label="充电桩五态分布环图（演示数据）"></div>
+        <h2 class="panel-title">桩状态分布 <span class="demo-badge">Schema 快照</span></h2>
+        <div id="chart-states" class="chart-box" role="img" aria-label="充电桩五态分布环图（Schema v0.4 快照）"></div>
       </div>
       <div class="panel chart-panel" data-chart-panel="chart-revenue">
         <div class="panel-head">
-          <h2 class="panel-title">营收趋势 <span class="demo-badge">演示</span></h2>
+          <h2 class="panel-title">营收趋势 <span class="demo-badge">Schema 快照</span></h2>
           <div class="chart-range" role="group" aria-label="营收趋势时间范围">
             <button type="button" class="range-btn is-active" data-range-days="7" aria-pressed="true">近 7 日</button>
             <button type="button" class="range-btn" data-range-days="30" aria-pressed="false">近 30 日</button>
           </div>
         </div>
-        <div id="chart-revenue" class="chart-box" role="img" aria-label="营收趋势图（演示数据）"></div>
+        <div id="chart-revenue" class="chart-box" role="img" aria-label="营收趋势图（Schema v0.4 快照）"></div>
       </div>
     </section>
+
+    <section id="overview-mining" class="overview-mining" data-workspace-section="overview" aria-label="网络总览数据挖掘摘要">
+      <div class="section-heading">
+        <div>
+          <h2>网络诊断摘要</h2>
+          <p>把实时状态、历史订单和站点画像合并为可解释的运营信号</p>
+        </div>
+        <span class="section-note">4 个方法模块 · 同一份 Schema v0.4 快照</span>
+      </div>
+      <div class="overview-insight-grid">
+        <article class="insight-card">
+          <div class="insight-card-head"><h3>网络健康评分</h3><span class="method-badge">加权评分</span></div>
+          <p class="insight-caption">按可用率、利用率、故障占比和订单完成率形成运营健康度。</p>
+          <div id="overview-health" class="insight-content" role="img" aria-label="网络健康评分"></div>
+        </article>
+        <article class="insight-card">
+          <div class="insight-card-head"><h3>设备异常扫描</h3><span class="method-badge">z-score</span></div>
+          <p class="insight-caption">以累计充电次数识别偏离群体基线的桩，避免只看当前状态。</p>
+          <div id="overview-anomalies" class="insight-content" role="img" aria-label="设备异常扫描结果"></div>
+        </article>
+        <article class="insight-card">
+          <div class="insight-card-head"><h3>站点负荷分层</h3><span class="method-badge">聚类画像</span></div>
+          <p class="insight-caption">以利用率、能耗和营收组合标注高负荷、均衡、低负荷站点。</p>
+          <div id="overview-clusters" class="insight-content" role="img" aria-label="站点负荷分层"></div>
+        </article>
+        <article class="insight-card">
+          <div class="insight-card-head"><h3>峰谷用能结构</h3><span class="method-badge">时序分解</span></div>
+          <p class="insight-caption">将小时负荷压缩为夜间、早高峰、日间和晚高峰四个时段。</p>
+          <div id="overview-energy-bands" class="insight-content" role="img" aria-label="峰谷用能结构"></div>
+        </article>
+      </div>
+    </section>
+
+    <section id="analysis-workbench" class="analysis-workbench" aria-label="二阶段大数据分析工作台" hidden>
+      <div class="workbench-head">
+        <div>
+          <h2 class="workbench-title">二阶段大数据分析工作台</h2>
+          <p class="workbench-subtitle">基于 Schema v0.4 订单、用户、设备和能源事实；点击模块切换分析视角</p>
+        </div>
+        <span id="analysisSnapshotMeta" class="analysis-meta">等待快照</span>
+      </div>
+      <nav class="analysis-tabs" aria-label="分析模块">
+        <button type="button" class="analysis-tab" data-analysis-tab="forecast" aria-pressed="false">机器学习预测</button>
+        <button type="button" class="analysis-tab is-active" data-analysis-tab="users" aria-pressed="true">充电用户</button>
+        <button type="button" class="analysis-tab" data-analysis-tab="equipment" aria-pressed="false">充电设备</button>
+        <button type="button" class="analysis-tab" data-analysis-tab="orders" aria-pressed="false">充电订单</button>
+        <button type="button" class="analysis-tab" data-analysis-tab="energy" aria-pressed="false">充电能源</button>
+        <button type="button" class="analysis-tab" data-analysis-tab="revenue" aria-pressed="false">运营收益</button>
+        <button type="button" class="analysis-tab" data-analysis-tab="stations" aria-pressed="false">站点运营</button>
+        <button type="button" class="analysis-tab" data-analysis-tab="service" aria-pressed="false">评价与服务</button>
+      </nav>
+      <div class="analysis-grid">
+        <article class="analysis-panel" data-analysis-panel="forecast" data-analysis-group="forecast" hidden>
+          <h3>1/6/24 小时负荷预测 <span class="method-badge" data-forecast-method>模型回归</span></h3><p class="analysis-caption">Spark MLlib 模型输出；鼠标悬停查看预测值，右侧摘要同步推荐与预警</p>
+          <div id="analysis-forecast" class="analysis-chart" role="img" aria-label="机器学习一小时六小时二十四小时负荷预测图"></div>
+          <div id="analysis-forecast-meta" class="forecast-meta" aria-live="polite">等待分析服务</div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="forecast-quality" data-analysis-group="forecast" hidden>
+          <h3>模型验证与误差</h3><p class="analysis-caption">读取训练产物的 MAE、RMSE 和验证集规模，区分可用模型与降级基线。</p>
+          <div id="analysis-forecast-quality" class="analysis-chart" role="img" aria-label="负荷预测模型验证指标"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="forecast-residuals" data-analysis-group="forecast" hidden>
+          <h3>预测区间与残差</h3><p class="analysis-caption">按站点展示预测负荷离群程度；没有真实区间时明确显示“未提供”，不伪造置信度。</p>
+          <div id="analysis-forecast-residuals" class="analysis-chart" role="img" aria-label="预测残差与区间质量"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="forecast-actions" data-analysis-group="forecast" hidden>
+          <h3>调度推荐与预警</h3><p class="analysis-caption">低拥堵推荐与历史 P95 预警按同一预测批次生成，支持运营动作闭环。</p>
+          <div id="analysis-forecast-actions" class="analysis-chart" role="img" aria-label="调度推荐与负荷预警"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="users" data-analysis-group="audience" hidden>
+          <h3>用户分群与复购</h3><p class="analysis-caption">按完成订单次数分组，识别高价值复购用户</p>
+          <div id="analysis-users" class="analysis-chart" role="img" aria-label="充电用户订单次数分群图"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="equipment" data-analysis-group="audience" hidden>
+          <h3>设备运行状态</h3><p class="analysis-caption">在线、预约、充电、故障和离线设备分布</p>
+          <div id="analysis-equipment" class="analysis-chart" role="img" aria-label="充电设备状态分布图"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="user-cohort" data-analysis-group="audience" hidden>
+          <h3>RFM 用户价值矩阵</h3><p class="analysis-caption">结合最近消费、频次和金额，定位高价值与待唤醒客群。</p>
+          <div id="analysis-user-cohort" class="analysis-chart" role="img" aria-label="RFM 用户价值矩阵"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="equipment-risk" data-analysis-group="audience" hidden>
+          <h3>设备效率与异常</h3><p class="analysis-caption">把功率档位、充电次数和 z-score 异常桩放在同一设备画像中。</p>
+          <div id="analysis-equipment-risk" class="analysis-chart" role="img" aria-label="设备效率与异常分析"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="orders" data-analysis-group="operations" hidden>
+          <h3>订单转化趋势 <span class="method-badge">漏斗 + 时序</span></h3><p class="analysis-caption">近 30 日全部、完成和取消订单的变化</p>
+          <div id="analysis-orders" class="analysis-chart" role="img" aria-label="充电订单趋势图"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="energy" data-analysis-group="operations" hidden>
+          <h3>能源负荷画像 <span class="method-badge">相关分析</span></h3><p class="analysis-caption">按小时观察能耗与订单量，定位用能高峰</p>
+          <div id="analysis-energy" class="analysis-chart" role="img" aria-label="充电能源小时画像图"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="order-funnel" data-analysis-group="operations" hidden>
+          <h3>订单状态漏斗</h3><p class="analysis-caption">预约、进行中、完成、取消和异常的数量与转化损耗。</p>
+          <div id="analysis-order-funnel" class="analysis-chart" role="img" aria-label="订单状态漏斗"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="energy-peaks" data-analysis-group="operations" hidden>
+          <h3>峰谷时段与负荷弹性</h3><p class="analysis-caption">比较四个时段的能耗贡献，并给出订单量—能耗相关系数。</p>
+          <div id="analysis-energy-peaks" class="analysis-chart" role="img" aria-label="峰谷时段与负荷弹性"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="revenue" data-analysis-group="business" hidden>
+          <h3>运营收益构成 <span class="method-badge">趋势回归</span></h3><p class="analysis-caption">近 30 日营收走势与日均收益</p>
+          <div id="analysis-revenue" class="analysis-chart" role="img" aria-label="运营收益趋势图"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="stations" data-analysis-group="business" hidden>
+          <h3>站点经营排行 <span class="method-badge">Pareto 分析</span></h3><p class="analysis-caption">按营收排序的站点 Top 10，可联动地图聚焦</p>
+          <div id="analysis-stations" class="analysis-chart" role="img" aria-label="充电站运营收益排行图"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="revenue-regression" data-analysis-group="business" hidden>
+          <h3>营收趋势回归 <span class="method-badge">OLS</span></h3><p class="analysis-caption">普通最小二乘拟合 30 日日营收，展示斜率与拟合度，不外推为承诺。</p>
+          <div id="analysis-revenue-regression" class="analysis-chart" role="img" aria-label="营收趋势回归"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="station-clusters" data-analysis-group="business" hidden>
+          <h3>站点聚类与集中度</h3><p class="analysis-caption">利用率—能耗聚类与累计营收占比共同识别容量和经营集中风险。</p>
+          <div id="analysis-station-clusters" class="analysis-chart" role="img" aria-label="站点聚类与营收集中度"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="service" data-analysis-group="service" hidden>
+          <h3>用户评价与服务质量 <span class="method-badge">代理指标</span></h3><p class="analysis-caption">履约效率、取消控制与复购表现；评价数据接入后可继续扩展星级与情感维度</p>
+          <div id="analysis-service" class="analysis-chart" role="img" aria-label="用户服务质量代理指标图"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="service-duration" data-analysis-group="service" hidden>
+          <h3>履约时长分布</h3><p class="analysis-caption">以完成订单时长分桶，观察服务效率和长尾占比。</p>
+          <div id="analysis-service-duration" class="analysis-chart" role="img" aria-label="履约时长分布"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="service-control" data-analysis-group="service" hidden>
+          <h3>服务质量控制图</h3><p class="analysis-caption">按日完成率对比基线和控制区间，识别需要运营复核的波动。</p>
+          <div id="analysis-service-control" class="analysis-chart" role="img" aria-label="服务质量控制图"></div>
+        </article>
+        <article class="analysis-panel" data-analysis-panel="service-data" data-analysis-group="service" hidden>
+          <h3>评价数据完整性</h3><p class="analysis-caption">显示当前评价事实是否入库；缺失时只展示可追溯订单代理指标。</p>
+          <div id="analysis-service-data" class="analysis-chart" role="img" aria-label="评价数据完整性"></div>
+        </article>
+      </div>
+    </section>
+      </div>
+    </div>
   </main>
 
   <div id="globalState" role="status" aria-live="polite" class="sr-only"></div>

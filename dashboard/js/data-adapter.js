@@ -1,4 +1,4 @@
-// 数据适配器：把 demo.json（协议口径）规整为图表/指标可用的视图模型。
+// 数据适配器：把业务快照（或离线演练 fixture）规整为图表/指标可用的视图模型。
 // 金额一律整数分，时间 UTC ISO-8601；派生指标全部可追溯到 fixture。
 import { mapPileStatus } from './status-map.js';
 
@@ -92,6 +92,7 @@ export function adaptDashboardData(fixture) {
     // A-02 近 30 日营收序列（末 7 日与 revenue7dCents 同源；合计与 Qt mockdataset 一致）
     revenue30dCents: fixture.revenue30dCents ?? [],
     demoSeries: fixture.demoSeries,
+    analytics: fixture.analytics ?? {},
   };
 }
 

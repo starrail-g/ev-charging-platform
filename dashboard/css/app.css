@@ -760,6 +760,126 @@ body {
   height: 200px;
 }
 
+.analysis-summary {
+  min-height: 7.5rem;
+}
+
+.analysis-list {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, auto) 1fr;
+  gap: 0.42rem 0.7rem;
+  margin: 0;
+  font-size: 0.78rem;
+}
+
+.analysis-list dt {
+  color: var(--night-muted-text);
+}
+
+.analysis-list dd {
+  margin: 0;
+  text-align: right;
+  color: var(--night-text);
+}
+
+.analysis-meta {
+  margin: 0.65rem 0 0;
+  color: var(--night-muted-text);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+/* ---------- 二阶段分析工作台 ---------- */
+.analysis-workbench {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1rem 1.1rem 1.1rem;
+  background: color-mix(in srgb, var(--night-surface) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--night-decorative) 72%, transparent);
+  border-radius: 10px;
+}
+
+.workbench-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.workbench-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.workbench-subtitle,
+.analysis-caption {
+  margin: 0.2rem 0 0;
+  color: var(--night-muted-text);
+  font-size: 0.76rem;
+}
+
+.analysis-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--night-decorative) 55%, transparent);
+  padding-bottom: 0.55rem;
+}
+
+.analysis-tab {
+  border: 1px solid color-mix(in srgb, var(--night-decorative) 68%, transparent);
+  border-radius: 999px;
+  padding: 0.34rem 0.8rem;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--night-muted-text);
+  background: transparent;
+  cursor: pointer;
+}
+
+.analysis-tab:hover,
+.analysis-tab.is-active {
+  color: var(--night-text);
+  border-color: color-mix(in srgb, var(--night-focus) 68%, transparent);
+  background: color-mix(in srgb, var(--night-focus) 14%, transparent);
+}
+
+.analysis-grid {
+  min-height: 285px;
+}
+
+.analysis-panel[hidden] {
+  display: none;
+}
+
+.analysis-panel h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.analysis-chart {
+  width: 100%;
+  height: 235px;
+  margin-top: 0.3rem;
+}
+
+.forecast-meta {
+  margin-top: -0.15rem;
+  color: var(--night-muted-text);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-chip[data-state="ready"] {
+  color: var(--state-charging);
+}
+
+.model-chip[data-state="degraded"] {
+  color: var(--state-fault);
+}
+
 /* 1366 页签（紧凑态显示，全景态隐藏） */
 .ops-tabs {
   display: none;
@@ -1055,3 +1175,148 @@ body.page-blocking .dashboard-shell {
 /* 分析模式：隐藏演示专属徽标与演示档位按钮（筛选由 Vue 控件接管） */
 body.analytics-mode .demo-badge { display: none; }
 body.analytics-mode .chart-range { display: none; }
+/* ---------- 二阶段工作台：导航切页与分析页 ---------- */
+.dashboard-shell {
+  display: block;
+  height: auto !important;
+  grid-template-rows: none !important;
+  max-width: 1980px;
+  padding: clamp(0.8rem, 1.8vw, 1.5rem) clamp(1rem, 2.8vw, 2.75rem) 2.5rem;
+}
+
+.workspace-layout {
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr);
+  gap: clamp(0.9rem, 1.6vw, 1.5rem);
+  align-items: start;
+}
+
+.workspace-nav {
+  position: sticky;
+  top: 1rem;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 112px);
+  padding: 1.15rem 0.7rem 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--night-decorative) 75%, transparent);
+  border-radius: 14px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--night-surface) 96%, transparent), color-mix(in srgb, var(--night-deep) 34%, var(--night-surface)));
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.16);
+}
+
+.workspace-nav-brand {
+  display: grid;
+  gap: 0.28rem;
+  padding: 0.2rem 0.7rem 1.25rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--night-decorative) 46%, transparent);
+}
+
+.workspace-nav-brand strong { font-size: 1.12rem; letter-spacing: 0.04em; }
+.workspace-nav-brand > span:last-child { color: var(--night-muted-text); font-size: 0.7rem; }
+.workspace-kicker { color: var(--night-focus); font-size: 0.64rem; letter-spacing: 0.16em; font-weight: 700; }
+
+.workspace-nav-list { display: grid; gap: 0.34rem; padding-top: 1rem; }
+.workspace-nav-item {
+  display: grid;
+  grid-template-columns: 2rem 1fr;
+  gap: 0.55rem;
+  align-items: center;
+  width: 100%;
+  padding: 0.65rem 0.55rem;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  text-align: left;
+  color: var(--night-muted-text);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+.workspace-nav-item:hover { color: var(--night-text); background: color-mix(in srgb, var(--night-focus) 8%, transparent); transform: translateX(2px); }
+.workspace-nav-item.is-active { color: var(--night-text); border-color: color-mix(in srgb, var(--night-focus) 45%, transparent); background: linear-gradient(100deg, color-mix(in srgb, var(--night-focus) 18%, transparent), color-mix(in srgb, var(--night-focus) 4%, transparent)); }
+.workspace-nav-item b { display: block; font-size: 0.83rem; font-weight: 650; }
+.workspace-nav-item small { display: block; margin-top: 0.12rem; font-size: 0.66rem; color: var(--night-muted-text); }
+.workspace-nav-item.is-active small { color: color-mix(in srgb, var(--night-text) 72%, var(--night-muted-text)); }
+.nav-index { color: var(--night-focus); font-size: 0.67rem; font-variant-numeric: tabular-nums; letter-spacing: 0.08em; }
+
+.workspace-nav-foot { display: flex; align-items: center; gap: 0.38rem; margin-top: auto; padding: 0.8rem 0.7rem 0.15rem; border-top: 1px solid color-mix(in srgb, var(--night-decorative) 46%, transparent); color: var(--night-muted-text); font-size: 0.68rem; }
+.workspace-nav-foot span:last-child { margin-left: auto; font-variant-numeric: tabular-nums; }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--state-idle); box-shadow: 0 0 0 4px color-mix(in srgb, var(--state-idle) 14%, transparent); }
+
+.workspace-content { min-width: 0; }
+.workspace-content > [hidden] { display: none !important; }
+.workspace-content > .panorama, .workspace-content > .operations-strip { margin-bottom: 1rem; }
+
+.analysis-workbench { min-height: calc(100vh - 140px); padding: clamp(1rem, 2vw, 1.5rem); border-radius: 14px; background: color-mix(in srgb, var(--night-surface) 92%, transparent); }
+.analysis-workbench[hidden] { display: none; }
+.workbench-head { align-items: flex-start; padding-bottom: 0.9rem; border-bottom: 1px solid color-mix(in srgb, var(--night-decorative) 48%, transparent); }
+.workbench-title { font-size: clamp(1.2rem, 2vw, 1.55rem); letter-spacing: 0.025em; }
+.workbench-subtitle { max-width: 700px; font-size: 0.8rem; }
+.analysis-tabs { display: none; }
+.analysis-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; min-height: 0; padding-top: 1rem; }
+.analysis-panel { min-width: 0; min-height: 430px; padding: 1rem 1.1rem 0.8rem; border: 1px solid color-mix(in srgb, var(--night-decorative) 66%, transparent); border-radius: 12px; background: linear-gradient(145deg, color-mix(in srgb, var(--night-surface) 96%, transparent), color-mix(in srgb, var(--night-deep) 18%, var(--night-surface))); }
+.analysis-panel[data-analysis-panel="forecast"], .analysis-panel[data-analysis-panel="service"] { grid-column: 1 / -1; }
+.analysis-panel h3 { font-size: 1.05rem; letter-spacing: 0.02em; }
+.analysis-caption { font-size: 0.76rem; }
+.analysis-chart { height: 330px; margin-top: 0.7rem; }
+.forecast-meta { padding-top: 0.45rem; }
+.forecast-insights { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; margin-top: 0.65rem; }
+.forecast-insights span { display: grid; gap: 0.18rem; padding: 0.58rem 0.7rem; border-left: 2px solid var(--night-focus); color: var(--night-muted-text); background: color-mix(in srgb, var(--night-decorative) 15%, transparent); font-size: 0.72rem; }
+.forecast-insights b { color: var(--night-text); font-size: 0.7rem; }
+.analysis-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.55rem; margin-top: 0.45rem; }
+.analysis-kpi { display: grid; gap: 0.12rem; padding: 0.5rem 0.65rem; border-radius: 8px; background: color-mix(in srgb, var(--night-decorative) 20%, transparent); }
+.analysis-kpi span { color: var(--night-muted-text); font-size: 0.67rem; }
+.analysis-kpi strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--night-text); font-size: 0.86rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.analysis-method { margin: 0.55rem 0 0; color: var(--night-focus); font-size: 0.68rem; letter-spacing: 0.02em; }
+
+/* ---------- 总览数据挖掘摘要 ---------- */
+.overview-mining {
+  margin-bottom: 1rem;
+  padding: 1rem 1.1rem 1.1rem;
+  border: 1px solid color-mix(in srgb, var(--night-decorative) 72%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--night-surface) 88%, transparent);
+}
+.section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; }
+.section-heading h2 { margin: 0; font-size: 1rem; letter-spacing: 0.02em; }
+.section-heading p { margin: 0.18rem 0 0; color: var(--night-muted-text); font-size: 0.73rem; }
+.section-note { color: var(--night-muted-text); font-size: 0.68rem; white-space: nowrap; }
+.overview-insight-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; }
+.insight-card { min-width: 0; padding: 0.78rem 0.85rem 0.65rem; border: 1px solid color-mix(in srgb, var(--night-decorative) 58%, transparent); border-radius: 10px; background: linear-gradient(145deg, color-mix(in srgb, var(--night-surface) 96%, transparent), color-mix(in srgb, var(--night-deep) 14%, var(--night-surface))); }
+.insight-card-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.insight-card h3 { margin: 0; font-size: 0.86rem; }
+.insight-caption { min-height: 2.3em; margin: 0.25rem 0 0; color: var(--night-muted-text); font-size: 0.68rem; line-height: 1.45; }
+.method-badge { display: inline-flex; align-items: center; padding: 0.13em 0.5em; border: 1px solid color-mix(in srgb, var(--night-focus) 45%, transparent); border-radius: 999px; color: var(--night-focus); font-size: 0.62rem; font-weight: 500; white-space: nowrap; vertical-align: 0.12em; }
+.insight-content { width: 100%; height: 170px; margin-top: 0.25rem; }
+.analysis-panel h3 .method-badge { margin-left: 0.35rem; }
+
+@media (max-width: 1180px) {
+  .workspace-layout { grid-template-columns: 1fr; }
+  .workspace-nav { position: static; min-height: 0; padding: 0.8rem; }
+  .workspace-nav-brand { display: flex; align-items: baseline; gap: 0.7rem; padding: 0.2rem 0.35rem 0.75rem; }
+  .workspace-nav-brand > span:last-child { margin-left: auto; }
+  .workspace-nav-list { display: flex; overflow-x: auto; gap: 0.45rem; padding-top: 0.75rem; scrollbar-width: thin; }
+  .workspace-nav-item { min-width: 150px; grid-template-columns: 1.6rem 1fr; }
+  .workspace-nav-foot { display: none; }
+  .analysis-workbench { min-height: 0; }
+  .overview-insight-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .dashboard-shell { padding-inline: 0.7rem; }
+  .workspace-nav-brand { flex-wrap: wrap; }
+  .workspace-nav-brand > span:last-child { width: 100%; margin-left: 0; }
+  .workspace-nav-item { min-width: 138px; padding: 0.55rem 0.45rem; }
+  .workspace-nav-item small { display: none; }
+  .analysis-grid { grid-template-columns: 1fr; }
+  .analysis-panel, .analysis-panel[data-analysis-panel="forecast"], .analysis-panel[data-analysis-panel="service"] { grid-column: auto; min-height: 360px; }
+  .analysis-chart { height: 270px; }
+  .analysis-kpis { gap: 0.4rem; }
+  .analysis-kpi { padding-inline: 0.5rem; }
+  .forecast-insights { grid-template-columns: 1fr; }
+  .workbench-head { flex-direction: column; gap: 0.45rem; }
+  .section-heading { align-items: flex-start; flex-direction: column; gap: 0.3rem; }
+  .section-note { white-space: normal; }
+  .overview-insight-grid { grid-template-columns: 1fr; }
+  .insight-content { height: 180px; }
+}

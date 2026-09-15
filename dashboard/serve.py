@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """本地离线演示 HTTP 服务与安全运行时配置注入。
 
-- GET /runtime-config.js  -> 注入 window.__EV_CONFIG__（含可选腾讯地图 key）
+- GET /runtime-config.js  -> 注入 window.__EV_CONFIG__（含可选 GL 底图 key）
 - 其余路径从 dashboard/ 静态提供（本地 ECharts / 数据 / 页面）
-- 密钥只读自环境变量 TENCENT_MAP_KEY（优先）或 config/local.env（被 gitignore）；
+- 底图密钥只读自环境变量 TENCENT_MAP_JS_KEY（优先）或 config/local.env（被 gitignore）；
   服务日志绝不打印 config、响应体或 key。
 - --check 不启动服务，只校验答辩必需资产是否存在（构建验收用）。
 """
@@ -37,10 +37,18 @@ def load_runtime_config(local_env: Path) -> dict:
                 key, value = line.split("=", 1)
                 values[key.strip()] = value.strip()
     return {
-        "tencentMapKey": os.environ.get(
-            "TENCENT_MAP_KEY", values.get("TENCENT_MAP_KEY", "")
+        # The server-side WebService key must never be sent to this browser
+        # origin.  Dashboard only needs the separately scoped GL visual key.
+        "tencentMapJsKey": os.environ.get(
+            "TENCENT_MAP_JS_KEY", values.get("TENCENT_MAP_JS_KEY", "")
         ),
-        "demo": True,
+        "analysisApiBaseUrl": os.environ.get(
+            "EV_ANALYSIS_API_BASE_URL", values.get("EV_ANALYSIS_API_BASE_URL", "")
+        ),
+        "dashboardApiBaseUrl": os.environ.get(
+            "EV_DASHBOARD_API_BASE_URL", values.get("EV_DASHBOARD_API_BASE_URL", "")
+        ),
+        "demo": False,
     }
 
 
