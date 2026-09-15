@@ -135,6 +135,26 @@ class GeneratorCase(unittest.TestCase):
                 continue
             self.assertGreaterEqual(int(w["balance_after_cents"]), 0)
 
+    def test_low_profile_regression_dq05_dq11_collision(self):
+        """回归（9/15）：low 档 + seed 20260914 曾因 DQ05 将 power_kw 脏化为带空格字符串、
+        DQ11 又对该桩做 功率×时长 数值运算而 TypeError 崩溃（sequence * float）。
+        修复（float() 还原）后应完整产出批次，且 DQ11 标签与 manifest 哈希一致。"""
+        out = self.tmp / "low"
+        subprocess.run(
+            [sys.executable, str(GEN), "--profile", "low", "--seed", "20260914",
+             "--batch-id", "gen-low-reg", "--out-root", str(out), "--repo-root", str(REPO)],
+            check=True, capture_output=True, text=True)
+        batch = out / "batches" / "gen-low-reg"
+        with open(batch / "input" / "dirty_labels.jsonl", encoding="utf-8") as fh:
+            labels = [json.loads(line) for line in fh]
+        self.assertGreaterEqual(len([l for l in labels if l["rule"] == "DQ11"]), 3,
+                                "DQ11 正例缺失")
+        manifest = json.loads((batch / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["profile"], "low")
+        for table, meta in manifest["tables"].items():
+            f = batch / meta["file"]
+            self.assertEqual(hashlib.sha256(f.read_bytes()).hexdigest(), meta["sha256"], table)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

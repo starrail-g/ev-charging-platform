@@ -643,7 +643,8 @@ class Generator:
             pl = next(x for x in self.piles if x["id"] == o["pile_id"])
             st = parse_iso(o["started_at"])
             en = parse_iso(o["ended_at"])
-            load_max = pl["power_kw"] * 1000 * (en - st).total_seconds() / 3600.0
+            # DQ05 可能已把该桩 power_kw 改写成带空格字符串（脏值），此处按数字语义还原
+            load_max = float(pl["power_kw"]) * 1000 * (en - st).total_seconds() / 3600.0
             orig = str(o["energy_wh"])
             o["energy_wh"] = int(load_max * 1.5)
             o["total_amount_cents"] = billing_cents(
