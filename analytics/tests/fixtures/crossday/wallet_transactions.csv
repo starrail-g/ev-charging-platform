@@ -1,0 +1,2 @@
+source_record_id,batch_id,source_file,source_line,id,user_id,order_id,transaction_type,amount_cents,balance_after_cents,created_at
+wallet-000001,fx-crossday,wallet_transactions.csv,2,1,1,301,charge,-2000,5000,2026-09-04T00:35:00Z

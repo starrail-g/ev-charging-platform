@@ -1,0 +1,2 @@
+source_record_id,batch_id,source_file,source_line,id,phone,nickname,balance_cents,status,created_at,updated_at
+users-000001,fx-extras,users.csv,2,1,13900000001,边界用户,1000,active,2026-08-01T00:00:00Z,2026-08-01T00:00:00Z

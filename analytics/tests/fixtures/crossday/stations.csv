@@ -1,0 +1,3 @@
+source_record_id,batch_id,source_file,source_line,id,name,address,latitude,longitude,status,created_at,updated_at
+stations-000001,fx-crossday,stations.csv,2,1,跨日测试站一,跨日市测试路1号,22.520000,113.920000,active,2026-07-01T00:00:00Z,2026-07-01T00:00:00Z
+stations-000002,fx-crossday,stations.csv,3,2,跨日测试站二,跨日市测试路2号,22.530000,113.930000,active,2026-07-01T00:00:00Z,2026-07-01T00:00:00Z

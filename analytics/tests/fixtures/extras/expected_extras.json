@@ -1,0 +1,26 @@
+{
+  "fixture": "extras",
+  "batch_id": "fx-extras",
+  "orders": {"input": 7, "kept": 1, "duplicate": 0, "quarantine": 6, "repaired": 1},
+  "wallet": {"input": 1, "kept": 1, "duplicate": 0, "quarantine": 0, "repaired": 0},
+  "kept_order_nos": ["EX-0001"],
+  "quarantine_expected": {
+    "orders-000002": ["DQ02_key_conflict"],
+    "orders-000003": ["DQ02_key_conflict"],
+    "orders-000004": ["DQ07_time_order"],
+    "orders-000005": ["DQ11_over_physical"],
+    "orders-000006": ["DQ08_value_domain"],
+    "orders-000007": ["DQ06_status_unknown"]
+  },
+  "repair_expected": {
+    "orders-000001": {"total_amount_cents": {"original": "13.00元", "cleaned": "1300"}}
+  },
+  "scenarios": [
+    "EX-0002 同订单号内容冲突 → 整组隔离（两行）",
+    "EX-0004 零时长（ended==started）→ 隔离",
+    "EX-0005 电量超出功率×时长上限 → 隔离（金额与公式一致，单一原因）",
+    "EX-0006 负电量 → 隔离（DQ08，单一原因）",
+    "EX-0007 未知状态 → 隔离（DQ06）",
+    "EX-0001 显式 unit=元 → 修复换算分并保留"
+  ]
+}

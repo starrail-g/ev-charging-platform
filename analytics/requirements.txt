@@ -1,0 +1,4 @@
+# 第二阶段分析链路依赖（在 VM/Ubuntu 上运行）
+# pyspark: 由 Spark 3.4.1 发行版自带（/opt/module/spark-3.4.1/python/lib/pyspark.zip），
+#          无需 pip 安装；独立环境可 pip install pyspark==3.4.1。
+flask>=3.0,<4        # analytics/api（只读快照 API + 静态大屏托管）

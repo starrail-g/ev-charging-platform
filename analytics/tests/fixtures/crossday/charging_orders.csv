@@ -1,0 +1,2 @@
+source_record_id,batch_id,source_file,source_line,id,order_no,user_id,pile_id,status,reserved_at,started_at,ended_at,energy_wh,unit_price_cents_per_kwh,service_fee_cents,total_amount_cents,settled_at,created_at,updated_at
+orders-000001,fx-crossday,charging_orders.csv,2,301,CD-0001,1,1,completed,2026-09-03T23:00:00Z,2026-09-03T23:30:00Z,2026-09-04T00:30:00Z,20000,100,0,2000,2026-09-04T00:35:00Z,2026-09-03T23:00:00Z,2026-09-04T00:35:00Z
