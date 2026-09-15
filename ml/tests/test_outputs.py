@@ -156,3 +156,44 @@ def test_forecast_weekday_follows_cross_week_target(tmp_path: Path) -> None:
     assert item["target_hour"] == 0
     assert item["fallback_level"] == "same_weekday_hour"
     assert item["predicted_value"] == 100.0      # 旧实现会落到站级均值 55
+
+
+def test_sparse_single_sample_station_still_produces_full_artifacts(tmp_path: Path) -> None:
+    """评审 P1 反例：仅一条 08:00 样本 → 目标小时无样本、1 小时预测为 0，评分不得除零。
+
+    修复前 max_load = 0 时推荐评分 `0.3 × load / max_load` 抛 ZeroDivisionError，
+    且 forecast.json 已写出、推荐/预警/元数据缺失（半套产物）。
+    """
+    forecast = _run([
+        {"date": "2026-09-10", "start_hour": 8, "station_id": 1, "load_kwh": 20.0,
+         "session_count": 2, "user_count": 2, "utilization": 0.4, "idle_pile_estimate": 6},
+    ], tmp_path)
+    items = _by_horizon(forecast)
+    assert items[1]["predicted_value"] == 0.0 and items[1]["fallback_level"] == "global_hour"
+    assert items[6]["predicted_value"] == 0.0
+    assert items[24]["predicted_value"] == 20.0          # 命中 08:00 同小时样本（全局回退）
+    recommendations = json.loads((tmp_path / "ads" / "recommendations.json").read_text())
+    assert len(recommendations["items"]) == 1
+    item = recommendations["items"][0]
+    assert item["predicted_load"] == 0.0
+    assert item["score"] == round(0.5 * item["predicted_idle_rate"], 4)   # 负荷项按 0，不除零
+    for name in ("forecast.json", "recommendations.json", "alerts.json", "model_metadata.json"):
+        assert (tmp_path / "ads" / name).exists(), f"缺少产物 {name}（半套产物回归）"
+
+
+def test_all_zero_load_rows_still_produce_full_artifacts(tmp_path: Path) -> None:
+    """全零负荷窗口：预测全零，评分不除零，且不产生伪预警。"""
+    rows = []
+    for day in ("2026-09-10", "2026-09-11"):
+        for station in (1, 2):
+            rows.append({"date": day, "start_hour": 8, "station_id": station, "load_kwh": 0.0,
+                         "session_count": 0, "user_count": 0, "utilization": 0.0,
+                         "idle_pile_estimate": 6})
+    forecast = _run(rows, tmp_path)
+    assert {item["predicted_value"] for item in forecast["items"]} == {0.0}
+    recommendations = json.loads((tmp_path / "ads" / "recommendations.json").read_text())
+    assert len(recommendations["items"]) == 2
+    assert all(item["score"] == round(0.5 * item["predicted_idle_rate"], 4)
+               for item in recommendations["items"])
+    alerts = json.loads((tmp_path / "ads" / "alerts.json").read_text())
+    assert alerts["items"] == []                         # 全零时 p95=0，无伪预警

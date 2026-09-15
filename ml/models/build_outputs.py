@@ -3,12 +3,16 @@
 
 预测语义：predicted_value = 未来第 horizon_hours 小时（UTC 小时 = (截止小时 + h) % 24）
 的站级负荷估计（load_kwh），不是 h 小时累计电量；1/6/24 三档各自取目标时刻的历史样本。
+
+全零预测（目标小时无样本 / 全零负荷窗口）时推荐评分只用空闲率项（负荷归一化项按 0），
+产物生成不中断；四份产物全部在内存完成后原子落盘，失败不留下半套产物（PR #24 评审 P1）。
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -18,6 +22,13 @@ import pandas as pd
 UTC = timezone.utc
 
 HORIZONS = (1, 6, 24)
+
+
+def write_json_atomic(path: Path, payload: object) -> None:
+    """临时文件 + os.replace 原子落盘：失败不留“半套产物”（评审 P1）。"""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def _num(value: object, default: float = 0.0) -> float:
@@ -172,21 +183,21 @@ def main() -> int:
 
     output = args.output
     output.mkdir(parents=True, exist_ok=True)
-    (output / "forecast.json").write_text(json.dumps({"status": "ok", "generated_at": generated,
-        "data_cutoff_at": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"), "timezone": "UTC",
-        "model_version": args.model_version, "items": items}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     loads = [row["predicted_load"] for row in station_rows]
-    max_load = max(loads) if loads else 1.0
+    max_load = max(loads) if loads else 0.0
+    # 全零预测（目标小时无样本 / 全零负荷窗口）时 max_load = 0，除法无定义：
+    # 负荷归一化项按 0 计分（评分 = 0.5 × 空闲率），推荐产物照常生成、不中断（PR #24 评审 P1）。
+    load_normalizer = max_load if max_load > 0 else None
     recommendations = []
     for row in sorted(station_rows, key=lambda value: (-(value["predicted_idle_rate"]), value["predicted_load"], value["station_id"]))[:3]:
+        normalized_load = (row["predicted_load"] / load_normalizer) if load_normalizer else 0.0
+        reasons = ["预测空闲率高", "未来 1 小时负荷可观测"] if load_normalizer \
+            else ["预测空闲率高", "全零负荷窗口：评分不含负荷项"]
         recommendations.append({"station_id": row["station_id"], "predicted_load": round(row["predicted_load"], 3),
             "predicted_idle_rate": round(row["predicted_idle_rate"], 3),
-            "score": round(0.5 * row["predicted_idle_rate"] - 0.3 * row["predicted_load"] / max_load, 4),
-            "reasons": ["预测空闲率高", "未来 1 小时负荷可观测"], "generated_at": generated,
+            "score": round(0.5 * row["predicted_idle_rate"] - 0.3 * normalized_load, 4),
+            "reasons": reasons, "generated_at": generated,
             "model_version": args.model_version})
-    (output / "recommendations.json").write_text(json.dumps({"status": "ok", "generated_at": generated,
-        "data_cutoff_at": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"), "model_version": args.model_version,
-        "items": recommendations}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     alerts = []
     p95 = float(pd.Series(loads).quantile(0.95)) if loads else 0.0
     for row in station_rows:
@@ -196,9 +207,6 @@ def main() -> int:
                 "generated_at": generated, "data_cutoff_at": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "dedupe_key": f"{row['station_id']}:1:{cutoff.isoformat()}:high", "status": "open",
                 "model_version": args.model_version, "reason": "历史 P95 基线预警"})
-    (output / "alerts.json").write_text(json.dumps({"status": "ok", "generated_at": generated,
-        "data_cutoff_at": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"), "model_version": args.model_version,
-        "threshold_type": "historical_p95", "items": alerts}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     training_metadata = {}
     if args.model:
         metadata_path = args.model.parent / "metadata.json"
@@ -216,7 +224,18 @@ def main() -> int:
     for key in ("metrics", "training_rows", "validation_rows", "feature_columns", "training_start", "training_end"):
         if key in training_metadata:
             model_metadata[key] = training_metadata[key]
-    (output / "model_metadata.json").write_text(json.dumps(model_metadata, indent=2) + "\n", encoding="utf-8")
+    # 四份产物先在内存完成，最后逐个原子落盘：任何计算失败都不会留下
+    # “forecast.json 已写出、推荐/预警/元数据缺失”的半套产物（PR #24 评审 P1）。
+    write_json_atomic(output / "forecast.json", {"status": "ok", "generated_at": generated,
+        "data_cutoff_at": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"), "timezone": "UTC",
+        "model_version": args.model_version, "items": items})
+    write_json_atomic(output / "recommendations.json", {"status": "ok", "generated_at": generated,
+        "data_cutoff_at": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"), "model_version": args.model_version,
+        "items": recommendations})
+    write_json_atomic(output / "alerts.json", {"status": "ok", "generated_at": generated,
+        "data_cutoff_at": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ"), "model_version": args.model_version,
+        "threshold_type": "historical_p95", "items": alerts})
+    write_json_atomic(output / "model_metadata.json", model_metadata)
     print(json.dumps({"forecast_items": len(items), "recommendations": len(recommendations), "alerts": len(alerts), "output": str(output)}, indent=2))
     return 0
 
