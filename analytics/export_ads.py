@@ -13,6 +13,10 @@
   published/<batch>/manifest.json    批次清单副本
   published/latest.json              指针（校验通过后原子切换; --verify-only 不切换）
 
+dashboard.json 的 meta 同时发布 available_start/available_end_exclusive = 发布覆盖窗口
+（生成窗口 ∪ 末端结算追加日）：API 默认查询窗口、覆盖校验与前端筛选范围都以此为准，
+保证“发布 overview 里有的收入，对应结算日一定可查询”（PR #24 评审 P2）。
+
 安全: 全部严格 JSON; 发布采用 写临时文件 + os.replace 原子替换。
 """
 from __future__ import annotations
@@ -27,6 +31,11 @@ from pathlib import Path
 
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
+
+try:  # 包导入（测试/被 import）
+    from .publish_coverage import coverage_end_exclusive
+except ImportError:  # pragma: no cover - 脚本式直跑（python3 analytics/export_ads.py）
+    from publish_coverage import coverage_end_exclusive
 
 UTC = timezone.utc
 
@@ -99,6 +108,12 @@ def main(argv=None):
 
     util = {int(r["station_id"]): round(float(r["utilization"]), 6) for r in rank}
 
+    # 发布覆盖窗口（评审 P2）：生成窗口 ∪ 末端结算追加日。trend/load 已按 Spark 侧格式化，
+    # 这里只用日期前缀，因此不受驱动时区影响。
+    available_end_date = coverage_end_exclusive(
+        manifest["data_end_exclusive"],
+        [r["stat_date"] for r in trend] + [r["hour_start"] for r in load])
+
     dashboard = {
         "status": "ok",
         "meta": {
@@ -108,6 +123,10 @@ def main(argv=None):
             "coverage": "complete",
             "data_start": manifest["data_start"],
             "data_end_exclusive": manifest["data_end_exclusive"],
+            # 实际可查询范围（含追加日）：API 默认窗口/覆盖校验与前端筛选都以此为准，
+            # 避免“收入在发布 overview 里、却查不到那一天”（PR #24 评审 P2）。
+            "available_start": manifest["data_start"],
+            "available_end_exclusive": f"{available_end_date}T00:00:00Z",
             "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "batch_generated_at": manifest["generated_at"],
             "is_realtime": False,
@@ -180,6 +199,12 @@ def main(argv=None):
     check = json.loads((pub / "dashboard.json").read_text(encoding="utf-8"))
     assert check["data"]["overview"]["revenueCents"] == dashboard["data"]["overview"]["revenueCents"]
     assert len(check["data"]["piles"]) == len(pile_rows)
+    # 覆盖窗口自检（评审 P2）：全部已发布行必须落在可查询窗口内——否则又会出现
+    # “收入进了 overview、对应日期却查不到”的边界缺口。
+    window_end = check["meta"]["available_end_exclusive"][:10]
+    assert window_end >= check["meta"]["data_end_exclusive"][:10]
+    assert all(row["date"] < window_end for row in check["data"]["revenueDaily"])
+    assert all(row["hourStart"][:10] < window_end for row in check["data"]["loadHourly"])
 
     if not args.verify_only:
         dump_json(root / "published" / "latest.json", {
@@ -196,6 +221,8 @@ def main(argv=None):
         "revenue_daily_rows": len(dashboard["data"]["revenueDaily"]),
         "load_hourly_rows": len(dashboard["data"]["loadHourly"]),
         "overview_revenue_cents": dashboard["data"]["overview"]["revenueCents"],
+        "available_start": dashboard["meta"]["available_start"],
+        "available_end_exclusive": dashboard["meta"]["available_end_exclusive"],
     }, ensure_ascii=False))
     spark.stop()
     return 0

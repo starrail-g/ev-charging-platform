@@ -11,8 +11,11 @@
   GET /runtime-config.js                              兼容原 serve.py（不搬 WebService 凭据）
   GET /                                               大屏静态资产（dashboard/）
 
-语义（docs/api/analytics.md）: 400 参数/覆盖错误（结构化）; 200+empty 无业务记录;
-503 无快照或快照损坏; 任一响应只含单一 batch; 不回退 demo 数据伪装成功。
+语义（docs/api/analytics.md）: 400 参数/覆盖错误（结构化，含越界 batch_id）; 200+empty 无业务记录;
+503 无快照或快照损坏（含结构非法的 dashboard.json）; 任一响应只含单一 batch; 不回退 demo 数据伪装成功。
+
+可查询窗口 = 发布覆盖窗口（meta.available_start/available_end_exclusive，缺省回退 data_start/
+data_end_exclusive）：数仓保留的窗口末端结算追加日也在查询范围内（PR #24 评审 P2）。
 """
 from __future__ import annotations
 
@@ -25,9 +28,9 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 try:  # 作为包导入（python3 -m flask / 测试）
-    from .snapshot_store import SnapshotCorrupt, SnapshotMissing, SnapshotStore
+    from .snapshot_store import SnapshotCorrupt, SnapshotInvalid, SnapshotMissing, SnapshotStore
 except ImportError:  # pragma: no cover - 脚本式直跑
-    from snapshot_store import SnapshotCorrupt, SnapshotMissing, SnapshotStore
+    from snapshot_store import SnapshotCorrupt, SnapshotInvalid, SnapshotMissing, SnapshotStore
 
 UTC = timezone.utc
 MAX_WINDOW_DAYS = 90
@@ -50,6 +53,11 @@ def _parse_date(value: str | None):
         return datetime.strptime(value, "%Y-%m-%d").date()
     except (TypeError, ValueError):
         return None
+
+
+def _to_date(value: str):
+    """YYYY-MM-DD 前 10 位 → date；快照校验已保证窗口字段可解析（不得触发 500）。"""
+    return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
 
 
 def _is_stale(meta: dict, stale_hours: int) -> bool:
@@ -181,10 +189,18 @@ def create_app(config: dict | None = None):
             return _err("snapshot_corrupt", str(exc), 503)
 
         meta = dash["meta"]
-        avail_start = meta["data_start"][:10]
-        avail_end = meta["data_end_exclusive"][:10]
+        # 可查询窗口 = 发布覆盖窗口：available_start/available_end_exclusive（发布时按实际
+        # 数据范围写入，含窗口末端结算追加日）；旧批次缺该字段时回退生成窗口，行为不变。
+        avail_start = str(meta.get("available_start") or meta["data_start"])[:10]
+        avail_end = str(meta.get("available_end_exclusive") or meta["data_end_exclusive"])[:10]
+        # 默认窗口 = 覆盖窗口中「最新 ≤ MAX_WINDOW_DAYS 天」的一段（覆盖本身不超限时即全覆盖窗口）：
+        # 末端结算追加日可能把覆盖窗口撑过 90 天上限（实测 91 天），默认全量查询会撞
+        # window_too_large —— 默认必须永远合法，同时把预算全给到最新数据（PR #24 评审 P2）。
+        default_start = avail_start
+        if (_to_date(avail_end) - _to_date(avail_start)).days > MAX_WINDOW_DAYS:
+            default_start = (_to_date(avail_end) - timedelta(days=MAX_WINDOW_DAYS)).isoformat()
 
-        start_s = request.args.get("start") or avail_start
+        start_s = request.args.get("start") or default_start
         end_s = request.args.get("end") or avail_end
         start_d = _parse_date(start_s)
         end_d = _parse_date(end_s)
@@ -216,6 +232,12 @@ def create_app(config: dict | None = None):
         status, data = _filter_data(dash["data"], start_s, end_s, station_id)
         meta = dict(meta)
         meta["stale"] = _is_stale(meta, stale_hours)
+        # 覆盖窗口与默认窗口统一在响应里给出：前端 min/max 用 available_*，
+        # 初始值/“重置”用 default_*（服务端口径，超 90 天时自动收敛到最新一段）。
+        meta.setdefault("available_start", meta["data_start"])
+        meta.setdefault("available_end_exclusive", meta["data_end_exclusive"])
+        meta["default_start"] = default_start
+        meta["default_end_exclusive"] = avail_end
         return jsonify({
             "status": status,
             "meta": meta,
@@ -228,6 +250,8 @@ def create_app(config: dict | None = None):
         batch_raw = request.args.get("batch_id") or None
         try:
             batch_id, quality = store.quality(batch_raw)
+        except SnapshotInvalid as exc:      # 越界/非法 batch_id → 结构化 400（评审 P2）
+            return _err("invalid_batch_id", str(exc), 400)
         except SnapshotMissing as exc:
             return _err("snapshot_missing", str(exc), 503)
         except SnapshotCorrupt as exc:

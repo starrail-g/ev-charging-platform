@@ -17,6 +17,21 @@ EV_HDFS_ROOT="${EV_HDFS_ROOT:-/ev-stage2}"
 SPARK_SUBMIT="${SPARK_SUBMIT:-spark-submit}"
 PYTHON="${PYTHON:-python3}"
 
+# export_ads.py 等步骤以普通 python3 运行（非 spark-submit），需要 pyspark 可导入：
+# 非登录环境（ssh/nohup/服务）不加载 /etc/profile、不带 PYTHONPATH —— 与 start_stage2.sh 同规则
+# 从 Spark 发行版自动补挂，避免整链跑到最后一步才失败（2026-09-16 实测：漏挂时 step7
+# 报 ModuleNotFoundError: pyspark，而前面 spark-submit 步骤全部正常）。
+if ! "$PYTHON" -c 'import pyspark' >/dev/null 2>&1; then
+  for candidate in "${SPARK_HOME:-/nonexistent}" /opt/module/spark-3.4.1; do
+    if [ -f "$candidate/python/lib/pyspark.zip" ]; then
+      PYSITE=("$candidate/python/lib/pyspark.zip" "$candidate"/python/lib/py4j-*-src.zip)
+      export PYTHONPATH="$(IFS=:; echo "${PYSITE[*]}"):${PYTHONPATH:-}"
+      echo "[env] pyspark not importable — prepended $candidate/python/lib to PYTHONPATH"
+      break
+    fi
+  done
+fi
+
 PROFILE=""
 SEED="20260914"
 BATCH_ID=""

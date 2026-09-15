@@ -216,5 +216,130 @@ class TestApiErrors(ApiCase):
         self.assertEqual(resp.status_code, 503)
 
 
+class TestBatchIdSafety(ApiCase):
+    """评审 P2：batch_id 不得越出 published 目录；latest 指针坏 = 503 而非越界读取。"""
+
+    def test_quality_batch_id_traversal_rejected(self):
+        probe = self.tmp / "unpublished-probe"
+        probe.mkdir(parents=True, exist_ok=True)
+        (probe / "quality.json").write_text(json.dumps({"secret": True}), encoding="utf-8")
+        for bad in ("../unpublished-probe", "..", "../..", "a/../b", "/etc", "a\\b", ".hidden",
+                    "..%2Funpublished-probe", "a b"):
+            with self.subTest(batch_id=bad):
+                resp = self.client.get("/api/quality", query_string={"batch_id": bad})
+                self.assertEqual(resp.status_code, 400)
+                self.assertEqual(resp.get_json()["error"]["code"], "invalid_batch_id")
+        # 越界请求不得读到发布目录外的文件；合法批次仍照常工作
+        self.publish(BATCH)
+        self.assertEqual(self.client.get(f"/api/quality?batch_id={BATCH}").status_code, 200)
+
+    def test_latest_pointer_with_escaping_batch_id_is_corrupt(self):
+        (self.tmp / "published").mkdir(parents=True, exist_ok=True)
+        (self.tmp / "published" / "latest.json").write_text(
+            json.dumps({"batch_id": "../unpublished-probe"}), encoding="utf-8")
+        resp = self.client.get("/api/dashboard")
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(resp.get_json()["error"]["code"], "snapshot_corrupt")
+
+    def test_batch_dir_batch_id_still_usable(self):
+        self.publish(BATCH)
+        body = self.client.get("/api/health").get_json()
+        self.assertEqual(body["active_batch"], BATCH)
+
+
+class TestCoverageWindow(ApiCase):
+    """评审 P2：发布覆盖窗口（available_*）含末端结算追加日，收入可查询。"""
+
+    def test_default_window_covers_settlement_spill(self):
+        dash = dash_payload(BATCH)
+        dash["meta"]["available_start"] = "2026-09-01T00:00:00Z"
+        dash["meta"]["available_end_exclusive"] = "2026-09-04T00:00:00Z"
+        dash["data"]["revenueDaily"].append(
+            {"date": "2026-09-03", "stationId": 1, "revenueCents": 2000,
+             "completedOrders": 1, "energyWh": 10000})
+        dash["data"]["overview"]["revenueCents"] += 2000           # 发布 overview 含追加日收入
+        self.publish(BATCH, dash=dash)
+
+        body = self.client.get("/api/dashboard").get_json()
+        self.assertEqual((body["query"]["start"], body["query"]["end"]),
+                         ("2026-09-01", "2026-09-04"))             # 默认窗口 = 发布覆盖窗口
+        self.assertEqual(body["meta"]["default_start"], "2026-09-01")
+        self.assertEqual(body["meta"]["default_end_exclusive"], "2026-09-04")
+        self.assertEqual(body["data"]["overview"]["revenueCents"], 3901)   # “3901 分可查询”
+
+        resp = self.client.get("/api/dashboard?start=2026-09-03&end=2026-09-04")
+        self.assertEqual(resp.status_code, 200)                    # 追加日不再 out_of_coverage
+        self.assertEqual(resp.get_json()["data"]["overview"]["revenueCents"], 2000)
+
+        resp = self.client.get("/api/dashboard?start=2026-09-04&end=2026-09-05")
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.get_json()["error"]["available_range"],
+                         {"start": "2026-09-01", "end": "2026-09-04"})
+
+    def test_legacy_snapshot_without_available_fields_keeps_generation_window(self):
+        self.publish(BATCH)
+        body = self.client.get("/api/dashboard").get_json()
+        self.assertEqual((body["query"]["start"], body["query"]["end"]),
+                         ("2026-09-01", "2026-09-03"))
+        self.assertEqual(body["meta"]["available_start"], "2026-09-01T00:00:00Z")
+
+    def test_default_window_trims_to_90_days_when_coverage_larger(self):
+        """覆盖窗口超 90 天（末端结算追加日所致，实测 91 天）：默认查询仍必须合法。
+
+        修复前默认窗口 = 整段覆盖 → 撞 window_too_large，默认请求直接 400；
+        现在默认收敛到「最新 ≤90 天」，90 天限制对显式请求保持不变。
+        """
+        dash = dash_payload(BATCH)
+        dash["meta"]["available_start"] = "2026-06-01T00:00:00Z"
+        dash["meta"]["available_end_exclusive"] = "2026-09-04T00:00:00Z"     # 95 天
+        self.publish(BATCH, dash=dash)
+        body = self.client.get("/api/dashboard").get_json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["query"]["end"], "2026-09-04")
+        self.assertEqual(body["query"]["start"], "2026-06-06")               # 最新 ≤90 天
+        self.assertEqual(body["meta"]["default_start"], "2026-06-06")
+        resp = self.client.get("/api/dashboard?start=2026-06-01&end=2026-09-04")
+        self.assertEqual(resp.status_code, 400)                              # 限制不变
+        self.assertEqual(resp.get_json()["error"]["code"], "window_too_large")
+
+
+class TestStructuralValidation(ApiCase):
+    """评审 P2：JSON 合法但内部结构坏 → 503 snapshot_corrupt（不得 HTML 500）。"""
+
+    def test_structurally_broken_rows_return_503_not_500(self):
+        shapes = [
+            ("revenueDaily-null-row", lambda d: d["data"]["revenueDaily"].append(None)),
+            ("revenueDaily-missing-cents", lambda d: d["data"]["revenueDaily"][0].pop("revenueCents")),
+            ("revenueDaily-string-cents", lambda d: d["data"]["revenueDaily"][0].update(revenueCents="1901")),
+            ("stations-not-dict", lambda d: d["data"].update(stations=[["x"]])),
+            ("loadHourly-missing-loadKw", lambda d: d["data"]["loadHourly"][0].pop("loadKw")),
+            ("loadHourly-not-list", lambda d: d["data"].update(loadHourly={"hourStart": "x"})),
+            ("meta-not-object", lambda d: d.update(meta="broken")),
+            ("overview-missing", lambda d: d["data"].pop("overview")),
+            ("overview-not-object", lambda d: d["data"].update(overview=[1, 2])),
+            ("data-start-not-string", lambda d: d["meta"].update(data_start=20260901)),
+            ("piles-bad-type", lambda d: d["data"]["piles"][0].update(id="1")),
+        ]
+        for name, mutate in shapes:
+            with self.subTest(shape=name):
+                dash = dash_payload("t-broken")
+                mutate(dash)
+                self.publish("t-broken", dash=dash)
+                resp = self.client.get("/api/dashboard")
+                self.assertEqual(resp.status_code, 503, name)
+                self.assertTrue(resp.is_json, name)
+                self.assertEqual(resp.get_json()["error"]["code"], "snapshot_corrupt", name)
+
+    def test_structural_validation_not_over_strict(self):
+        """合法但字段最简的快照（空列表/额外字段）必须照常 200，不得误杀。"""
+        dash = dash_payload("t-minimal")
+        dash["data"].update({"piles": [], "revenueDaily": [], "loadHourly": [], "stations": [],
+                             "extra": {"anything": True}})
+        self.publish("t-minimal", dash=dash)
+        resp = self.client.get("/api/dashboard")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["status"], "empty")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
