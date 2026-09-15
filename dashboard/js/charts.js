@@ -46,9 +46,9 @@ function getChart(el) {
   return chart;
 }
 
-/** 24 小时充电负荷折线。 */
+/** 24 小时充电负荷折线（demo 用 demoSeries；分析链路用 loadSeries，标签带完整日期）。 */
 export function renderLoadChart(el, model) {
-  const points = model.demoSeries?.points ?? [];
+  const points = model.demoSeries?.points ?? model.loadSeries?.points ?? [];
   const chart = getChart(el);
   const theme = chartTheme();
   chart.setOption({
@@ -57,7 +57,8 @@ export function renderLoadChart(el, model) {
     tooltip: { ...theme.tooltip, trigger: 'axis' },
     xAxis: {
       type: 'category',
-      data: points.map((point) => `${point.hour}:00`),
+      data: points.map((point) =>
+        point.hour !== undefined ? `${point.hour}:00` : (point.label ?? '')),
       axisLabel: { color: theme.palette.muted },
       axisLine: { lineStyle: { color: theme.palette.divider } },
     },
@@ -145,10 +146,16 @@ export function buildDayLabels(endDateIso, count) {
   return labels;
 }
 
-/** 营收趋势（金额由整数分转换；endDateIso 决定 x 轴日期终点）。 */
-export function renderRevenueTrend(el, centsSeries, endDateIso) {
+/**
+ * 营收趋势（金额由整数分转换；endDateIso 决定 x 轴日期终点）。
+ * labels 显式给出时优先使用（分析链路按实际日期序列; 天数不固定）。
+ */
+export function renderRevenueTrend(el, centsSeries, endDateIso, labels = null) {
   const chart = getChart(el);
   const theme = chartTheme();
+  const axisLabels = Array.isArray(labels) && labels.length === centsSeries.length
+    ? labels
+    : buildDayLabels(endDateIso, centsSeries.length);
   chart.setOption({
     ...theme,
     grid: { left: 58, right: 16, top: 20, bottom: 30 },
@@ -159,7 +166,7 @@ export function renderRevenueTrend(el, centsSeries, endDateIso) {
     },
     xAxis: {
       type: 'category',
-      data: buildDayLabels(endDateIso, centsSeries.length),
+      data: axisLabels,
       axisLabel: { color: theme.palette.muted },
       axisLine: { lineStyle: { color: theme.palette.divider } },
     },

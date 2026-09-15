@@ -193,6 +193,7 @@ body {
 
 .command-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
@@ -983,3 +984,74 @@ body.page-blocking .dashboard-shell {
     scroll-behavior: auto !important;
   }
 }
+
+/* ---------- 第二阶段：分析链路筛选控件（Vue 独占节点，?source=analytics 时显示） ---------- */
+
+.analytics-controls {
+  flex-basis: 100%;
+  min-width: 0;
+}
+
+.analytics-controls .ctl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--night-decorative) 70%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--night-surface) 82%, transparent);
+  color: var(--night-text);
+  font-size: 13px;
+}
+
+.analytics-controls .ctl-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--night-muted-text);
+}
+
+.analytics-controls input[type="date"],
+.analytics-controls select {
+  background: var(--night-deep);
+  color: var(--night-text);
+  border: 1px solid var(--night-decorative);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font: inherit;
+}
+
+.analytics-controls .ctl-btn {
+  border: 1px solid var(--night-focus);
+  background: color-mix(in srgb, var(--night-focus) 22%, transparent);
+  color: var(--night-text);
+  border-radius: 8px;
+  padding: 4px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.analytics-controls .ctl-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.analytics-controls .ctl-btn-ghost {
+  background: transparent;
+  border-color: var(--night-decorative);
+}
+
+.analytics-controls .ctl-status {
+  color: var(--night-muted-text);
+  margin-left: auto;
+}
+
+.analytics-controls .ctl-status[data-status="ready"] { color: var(--state-idle); }
+.analytics-controls .ctl-status[data-status="stale"] { color: var(--state-reserved); }
+.analytics-controls .ctl-status[data-status="error"] { color: var(--state-fault); }
+.analytics-controls .ctl-status[data-status="empty"] { color: var(--state-unknown); }
+
+/* 分析模式：隐藏演示专属徽标与演示档位按钮（筛选由 Vue 控件接管） */
+body.analytics-mode .demo-badge { display: none; }
+body.analytics-mode .chart-range { display: none; }

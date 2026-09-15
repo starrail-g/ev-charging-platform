@@ -1,6 +1,8 @@
 // 主装配：runtime config → demo 数据 → 指标/关注队列/利用率 → 地图（自动降级）→ 图表。
 // 任何局部组件失败只显示局部 error 态，不让整个主屏白屏。
+// 第二阶段：?source=analytics 切换分析链路（/api/dashboard，Vue 筛选控件，默认拓扑地图）。
 import { DemoDataProvider } from './data-provider.js';
+import { ApiDataProvider } from './api-data-provider.js';
 import { mapPileStatus } from './status-map.js';
 import { statusIconSvg } from './status-icons.js';
 import { createDashboardState, deriveOverviewCards } from './dashboard-state.js';
@@ -16,6 +18,19 @@ const params = new URLSearchParams(location.search);
 function announce(message) {
   const region = document.getElementById('globalState');
   if (region) region.textContent = message;
+}
+
+/** 把筛选条件写回 URL（刷新/分享保留窗口）；只改 query string，不触发导航。 */
+function syncUrlQuery(query) {
+  const url = new URL(location.href);
+  const setOr = (key, value) => {
+    if (value === null || value === undefined || value === '') url.searchParams.delete(key);
+    else url.searchParams.set(key, String(value));
+  };
+  setOr('start', query.start);
+  setOr('end', query.end);
+  setOr('stationId', query.stationId);
+  history.replaceState(null, '', url);
 }
 
 function fmtUtilization(ratio) {
@@ -240,7 +255,20 @@ function setupChartTabsOnce() {
 
 async function boot() {
   const config = window.__EV_CONFIG__ ?? { tencentMapKey: '', demo: true };
-  const provider = new DemoDataProvider();
+  const analyticsMode = params.get('source') === 'analytics' || config.source === 'analytics';
+  const provider = analyticsMode ? new ApiDataProvider({ baseUrl: '.' }) : new DemoDataProvider();
+  let currentQuery = {
+    start: params.get('start'),
+    end: params.get('end'),
+    stationId: params.get('stationId'),
+  };
+  let controls = null;
+  if (analyticsMode) {
+    document.title = '充电网络态势分析（离线批次）';
+    const titleEl = document.querySelector('.command-title');
+    if (titleEl) titleEl.textContent = '充电网络态势分析';
+    document.body.classList.add('analytics-mode');
+  }
 
   const shell = document.querySelector('.dashboard-shell');
   const mapContainer = document.getElementById('map-surface');
@@ -368,7 +396,8 @@ async function boot() {
     // 地图：离线（含 offline 演示注入）强制拓扑，重试时 surface 内部先清理旧渲染器
     const onlineAvailable = typeof navigator !== 'undefined' ? navigator.onLine : true;
     const useOnline = onlineAvailable && demoState !== 'offline';
-    const forcedTopology = params.get('map') === 'topology' || demoState === 'offline';
+    const forcedTopology = params.get('map') === 'topology' || demoState === 'offline'
+      || analyticsMode; // 分析批次默认拓扑地图（离线链路不依赖外网地图）
     try {
       const mountResult = await mapSurface.mount(mapContainer, {
         key: config.tencentMapKey,
@@ -403,7 +432,8 @@ async function boot() {
       ['chart-load', () => renderLoadChart(document.getElementById('chart-load'), model)],
       ['chart-states', () => renderStateDonut(document.getElementById('chart-states'), model.metrics.counts)],
       ['chart-revenue', () => renderRevenueTrend(
-        document.getElementById('chart-revenue'), revenueCentsSeries, model.updatedAt)],
+        document.getElementById('chart-revenue'), revenueCentsSeries, model.updatedAt,
+        model.revenueSeriesLabels ?? null)],
     ]) {
       try {
         const chart = factory();
@@ -420,6 +450,7 @@ async function boot() {
 
   async function loadDashboard() {
     announce(state.loading().title);
+    if (controls) controls.setStatus('loading', '加载中…');
     const hasSnapshot = lastValidModel !== null;
     if (hasSnapshot) {
       showPageState(state.loading(), { blocking: false, freshness: snapshotLabel() });
@@ -428,7 +459,8 @@ async function boot() {
       showPageState(state.loading(), { blocking: false });
     }
 
-    const result = await provider.load();
+    const result = await provider.load(currentQuery);
+    if (result.superseded) return; // 迟到响应：由更新的请求拥有 UI，不触碰任何界面状态
 
     // 演示注入 error：有数据底座但呈现阻断错误分支
     if (demoState === 'error' && result.ok) {
@@ -443,8 +475,10 @@ async function boot() {
     }
 
     if (!result.ok) {
-      const failed = state.reject(result.error?.message ?? 'demo.json 加载失败');
-      sourceBadge.textContent = '加载失败';
+      const failed = state.reject(
+        result.error?.message ?? (analyticsMode ? '分析接口加载失败' : 'demo.json 加载失败'));
+      sourceBadge.textContent = analyticsMode ? '批次加载失败' : '加载失败';
+      if (controls) controls.setStatus('error', result.error?.message ?? '加载失败');
       announce(failed.title);
       if (hasSnapshot) {
         // 快照仍在：非阻断错误横幅，主体继续展示最后有效数据
@@ -457,12 +491,16 @@ async function boot() {
     }
 
     const model = result.data;
-    const isEmpty = !model || !Array.isArray(model.stations) || model.stations.length === 0;
+    const isEmpty = result.empty === true || !model
+      || !Array.isArray(model.stations) || model.stations.length === 0;
     if (isEmpty || demoState === 'empty') {
       lastValidModel = null;
       lastValidAt = null;
       hideSkeleton();
-      sourceBadge.textContent = demoState === 'empty' ? '演示状态' : '暂无数据';
+      sourceBadge.textContent = demoState === 'empty'
+        ? '演示状态'
+        : analyticsMode ? '窗口无数据' : '暂无数据';
+      if (controls) controls.setStatus('empty', '该筛选条件下没有业务记录');
       announce(state.empty().title);
       showPageState(state.empty(), { blocking: true });
       return;
@@ -474,15 +512,29 @@ async function boot() {
     const isOffline =
       demoState === 'offline' || (typeof navigator !== 'undefined' && !navigator.onLine);
     const resolved = state.resolve({ stations: model.stations, fetchedAt: model.updatedAt });
-    const isStale = demoState === 'stale' || resolved.isStale;
+    const isStale = demoState === 'stale' || resolved.isStale || model.stale === true;
     sourceBadge.textContent =
       demoState !== null
         ? '演示状态'
-        : isOffline
-          ? '本地演示数据'
-          : config.demo
-            ? '演示数据'
-            : '实时数据';
+        : analyticsMode
+          ? `分析批次 ${result.batchId ?? ''}`
+          : isOffline
+            ? '本地演示数据'
+            : config.demo
+              ? '演示数据'
+              : '实时数据';
+    if (analyticsMode && result.meta) {
+      sourceBadge.title = `${result.meta.source_type} · UTC · 生成于 `
+        + `${result.meta.batch_generated_at ?? result.meta.generated_at} · 非实时`;
+    }
+    if (controls) {
+      controls.setCoverage(model.coverage);
+      controls.setStations(model.stations);
+      controls.setStatus(
+        isStale ? 'stale' : 'ready',
+        `批次 ${result.batchId ?? '—'} · 数据截至 ${String(model.updatedAt ?? '').slice(0, 16)}Z`
+      );
+    }
 
     await renderContent(model);
 
@@ -498,7 +550,9 @@ async function boot() {
       announce('数据可能已过期，请刷新');
     } else {
       hidePageState();
-      freshnessEl.textContent = `更新于 ${model.updatedAt}（UTC）· ${result.source} 数据源`;
+      freshnessEl.textContent = analyticsMode
+        ? `更新于 ${model.updatedAt}（UTC）· 分析批次 ${result.batchId ?? ''}（模拟数据）`
+        : `更新于 ${model.updatedAt}（UTC）· ${result.source} 数据源`;
       announce(`数据已就绪：${model.metrics.totalPiles} 台桩`);
     }
   }
@@ -537,7 +591,8 @@ async function boot() {
           : lastValidModel.revenue7dCents;
         try {
           const chart = renderRevenueTrend(
-            document.getElementById('chart-revenue'), centsSeries, lastValidModel.updatedAt);
+            document.getElementById('chart-revenue'), centsSeries, lastValidModel.updatedAt,
+            lastValidModel.revenueSeriesLabels ?? null);
           chartsById['chart-revenue'] = chart;
           if (!chartInstances.includes(chart)) chartInstances.push(chart);
         } catch (error) {
@@ -558,6 +613,27 @@ async function boot() {
   window.addEventListener('resize', () => {
     for (const chart of chartInstances) chart.resize();
   });
+
+  // 分析模式：挂载 Vue 筛选控件（延迟加载模块，demo 模式零开销）
+  if (analyticsMode) {
+    const { mountAnalyticsControls } = await import('./vue-controls.js');
+    controls = mountAnalyticsControls(document.getElementById('analytics-controls'), {
+      initial: {
+        start: params.get('start'),
+        end: params.get('end'),
+        stationId: params.get('stationId'),
+      },
+      onApply: (query) => {
+        currentQuery = query;
+        syncUrlQuery(query);
+        loadDashboard().catch(() => {});
+      },
+    });
+    if (controls) {
+      const container = document.getElementById('analytics-controls');
+      if (container) container.hidden = false;
+    }
+  }
 
   await loadDashboard();
 }
