@@ -3,8 +3,8 @@
 ## Project and stage
 
 - Project: 东软电动汽车充电桩应用管理平台。
-- Current stage: 第一阶段最小闭环开发；真实截止时间为 2026-09-10 24:00。第二阶段截止 2026-09-17 24:00，个人报告截止 2026-09-18 24:00。
-- This file was refreshed on 2026-09-10 after PR #20 and PR #21 were merged into `main` (`0b2576d`). The requirements source of truth is `docs/requirements/requirements-matrix.md`. 根目录的项目说明书 `.doc`、需求矩阵 `.xls` 和 `三人分工.md` 仅为本地参考文件，不上传、不提交；仓库内 `docs/` Markdown 才是正式项目材料。
+- Current stage: 第二阶段智能分析与真实数据链路已完成首个可复现闭环，进入发布环境复核；第一阶段最小闭环保持可回归。第二阶段截止 2026-09-17 24:00，个人报告截止 2026-09-18 24:00。
+- This file was refreshed on 2026-09-14 after PR #20 and PR #21 were merged into `main` (`0b2576d`). The requirements source of truth is `docs/requirements/requirements-matrix.md`. 根目录的项目说明书 `.doc`、需求矩阵 `.xls` 和 `三人分工.md` 仅为本地参考文件，不上传、不提交；仓库内 `docs/` Markdown 才是正式项目材料。
 
 ## Architecture and boundaries
 
@@ -14,18 +14,23 @@
 - `ml` (B/C, S2): 1/6/24-hour load and idle-pile/peak prediction, low-congestion recommendation, load warning, and a callable model-service boundary.
 - Mandatory build protocol: all Qt/C++ modules must use `qmake6`; CMake is forbidden as a build, test, acceptance, or release path. See `docs/meetings/build-system-protocol-2026-09-02.md`.
 - B provides SQLite schema v0.4 (including transactional v0.3 upgrade), deterministic seed/migration, protocol v1 framing/envelope/error codes, and server handlers for login, profile read/update, wallet recharge, station/pile queries, active/history orders, reservation, charging and settlement. Lifecycle writes use `BEGIN IMMEDIATE`, request-ID replay records, frozen-user checks, direct idle-pile charging and settlement rollback paths; imported/simulated station snapshots and pile status events are persisted.
-- A user client is a deterministic Qt Widgets + Mock implementation with an opt-in real `SocketUserService` (see A-S1-03 below). A retains Mock/offline fallback until the real Socket adapter is verified end-to-end.
+- A user client is a deterministic Qt Widgets client with an opt-in real `SocketUserService`; Mock/offline remains an explicit fallback for fault rehearsal after the real Socket path is verified.
 - A's PR #17 map path uses `ServerMapService` for server-owned `map.station.search` and `map.route.plan`; the client never receives `TENCENT_MAP_KEY`. Text-address station discovery sends one address-origin station request and consumes `resolved_origin`; text-address routing sends one address-origin route request directly, so an empty nearby-POI result cannot block route planning.
 - User-client base-map rendering now has a separate deployment boundary: optional `TENCENT_MAP_JS_KEY` loads Tencent JavaScript API GL only for visualization, while POI/geocoding/route data and the WebService `TENCENT_MAP_KEY` remain server-owned. Live/cache server results no longer force `MapWebView` back to its offline grid, and route geometry drives viewport center/zoom when present.
 - Address-origin POI rendering preserves the server's degraded `tencent_stale`/`server_mock` warning when the final station-count status is displayed.
 - The legacy direct-Tencent `map-service-tests.pro` target now implements the two post-PR #17 `IMapService` address overloads with real geocode-then-query compatibility logic, and its coordinate calls are explicit `GeoCoordinate` values. It remains opt-in and isolated; production user-client map traffic uses `ServerMapService`, with `server-map-service-tests` as the primary map adapter gate.
-- C admin client has a qmake shell, repository boundary, Mock data source, login flow and overview states, the 9/4 management action batch (C-S1-005 pile restart / C-S1-007 user freeze-unfreeze), and a local Socket adapter layer (`SocketAdminRepository` + `socketparse`, fake-server tested on Windows and the Ubuntu VM; Mock remains the default via `EV_ADMIN_DATA_SOURCE` until the gate). The phase-1 batch is merged to `main` through PR #11; PR #13 subsequently merged the full-scope, cursor-paged `admin.pile.list` implementation. 2026-09-08 起的销售业绩（近 7/30 日营收）特性在 `feature/admin-revenue` 分支上实现（详见「2026-09-08 管理端销售业绩」节）。
+- C admin client has a qmake shell, repository boundary, login flow, management actions and a verified `SocketAdminRepository`/`socketparse` adapter; `EV_ADMIN_DATA_SOURCE=socket` is the final presentation path and Mock remains an explicit offline fallback. The phase-1 batch is merged to `main` through PR #11; PR #13 subsequently merged the full-scope, cursor-paged `admin.pile.list` implementation. 2026-09-08 起的销售业绩（近 7/30 日营收）特性在 `feature/admin-revenue` 分支上实现（详见「2026-09-08 管理端销售业绩」节）。
 - The clean-database server path can load `EV_DATABASE_SEED_PATH` once during initial creation; existing databases are not reseeded.
 - Development seed stations 1 and 2 now use Shenzhen demo metadata and coordinates so the seeded inventory and Tencent-imported simulated stations share one map region. Their stable IDs, piles, orders and regression contracts are retained; this is a metadata migration rather than a cascading inventory deletion.
 - The corrected PR #14 contract is documented in `docs/architecture/map-service-protocol.md`; it preserves the current `admin.pile.list` cursor/1 MiB contract and adds bounded paging, explicit map idempotency, canonical map errors, and an independent cloud `pile-simulator` proposal boundary. The deterministic `EV_MAP_SERVER_MOCK=1` handlers, production `HttpTencentClient`, map-only cache with live SQLite aggregation, audit pagination, Schema v0.4, pile generator, and internal gateway are implemented. Asynchronous worker isolation, cache-miss coalescing, retention cleanup, and private mTLS transport remain open.
 - 2026-09-09 follow-up fixed the Tencent place-search boundary to the official `nearby(...)` syntax, normalized valid single-point zero-length routes to two protocol points, and audited route preflight/polyline failures. Real Tencent POI and route integration passed with a locally injected key; the key is not retained.
 
 ## Current status
+
+- 2026-09-12：已根据新增课程说明、`计划概览` 和 `04.数据集最终版/` 形成第二阶段计划与实现指南：`docs/release/stage2-plan-2026-09.md`、`docs/release/stage2-implementation-guide.md`。S2 重点为 PySpark 数据质量发现/清洗、ODS→DWD→DWS→ADS、Flask+ECharts 分析展示及 1/6/24 小时负荷/空闲桩预测、低拥堵推荐和负荷预警。数据分析口径已登记：订单样本日期为脱敏 `0014/0015`、费用大量为 0，电池遥测 `record_time` 无有效时间轴且无站点外键，必须先做质量隔离和相对日期归一化。
+- 2026-09-14：负责人确认二阶段分析主数据必须符合第一阶段 SQLite Schema v0.4，数据可由团队自行确定性生成；生成器从 schema/seed 构造合法业务库，质量问题只注入入库前原始事件层，清洗后的 SQLite 通过约束、触发器、外键和 `revenue_daily` 校验。完整默认批次已生成（120 用户、12 站点、96 桩、25,000 完成订单），SQLite SHA-256 为 `0199caafcf3698e7eee0b7404d96c83f66d1112f2d4f4a6215d36b96f7b77d1a`。
+- 2026-09-14：S2 数据链路已实现并验证：ODS→DWD→DWS→ADS 输出 25,005/11,435/90 行（日营收），质量隔离有效 24,997 行、无效 8 行；Spark MLlib 时间顺序训练 9,160/2,275 行，MAE 55.83、RMSE 74.12；1/6/24 小时预测、低拥堵推荐和历史 P95 预警 JSON 已生成，Flask 分析及 `/api/v1/dashboard/snapshot` 接口契约冒烟通过。ECharts 大屏主数据现按运行时地址读取 Schema v0.4 SQLite 快照，预测/推荐/预警读取 ADS 产物；服务不可用时显示降级状态而不阻断基础指标。运行产物全部位于仓库外，未写入业务 SQLite。
+- 2026-09-14：Dashboard 新增“二阶段大数据分析工作台”，通过八个交互标签切换机器学习预测、用户分群、设备运行、订单趋势、能源画像、收益趋势、站点排行和评价/服务代理指标；快照端新增 `analytics` 结构，评价数据缺失时明确标注代理口径，不伪造评分。
 
 - `A-S1-01` (需求矩阵/边界/任务记录)、`A-S1-02` (Mock baseline + `SocketUserService` 覆盖 B PR #4 用户契约) 已完成；`A-S1-03` 真实 Socket 适配已随 PR #9 合入 `main`（`e577baa`，2026-09-05/06），含 P1 修复：UI 线程 Socket 异步化（QtConcurrent + generation 防旧回包）、mutation 请求 ID 跨可重试失败保留、`pending_reservation` 恢复、免密手机号登录与注册入口移除。`A-S1-04` 跨模块最终回归待进行。A 用户端 Mock 地图页面深色圆角下拉样式沿用。
 - 2026-09-10 user-client map display fix is implemented on `user-client-final-polish`: `EV_MAP_SERVER_MOCK=0` runtime Socket probes returned `tencent_live` Shenzhen POIs and a valid two-point driving polyline; the prior missing base map was caused by `loadTencent()` being hard-disabled and live server sources being forced back to offline rendering. Source and ignored `build/final` binary are updated; final GUI acceptance still requires a runtime JavaScript API GL key.
@@ -159,16 +164,28 @@
 ## Dependencies and TODO
 
 - `A-S1-04`: coordinated final regression, GUI evidence and clean-environment delivery (2026-09-07 gate and 09-10 integration deadline).
-- C: PR #11 三轮评审修复和 PR #13 的 `admin.pile.list` 修复已合入当前 `main`；销售业绩与管理端地图渲染的实现、双平台证据和发布材料仍按各自 PR/计划维护。
+- C: PR #11 三轮评审修复和 PR #13 的 `admin.pile.list` 修复已合入当前 `main`；Socket 管理端、销售业绩、地图渲染和二阶段分析入口均已完成本地 qmake6/QtTest 验证，发布材料已同步。
 - B (owned): PR #19 已将地图服务、Schema v0.4、缓存审计、站点导入、模拟器网关和生产 Tencent HTTP adapter 合入当前 `main`；异步 worker、缓存 miss 合并、清理任务和生产 mTLS 仍是开放项。
-- C: `feature/admin-revenue`（PR #16，销售业绩近 7/30 日营收）待办 = 评审修复与双平台全量回归、真实服务端 Socket 联调营收 7d/30d 双请求；完成并评审后再定合入方式。
+- C: `feature/admin-revenue`（PR #16，销售业绩近 7/30 日营收）已完成评审修复；后续仅需在目标发布环境复核双平台 GUI 证据。
 - B (owned): 当前分支已落地地图契约的 v0.4/Mock/cache/audit/import/generator/gateway 和生产 Tencent HTTP adapter；桩模拟器演示集群已接入公共 TCP dispatcher（注册/快照/命令 ACK/tick），并已兼容 PR #17 的用户端服务端地图适配；后续优先级是 stale 冲突自动重算、私有 mTLS listener、异步 worker、并发 miss 合并、清理任务和最终 A/C 联调。
 - Open technical item: move slow database work off the Socket event-loop thread, or define a bounded worker/lock strategy (B-owned).
+- Open data decision: Schema v0.4 业务表不包含用户评价/服务评分；当前服务页展示完成率、非取消率、复购率和时长等可追溯指标。若启用独立评价源，评价事实应作为业务库外的可复现分析输入，不回写 Schema v0.4。
 - Official Tencent key smoke check now reaches the upstream endpoint: geocoding and driving route both succeed with `tencent_live`; the POI search endpoint independently returns provider status 121 (daily quota exhausted), mapped to `MAP_QUOTA_EXCEEDED` (1404). Fake HTTP and full production-selection integration pass.
 - B map work is tracked in `docs/role-b-map-service-plan.md`: protocol/size guard → v0.4 migration → map Mock/cache/audit → station/pile import → handlers → simulator gateway/cloud simulator → validation. The cloud simulator never writes SQLite directly; the server remains the sole business-state writer.
 - 2026-09-09 review follow-up: confirmed the P1 page-cache continuation bug with `page_size=1`; cache hits now reuse the cached page's `has_more`/`next_page_token` and re-aggregate only that page's stations. `server/tests/map.py` covers page-1/page-2 cache hits and request replay; qmake6 server build and mock map regression pass. Ubuntu QtCharts is installed as `libqt6charts6-dev` and the admin qmake6 tree now builds with `QT += charts`.
 - 2026-09-09 Tencent pagination review follow-up: production POI search now reads Tencent `count` and drains provider pages (`page_index`) before applying server pagination. Fake HTTP and production-selection integration cover 21 records across two upstream pages; mock map cache regression remains green.
-- S2 intelligent-analysis chain: data preparation → model-service contract → predictions/recommendation/warning → B service adaptation → C display → integrated validation. It must not block the S1 basic charging loop.
+- S2 intelligent-analysis chain: data preparation → model-service contract → predictions/recommendation/warning → Flask API → Dashboard and Qt admin summary → integrated validation. The data/model/API/UI chain is runnable; remaining work is production deployment hardening and optional Vue shell only if course acceptance explicitly requires it. It does not block the S1 charging loop.
+- Environment note: system `node`/npm 与 `pytest` originally absent; `scripts/setup_stage2_env.sh` uses project-external `/tmp/ev-node` and `/tmp/ev-s2-site` mirrors, with Dashboard Node tests and Python tests executed there.
+- Environment update: Node.js 20.18.1/npm 10.8.2 installed from npmmirror under `/tmp/ev-node`; Dashboard Node tests now 35/35 passed. System `node`/npm remains unchanged; use `PATH=/tmp/ev-node/bin:$PATH` or install with the commands in `ml/README.md`.
+- 2026-09-14 final build verification: `qmake6 --version` = Qt 6.2.4; clean `/tmp/ev-s2-qmake` builds of `server/server.pro`, `apps/user-client/user-client.pro` and `apps/admin-client/admin-client.pro` succeeded. Admin QtTest suites passed 6/75/7/12/19 (offscreen). Final presentation guide now includes Schema v0.4 data generation, Spark training, Flask services and Dashboard startup commands; see `docs/release/project-demo-guide-2026-09-08.md`.
+- 2026-09-14：新增 `ml/service/build_dashboard_snapshot.py` 和 `/api/v1/dashboard/snapshot`，Dashboard 主数据从验证通过的 Schema v0.4 SQLite 快照读取（14 站点、102 桩、30 日营收和小时负荷），`demo.json` 降为离线故障演练入口；`scripts/setup_stage2_env.sh` 提供清华/npmmirror 环境初始化。
+- 2026-09-14：以生成的 Schema v0.4 分析库直接启动 `/tmp/ev-s2-qmake/server/ev-server`（端口 45455），`EV_DATABASE_PATH` 同步传给 `server/tests/smoke.py` 后真实 Socket 全流程冒烟通过；最终呈现可让 Qt 用户端和管理端与分析 Dashboard 共享同一数据口径。
+- 2026-09-14：扩展 Dashboard 二阶段分析工作台和快照 `analytics` 结构，增加机器学习预测、用户、设备、订单、能源、收益、站点及评价/服务代理指标八个交互视角；新增快照契约测试，Python 11/11、Node 36/36 通过。
+- 2026-09-15：按二阶段独立工作台方向重构 Dashboard 信息架构：新增侧边导航与 hash 切页（网络总览、智能预测、用户与设备、订单与能源、收益与站点、评价与服务），分析页按相关域共享一页并增加 KPI 摘要条；中小屏自动转为横向导航，保留 ECharts 与 Schema v0.4 数据口径。Node 全量测试 36/36 通过。
+- 2026-09-15：优化二阶段数据真实性与挖掘深度：生成器改为 78% 完成、15% 取消、7% 异常的确定性订单漏斗，业务库/账本约束仍通过；快照新增 RFM 用户分层、设备充电次数 z-score 异常检测、站点高负荷/均衡/低负荷聚类标签，以及订单完成率曲线。Dashboard 增加完成率趋势、方法说明与 KPI，Python 生成回归通过。
+- 2026-09-15：修复一键启动复用旧数据导致的“页面未更新”问题：`scripts/start_stage2.sh` 新增 `.stage2-data-version` 指纹和 `EV_S2_REFRESH=1` 强制刷新开关；检测到版本变化时自动重建 Schema v0.4 数据库、ODS、Spark 分层、模型和 ADS。
+- 2026-09-15：Dashboard 数据挖掘扩展：总览新增健康评分、z-score 异常、站点聚类、峰谷时段 4 个摘要模块；预测、用户设备、订单能源、收益站点、评价服务 5 个工作台页均扩展为至少 4 个子模块。快照新增订单漏斗/履约时长分布、OLS 营收趋势、站点聚类中心与 Pareto、能耗相关系数、模型验证元数据等可追溯字段；评价事实缺失继续明确显示代理口径。
+- 2026-09-15：修正 Dashboard 运行时密钥边界：浏览器只读取独立的 `TENCENT_MAP_JS_KEY`，服务端 WebService `TENCENT_MAP_KEY` 不再注入 `/runtime-config.js`；同时修复 RFM 合法 `recency_days=0` 被错误转换为 999 天的问题，递增 S2 数据版本指纹并补充确定性快照回归，确保旧产物自动重建。
 
 ## Collaboration and security rules
 
@@ -178,6 +195,13 @@
 - Never commit Tencent Maps keys, passwords, tokens, private keys, runtime databases, logs or generated build output. Real map credentials stay in ignored local configuration.
 
 ## Recent history
+
+- 2026-09-14：管理端概览新增智能分析状态回归（未配置、有效响应、HTTP 失败三态），qmake6/Qt 6.2.4 下 `tst_ui` 达到 75/75；统一 Dashboard 正常运行文案为 Schema v0.4/业务快照口径，并将最终呈现指南改为真实 Socket + Flask 链路。
+- 2026-09-14：新增 `scripts/start_stage2.sh` 一键启动脚本，按需准备国内镜像依赖、生成/复用分析产物、构建 Qt 并启动 Socket、Flask、Dashboard 和桌面客户端；三个腾讯 Key 仅保存在被忽略的本地 `config/local.env`，脚本和日志不输出密钥。
+
+- 2026-09-14：完成 S2 首个可复现实现闭环：`ml/data/generate_analysis_dataset.py` 按 Schema v0.4 生成确定性业务库和 ODS，`ml/jobs/` 完成质量报告与 Spark 分层，`ml/models/` 完成 Spark RandomForest 训练、MLlib 推理及预测/推荐/预警产物，`ml/service/app.py` 提供只读 Flask API；`ml/tests` 5/5 通过。修复产物构建对 ADS 精简字段缺少 `device_count` 的兼容问题，并处理 PySpark 3.3.4 与 pandas 2.x 的显式 Row 转换；真实命令和指标写入 `ml/README.md`，Dashboard 已接入分析 API 状态区和结果摘要。
+
+- 2026-09-11：按用户要求生成 B 端纯源码压缩包 `/home/bit/projects/work/build/ev-charging-platform-backend-source-20260911.tar.gz`（SHA-256 `7894225e650ad68da1dc13e94650e884d638e919a3e255ca1698566b149de24e`）。包仅含服务端、Protocol、数据库 Schema/迁移、地图、桩模拟器及必要测试/架构文档，不含客户端、Dashboard、二进制、运行数据库、日志或密钥；基于当前提交 `3c945a0`，已用 qmake6/Qt 6.2.4 构建服务端及后端测试，并通过 Python 桩模拟器/Schema 测试。
 
 - 2026-09-10：优化用户端 UI 响应式布局：默认仍为 420×760 手机式入口，但解除 21:38 强制比例并设置 340×560 最小可用尺寸；订单/个人中心改为可滚动内容，列表取消不必要的最大高度；统一输入框、按钮、区域/路线选择栏的 40px 控件高度、间距、弹出列表、焦点和禁用态；底部导航固定可见。qmake6 主程序构建与用户端 QtTest 11/11 通过。
 
