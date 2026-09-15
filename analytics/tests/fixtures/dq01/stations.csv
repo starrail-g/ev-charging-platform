@@ -1,0 +1,2 @@
+source_record_id,batch_id,source_file,source_line,id,name,address,latitude,longitude,status,created_at,updated_at
+stations-000001,fx-dq01,stations.csv,2,1,示例测试充电站,示例市测试区测试路1号,22.500000,113.900000,active,2026-07-01T00:00:00Z,2026-07-01T00:00:00Z

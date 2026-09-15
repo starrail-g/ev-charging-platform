@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { adaptDashboardData, formatCents, mapPileStatus } from '../js/data-adapter.js';
+import { adaptAnalyticsPayload, adaptDashboardData, formatCents, mapPileStatus } from '../js/data-adapter.js';
 
 const fixture = JSON.parse(await readFile(new URL('../data/demo.json', import.meta.url), 'utf8'));
 
@@ -58,4 +58,35 @@ test('builds UTC day labels ending at the snapshot date', async () => {
   );
   assert.equal(buildDayLabels('2026-09-01T10:15:00Z', 30).length, 30);
   assert.deepEqual(buildDayLabels('not-a-date', 7), []);
+});
+
+// 分析链路（analytics 模式）：营收序列必须按 7/30 日档位各自截取，不得把整窗塞进 30 日档。
+test('slices analytics revenue series into the 7/30-day toggle windows', () => {
+  const dates = Array.from({ length: 45 }, (_, index) => {
+    const day = new Date(Date.UTC(2026, 7, 1) + index * 86400000);
+    return day.toISOString().slice(0, 10);
+  });
+  const payload = {
+    status: 'ok',
+    meta: { batch_id: 'batch-1', source_type: 'generated_v0.4', generated_at: '2026-09-15T00:00:00Z',
+            data_start: dates[0], data_end_exclusive: '2026-09-15' },
+    data: {
+      overview: { revenueCents: 100, completedOrders: 1, energyWh: 1000 },
+      stations: [{ id: 101, name: '站点 101', latitude: 22.5, longitude: 113.9 }],
+      piles: [{ id: 10101, stationId: 101, code: 'P-1', status: 'idle' }],
+      stationUtilization: [{ stationId: 101, utilization: 0.1 }],
+      revenueDaily: dates.map((date, index) => ({ date, revenueCents: 1000 + index,
+                                                  completedOrders: 1, energyWh: 500 })),
+      loadHourly: [{ hourStart: '2026-09-14T23:00:00Z', stationId: 101, loadKw: 1.5,
+                     allocatedWh: 1500, chargeSeconds: 600 }],
+    },
+  };
+  const model = adaptAnalyticsPayload(payload);
+  assert.equal(model.revenueDaily.length, 45);
+  assert.equal(model.revenue7dCents.length, 7);
+  assert.deepEqual(model.revenue7dCents, model.revenueDaily.slice(-7).map((row) => row.cents));
+  assert.equal(model.revenue30dCents.length, 30);
+  assert.deepEqual(model.revenue30dCents, model.revenueDaily.slice(-30).map((row) => row.cents));
+  assert.equal(model.revenueSeriesLabels.length, 45);
+  assert.equal(model.revenueSeriesLabels.at(-1), '9/14');
 });

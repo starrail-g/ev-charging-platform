@@ -22,7 +22,10 @@ def main() -> int:
     parser.add_argument("--master", default="local[*]")
     args = parser.parse_args()
     spark = (SparkSession.builder.master(args.master).appName("ev-charging-load-model")
-             .config("spark.sql.session.timeZone", "UTC").config("spark.ui.enabled", "false").getOrCreate())
+             .config("spark.sql.session.timeZone", "UTC").config("spark.ui.enabled", "false")
+             # ml 链为本地链：显式 file:// 文件系统，避免宿主 Hadoop 配置把本地路径解析到 HDFS
+             .config("spark.hadoop.fs.defaultFS", "file:///")
+             .getOrCreate())
     spark.sparkContext.setLogLevel("WARN")
     try:
         frame = (spark.read.parquet(str(args.features))

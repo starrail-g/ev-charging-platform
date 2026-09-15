@@ -1,0 +1,3 @@
+source_record_id,batch_id,source_file,source_line,id,phone,nickname,balance_cents,status,created_at,updated_at
+users-000001,fx-dq01,users.csv,2,1,13800000001,测试用户一,3700,active,2026-08-01T00:00:00Z,2026-08-01T00:00:00Z
+users-000002,fx-dq01,users.csv,3,2,13800000002,测试用户二,3699,active,2026-08-01T00:00:00Z,2026-08-01T00:00:00Z

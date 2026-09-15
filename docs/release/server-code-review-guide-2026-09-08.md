@@ -1,5 +1,10 @@
 # 服务端代码评审讲解稿
 
+> **历史稿标注（2026-09-08）**：本文档记录 2026-09-08 服务端代码评审时的讲解口径；此后管理端
+> Socket 适配器已随 PR #11/#13 合入 `main` 并验证（`EV_ADMIN_DATA_SOURCE=socket` 为最终演示路径），
+> Schema 已由 v0.3 升级为 v0.4（PR #19）。文内 §1 与 §2 两处已就地更新为当前状态，
+> 其余讲解结构（启动流程、协议、事务、测试）仍适用。
+
 ## 1. 先用一句话说明服务端职责
 
 服务端是 Qt/C++ 编写的 TCP Socket 服务。它接收用户端或管理端发来的协议 v1 请求，完成请求校验、管理员认证、业务分发和 SQLite 持久化，再把统一格式的成功或错误响应返回给客户端。
@@ -19,7 +24,7 @@ libs/database/src/database.cpp
 database/schema/schema.sql + SQLite
 ```
 
-现场可以强调：目前已经实现 Socket 的用户端流程走这条真实链路；管理端 Socket 适配器尚未实现，管理端当前仍是 Mock。
+现场可以强调：用户端与管理端均走这条真实 Socket 链路——管理端 Socket 适配器已随 PR #11/#13 合入 main 并验证，`EV_ADMIN_DATA_SOURCE=socket` 是最终演示路径（Mock 保留为离线兜底）。
 
 ## 2. 服务端代码文件分工
 
@@ -31,7 +36,7 @@ database/schema/schema.sql + SQLite
 | `libs/protocol/src/frame_codec.cpp` | 四字节长度前缀编解码、半包/粘包处理 |
 | `libs/database/include/ev_database/database.h` | 数据库服务公开接口 |
 | `libs/database/src/database.cpp` | SQLite 初始化、查询、事务、状态机和幂等 |
-| `database/schema/schema.sql` | SQLite v0.3 表、索引、视图、触发器 |
+| `database/schema/schema.sql` | SQLite v0.4 表、索引、视图、触发器（v0.3→v0.4 升级随 PR #19 合入） |
 | `database/seeds/dev.sql` | 可重复的演示数据 |
 
 一个重要的架构特点是：网络层只负责协议和调度，数据库类才负责跨表业务一致性。Qt 页面中没有 SQL。

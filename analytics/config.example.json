@@ -1,0 +1,41 @@
+{
+  "note": "示例配置（口径文档）。运行时以 CLI 参数与环境变量为准；本文件不被代码自动读取。",
+  "seed": 20260914,
+  "timezone": "UTC",
+  "profiles": {
+    "smoke": {
+      "stations": 2,
+      "piles_per_station": 6,
+      "users": 100,
+      "orders": 1000,
+      "data_start": "2026-09-01",
+      "data_end_exclusive": "2026-09-15"
+    },
+    "standard": {
+      "stations": 30,
+      "piles_per_station": 10,
+      "users": 5000,
+      "orders": 50000,
+      "data_start": "2026-06-16",
+      "data_end_exclusive": "2026-09-14"
+    },
+    "low": {
+      "stations": 10,
+      "piles_per_station": 10,
+      "users": 500,
+      "orders": 10000,
+      "data_start": "2026-06-16",
+      "data_end_exclusive": "2026-09-14"
+    }
+  },
+  "env": {
+    "EV_ANALYTICS_ROOT": "~/ev-stage2-artifacts",
+    "EV_HDFS_ROOT": "/ev-stage2",
+    "EV_SNAPSHOT_STALE_HOURS": "72"
+  },
+  "spark": {
+    "master": "local[2]",
+    "session_timezone": "UTC",
+    "shuffle_partitions": 4
+  }
+}

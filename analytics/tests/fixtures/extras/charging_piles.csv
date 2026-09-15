@@ -1,0 +1,2 @@
+source_record_id,batch_id,source_file,source_line,id,station_id,pile_code,pile_type,power_kw,unit_price_cents_per_kwh,status,total_charge_count,total_charge_seconds,created_at,updated_at
+piles-000001,fx-extras,charging_piles.csv,2,1,1,P-9-A,fast,100.0,120,idle,0,0,2026-07-01T00:00:00Z,2026-09-02T07:00:00Z

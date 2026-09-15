@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Build DWD, DWS and ADS datasets from the Schema v0.4 ODS export."""
+"""Build DWD, DWS and ADS datasets from the Schema v0.4 ODS export.
+
+产出：<output>/dwd/charging_orders、<output>/dwd/quarantine_charging_orders（无效行独立落盘）、
+<output>/dws/station_hourly、<output>/dws/station_day、<output>/ads/revenue_daily、
+<output>/ads/load_features、<output>/reports/quality_report.json。
+
+守恒（输入 = 有效 + 隔离）/ 互斥（两侧 source_row_id 无交集）/ 原因完备（无效行必带
+quality_code）任一失败即中止流水线（非零退出）：报告仍先落盘留证，但不产出可被下游
+消费的“成功”回执（PR #24 评审 P1）。
+
+利用率口径：Σ 区间∩桶分摊充电秒数 /（桩数 × 3600），小时/日网格全量展开——分母含零订单小时；
+秒数、电量、金额按重叠占比分别分摊（表达式与 analytics/jobs/build_warehouse.py 同源）。
+"""
 
 from __future__ import annotations
 
@@ -113,7 +125,11 @@ def order_dwd(spark: SparkSession, ods: Path) -> DataFrame:
         .withColumn("event_date", F.to_date("settled_ts"))
         .withColumn("start_hour", F.hour("started_ts"))
         .withColumn("energy_kwh", F.col("o.energy_wh") / F.lit(1000.0))
-        .withColumn("quality_valid", (
+        # SQL 三值逻辑防线（PR #24 评审 P1）：缺字段/数值不可解析时比较结果为 NULL，
+        # 整个 AND 也随之 NULL——filter(valid) 与 filter(~valid) 都不会保留该行，
+        # “输入 = 有效 + 隔离” 被破坏且无人察觉。这里显式 coalesce 为非空布尔：
+        # “未知”一律判为无效，落入隔离区并由 quality_code 注明原因。
+        .withColumn("quality_valid", F.coalesce((
             (F.col("o.status") == F.lit("completed")) & F.col("order_id").isNotNull()
             & F.col("o.order_no").isNotNull() & F.col("user_id_typed").isNotNull()
             & F.col("pile_id_typed").isNotNull() & F.col("pile_station_id").isNotNull()
@@ -123,9 +139,10 @@ def order_dwd(spark: SparkSession, ods: Path) -> DataFrame:
             & (F.col("o.energy_wh") >= 0) & (F.col("o.total_amount_cents") > 0)
             & (F.col("duration_minutes") >= 0) & (F.col("duration_minutes") <= 24 * 60)
             & (F.col("order_id_duplicate_count") == 1)
-        ))
+        ), F.lit(False)))
         .withColumn("quality_code", F.when(F.col("order_id_duplicate_count") > 1, "DUPLICATE_ORDER")
                     .when(F.col("order_id").isNull(), "NULL_ORDER_ID")
+                    .when(F.col("o.order_no").isNull(), "NULL_ORDER_NO")
                     .when(F.col("pile_station_id").isNull(), "ORPHAN_PILE")
                     .when(F.col("station_id_lookup").isNull(), "ORPHAN_STATION")
                     .when(F.col("user_id_lookup").isNull(), "ORPHAN_USER")
@@ -133,8 +150,11 @@ def order_dwd(spark: SparkSession, ods: Path) -> DataFrame:
                           | F.col("ended_ts").isNull() | F.col("settled_ts").isNull(), "BAD_TIMESTAMP")
                     .when(F.col("duration_minutes") < 0, "END_BEFORE_START")
                     .when(F.col("duration_minutes") > 24 * 60, "LONG_SESSION")
+                    .when(F.col("o.energy_wh").isNull(), "NULL_ENERGY")
                     .when(F.col("o.energy_wh") < 0, "NEGATIVE_ENERGY")
+                    .when(F.col("o.total_amount_cents").isNull(), "NULL_TOTAL")
                     .when(F.col("o.total_amount_cents") <= 0, "INVALID_TOTAL")
+                    .when(F.col("o.status").isNull(), "NULL_STATUS")
                     .when(F.col("o.status") != "completed", "NON_COMPLETED_ORDER")
                     .otherwise(F.lit(None).cast("string")))
         .select(
@@ -155,102 +175,286 @@ def write_dataset(frame: DataFrame, path: Path, mode: str = "overwrite") -> None
     frame.write.mode(mode).parquet(str(path))
 
 
+def hour_window(dwd: DataFrame) -> tuple[str, str]:
+    """有效订单的小时窗口 [floor(最早开始, 小时), floor(最晚结束-1s, 小时)]（UTC 字符串）。"""
+    bounds = (
+        dwd.filter(
+            F.col("quality_valid") & F.col("started_ts").isNotNull() & F.col("ended_ts").isNotNull()
+            & (F.col("ended_ts") > F.col("started_ts"))
+        ).agg(
+            F.date_format(F.date_trunc("hour", F.min("started_ts")), "yyyy-MM-dd HH:mm:ss").alias("lo"),
+            F.date_format(F.date_trunc("hour", F.max("ended_ts") - F.expr("INTERVAL 1 SECOND")),
+                          "yyyy-MM-dd HH:mm:ss").alias("hi"),
+        ).collect()[0]
+    )
+    if bounds["lo"] is None or bounds["hi"] is None:
+        raise ValueError("no valid completed orders available for DWS")
+    return bounds["lo"], bounds["hi"]
+
+
+def allocation_facts(dwd: DataFrame) -> tuple[DataFrame, DataFrame]:
+    """有效完成订单按 [started, ended) ∩ 桶 分摊（小时级 / 日级两级）。
+
+    与 analytics/jobs/build_warehouse.py 同源：重叠秒数、电量、金额分别按 overlap/duration
+    占比分配——每单 Σ分摊电量 == 源电量（守恒），不再按起始小时整桶计入。
+    """
+    # 用纪元秒整数运算表达「[started, ended) ∩ 小时桶」：sequence 走 long 类型，
+    # 避免依赖不同 Spark 版本对 timestamp 序列的支持差异（pyspark 3.3.4 为 ml 链验证环境）。
+    base = (
+        dwd.filter(
+            F.col("quality_valid") & F.col("started_ts").isNotNull() & F.col("ended_ts").isNotNull()
+            & (F.col("ended_ts") > F.col("started_ts"))
+        )
+        .withColumn("start_epoch", F.unix_timestamp("started_ts"))
+        .withColumn("end_epoch", F.unix_timestamp("ended_ts"))
+        .withColumn("dur_s", F.col("end_epoch") - F.col("start_epoch"))
+    )
+    bucket_lo = F.floor(F.col("start_epoch") / F.lit(3600)).cast("long") * F.lit(3600)
+    bucket_hi = F.floor((F.col("end_epoch") - F.lit(1)) / F.lit(3600)).cast("long") * F.lit(3600)
+    buckets = base.withColumn(
+        "bucket_epoch",
+        F.explode(F.sequence(bucket_lo, bucket_hi, F.lit(3600))),
+    ).withColumn(
+        "overlap_s",
+        F.least(F.col("end_epoch"), F.col("bucket_epoch") + F.lit(3600))
+        - F.greatest(F.col("start_epoch"), F.col("bucket_epoch")),
+    )
+    share = F.col("overlap_s") / F.col("dur_s")
+
+    def aggregate(keys: list) -> DataFrame:
+        return buckets.groupBy(*keys).agg(
+            F.sum("overlap_s").alias("charge_seconds"),
+            F.sum(F.col("energy_wh") * share).alias("allocated_wh"),
+            F.sum(F.col("total_amount_cents") * share).alias("allocated_cents"),
+            F.countDistinct("order_id").alias("session_count"),
+            F.countDistinct("user_id").alias("user_count"),
+        )
+
+    hourly = aggregate(["station_id", F.col("bucket_epoch").cast("timestamp").alias("hour_start")])
+    daily = aggregate(["station_id", F.to_date(F.col("bucket_epoch").cast("timestamp")).alias("stat_date")])
+    return hourly, daily
+
+
+def pile_counts(piles: DataFrame) -> DataFrame:
+    return piles.groupBy("station_id").agg(F.count("id").alias("device_count"))
+
+
+def hour_sequence(spark: SparkSession, lo: str, hi: str) -> DataFrame:
+    """全窗口小时序列（UTC）——小时网格、日网格与各级容量共用的唯一窗口基准。"""
+    lo_epoch = int(datetime.strptime(lo, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC).timestamp())
+    hi_epoch = int(datetime.strptime(hi, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC).timestamp())
+    return (spark.range(lo_epoch, hi_epoch + 3600, 3600)
+            .select(F.col("id").cast("timestamp").alias("hour_start")))
+
+
+def grid_hourly(allocated: DataFrame, piles: DataFrame, hours: DataFrame) -> DataFrame:
+    """站点 × 全窗口小时网格（零订单小时保留行），利用率分母 = 桩数 × 3600。"""
+    grid = piles.select("station_id").distinct().crossJoin(hours)
+    return (
+        grid.join(allocated, ["station_id", "hour_start"], "left")
+        .join(pile_counts(piles), "station_id", "left")
+        .fillna({"charge_seconds": 0, "allocated_wh": 0.0, "allocated_cents": 0.0,
+                 "session_count": 0, "user_count": 0})
+        .withColumn("capacity_pile_seconds", F.col("device_count") * F.lit(3600))
+        .withColumn("utilization", F.least(F.lit(1.0), F.col("charge_seconds") / F.col("capacity_pile_seconds")))
+        .withColumn("load_kwh", F.col("allocated_wh") / F.lit(1000.0))
+        .withColumn("idle_pile_estimate", F.greatest(F.lit(0), F.col("device_count") - F.col("session_count")))
+        .select(
+            F.to_date("hour_start").alias("event_date"),
+            F.hour("hour_start").alias("start_hour"),
+            "hour_start", "station_id",
+            F.col("charge_seconds").cast("long").alias("charge_seconds"),
+            F.col("allocated_wh").cast("double").alias("allocated_wh"),
+            F.col("allocated_cents").cast("double").alias("revenue_cents"),
+            "session_count", "user_count", "device_count", "capacity_pile_seconds",
+            F.col("utilization").cast("double").alias("utilization"),
+            F.col("load_kwh").cast("double").alias("load_kwh"),
+            "idle_pile_estimate",
+        )
+    )
+
+
+def grid_daily(allocated_day: DataFrame, piles: DataFrame, hours: DataFrame) -> DataFrame:
+    """站点 × 全窗口日网格（零订单日保留行）。
+
+    窗口与小时网格严格统一：每日容量 = 桩数 × 该日在小时网格中的桶数 × 3600——
+    即"每日小时容量之和 = 日容量"，小时/日两级汇总利用率天然一致（分母含零订单小时）。
+    """
+    day_hours = (hours.groupBy(F.to_date("hour_start").alias("stat_date"))
+                 .agg(F.count("*").cast("long").alias("hours_in_window")))
+    grid = piles.select("station_id").distinct().crossJoin(day_hours.select("stat_date"))
+    return (
+        grid.join(day_hours, "stat_date", "left")
+        .join(allocated_day, ["station_id", "stat_date"], "left")
+        .join(pile_counts(piles), "station_id", "left")
+        .fillna({"charge_seconds": 0, "allocated_wh": 0.0, "allocated_cents": 0.0,
+                 "session_count": 0, "user_count": 0})
+        .withColumn("capacity_pile_seconds",
+                    F.col("device_count") * F.col("hours_in_window") * F.lit(3600))
+        .withColumn("utilization", F.least(F.lit(1.0), F.col("charge_seconds") / F.col("capacity_pile_seconds")))
+        .withColumn("load_kwh", F.col("allocated_wh") / F.lit(1000.0))
+        .select(
+            "station_id", "stat_date", "hours_in_window",
+            F.col("charge_seconds").cast("long").alias("charge_seconds"),
+            F.col("allocated_wh").cast("double").alias("allocated_wh"),
+            F.col("allocated_cents").cast("double").alias("revenue_cents"),
+            "session_count", "user_count", "device_count", "capacity_pile_seconds",
+            F.col("utilization").cast("double").alias("utilization"),
+            F.col("load_kwh").cast("double").alias("load_kwh"),
+        )
+    )
+
+
 def build_pipeline(ods_dir: Path, output_dir: Path, master: str) -> dict[str, object]:
     spark = (
         SparkSession.builder.master(master).appName("ev-charging-stage2-pipeline")
         .config("spark.sql.session.timeZone", "UTC")
         .config("spark.ui.enabled", "false")
+        # ml 链为本地链：显式 file:// 文件系统，避免宿主 Hadoop 配置把 /tmp 等本地路径解析到 HDFS
+        .config("spark.hadoop.fs.defaultFS", "file:///")
+        # 本地模式延迟调度防线（SPARK-42923 征兆；与 clean.py / build_warehouse.py 一致）
+        .config("spark.locality.wait", "0")
+        .config("spark.locality.wait.node", "0")
+        .config("spark.locality.wait.rack", "0")
+        .config("spark.locality.wait.process", "0")
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("WARN")
     try:
-        dwd = order_dwd(spark, ods_dir).cache()
-        dwd_path = output_dir / "dwd" / "charging_orders"
-        dws_path = output_dir / "dws" / "station_hourly"
-        ads_path = output_dir / "ads" / "revenue_daily"
-        feature_path = output_dir / "ads" / "load_features"
-        for path in [dwd_path, dws_path, ads_path, feature_path]:
-            if path.exists():
-                shutil.rmtree(path)
-        write_dataset(dwd, dwd_path)
-
-        piles = (
-            read_ods(spark, ods_dir / "charging_piles.csv", T.StructType([
-                T.StructField("id", T.LongType()), T.StructField("station_id", T.LongType()),
-                T.StructField("pile_code", T.StringType()), T.StructField("pile_type", T.StringType()),
-                T.StructField("power_kw", T.DoubleType()), T.StructField("unit_price_cents_per_kwh", T.LongType()),
-                T.StructField("status", T.StringType()), T.StructField("total_charge_count", T.LongType()),
-                T.StructField("total_charge_seconds", T.LongType()), T.StructField("created_at", T.StringType()),
-                T.StructField("updated_at", T.StringType()), T.StructField("simulated", T.IntegerType()),
-                T.StructField("status_source", T.StringType()), T.StructField("status_updated_at", T.StringType()),
-            ])).select("id", "station_id", "power_kw", "status")
-        )
-        pile_counts = piles.groupBy("station_id").agg(
-            F.count("id").alias("device_count"),
-            F.sum(F.when(F.col("status") == "idle", 1).otherwise(0)).alias("idle_pile_count"),
-        )
-        hourly = (
-            dwd.filter(F.col("quality_valid"))
-            .groupBy("event_date", "start_hour", "station_id")
-            .agg(
-                F.count("order_id").alias("session_count"),
-                F.sum("energy_kwh").alias("load_kwh"),
-                F.sum("total_amount_cents").alias("revenue_cents"),
-                F.avg("duration_minutes").alias("avg_duration_minutes"),
-                F.countDistinct("user_id").alias("user_count"),
-            )
-            .join(pile_counts, "station_id", "left")
-            .withColumn("occupancy_minutes", F.col("avg_duration_minutes") * F.col("session_count"))
-            .withColumn("utilization", F.least(F.lit(1.0), F.col("occupancy_minutes") / (F.col("device_count") * 60.0)))
-            .withColumn("idle_pile_estimate", F.greatest(F.lit(0), F.col("device_count") - F.col("session_count")))
-        )
-        write_dataset(hourly, dws_path)
-
-        daily = dwd.filter(F.col("quality_valid")).groupBy("event_date").agg(
-            F.sum("total_amount_cents").alias("revenue_cents"),
-            F.count("order_id").alias("completed_order_count"),
-            F.sum("energy_wh").alias("energy_wh"),
-        )
-        bounds = daily.agg(F.min("event_date").alias("min_date"), F.max("event_date").alias("max_date")).collect()[0]
-        if bounds["min_date"] is None:
-            raise ValueError("no valid completed orders available for ADS")
-        calendar = spark.range(1).select(
-            F.explode(F.sequence(F.lit(bounds["min_date"]), F.lit(bounds["max_date"]), F.expr("interval 1 day"))).alias("date")
-        )
-        ads = (
-            calendar.join(daily.withColumnRenamed("event_date", "date"), "date", "left")
-            .fillna({"revenue_cents": 0, "completed_order_count": 0, "energy_wh": 0})
-            .withColumn("data_quality_summary", F.lit("schema_v0.4_generated"))
-            .orderBy("date")
-        )
-        write_dataset(ads, ads_path)
-
-        features = (
-            hourly.select("event_date", "start_hour", "station_id", "load_kwh", "session_count", "user_count", "utilization", "idle_pile_estimate")
-            .withColumnRenamed("event_date", "date")
-            .withColumn("feature_source", F.lit("schema_v0.4_generated"))
-        )
-        write_dataset(features, feature_path)
-
-        quality_rows = dwd.groupBy("quality_valid", "quality_code").count().orderBy("quality_valid", "quality_code").collect()
-        report = {
-            "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "source": str(ods_dir),
-            "dwd_rows": dwd.count(),
-            "dwd_valid_rows": dwd.filter(F.col("quality_valid")).count(),
-            "dwd_invalid_rows": dwd.filter(~F.col("quality_valid")).count(),
-            "quality_counts": [row.asDict(recursive=True) for row in quality_rows],
-            "dws_rows": hourly.count(),
-            "ads_revenue_daily_rows": ads.count(),
-            "feature_rows": features.count(),
-            "timezone": "UTC",
-            "source_contract": "SQLite Schema v0.4 generated analysis database",
-        }
-        (output_dir / "reports").mkdir(parents=True, exist_ok=True)
-        (output_dir / "reports" / "quality_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        return report
+        return run_build(spark, ods_dir, output_dir)
     finally:
         spark.stop()
+
+
+def check_conservation(report: dict[str, object]) -> None:
+    """守恒 / 互斥 / 原因完备性硬校验：任一失败即抛 RuntimeError，调用方非零退出。
+
+    口径（PR #24 评审 P1）：
+    - 守恒：input_rows == dwd_rows + quarantine_rows（两侧均为实际落盘读回计数）；
+    - 互斥：DWD 与隔离区的 source_row_id 交集为空；
+    - 原因完备：所有无效行必须带 quality_code——“无原因地消失/入隔离”不可对账。
+    """
+    conservation = report["conservation"]
+    problems = []
+    if not conservation["balanced"]:
+        problems.append(f"not balanced: input={conservation['input_rows']} "
+                        f"dwd={conservation['dwd_rows']} quarantine={conservation['quarantine_rows']}")
+    if not conservation["exclusive"]:
+        problems.append("dwd and quarantine overlap on source_row_id")
+    if conservation["invalid_without_reason"]:
+        problems.append(f"{conservation['invalid_without_reason']} invalid rows without quality_code")
+    if problems:
+        raise RuntimeError("conservation check failed: " + "; ".join(problems))
+
+
+def run_build(spark: SparkSession, ods_dir: Path, output_dir: Path) -> dict[str, object]:
+    dwd = order_dwd(spark, ods_dir).cache()
+    dwd_path = output_dir / "dwd" / "charging_orders"
+    quarantine_path = output_dir / "dwd" / "quarantine_charging_orders"
+    dws_path = output_dir / "dws" / "station_hourly"
+    dws_day_path = output_dir / "dws" / "station_day"
+    ads_path = output_dir / "ads" / "revenue_daily"
+    feature_path = output_dir / "ads" / "load_features"
+    for path in [dwd_path, quarantine_path, dws_path, dws_day_path, ads_path, feature_path]:
+        if path.exists():
+            shutil.rmtree(path)
+    # 正式 DWD 只落有效行；无效行独立落盘 quarantine——两者互斥，输入 = DWD + quarantine。
+    # 计数与互斥性在 report.conservation 中从实际落盘产物读回核验。
+    write_dataset(dwd.filter(F.col("quality_valid")), dwd_path)
+    write_dataset(dwd.filter(~F.col("quality_valid")), quarantine_path)
+
+    piles = (
+        read_ods(spark, ods_dir / "charging_piles.csv", T.StructType([
+            T.StructField("id", T.LongType()), T.StructField("station_id", T.LongType()),
+            T.StructField("pile_code", T.StringType()), T.StructField("pile_type", T.StringType()),
+            T.StructField("power_kw", T.DoubleType()), T.StructField("unit_price_cents_per_kwh", T.LongType()),
+            T.StructField("status", T.StringType()), T.StructField("total_charge_count", T.LongType()),
+            T.StructField("total_charge_seconds", T.LongType()), T.StructField("created_at", T.StringType()),
+            T.StructField("updated_at", T.StringType()), T.StructField("simulated", T.IntegerType()),
+            T.StructField("status_source", T.StringType()), T.StructField("status_updated_at", T.StringType()),
+        ])).select("id", "station_id", "power_kw", "status")
+    )
+    lo, hi = hour_window(dwd)
+    hours = hour_sequence(spark, lo, hi)
+    hourly_alloc, daily_alloc = allocation_facts(dwd)
+    hourly = grid_hourly(hourly_alloc, piles, hours)
+    write_dataset(hourly, dws_path)
+    station_day = grid_daily(daily_alloc, piles, hours)
+    write_dataset(station_day, dws_day_path)
+
+    daily = dwd.filter(F.col("quality_valid")).groupBy("event_date").agg(
+        F.sum("total_amount_cents").alias("revenue_cents"),
+        F.count("order_id").alias("completed_order_count"),
+        F.sum("energy_wh").alias("energy_wh"),
+    )
+    bounds = daily.agg(F.min("event_date").alias("min_date"), F.max("event_date").alias("max_date")).collect()[0]
+    if bounds["min_date"] is None:
+        raise ValueError("no valid completed orders available for ADS")
+    calendar = spark.range(1).select(
+        F.explode(F.sequence(F.lit(bounds["min_date"]), F.lit(bounds["max_date"]), F.expr("interval 1 day"))).alias("date")
+    )
+    ads = (
+        calendar.join(daily.withColumnRenamed("event_date", "date"), "date", "left")
+        .fillna({"revenue_cents": 0, "completed_order_count": 0, "energy_wh": 0})
+        .withColumn("data_quality_summary", F.lit("schema_v0.4_generated"))
+        .orderBy("date")
+    )
+    write_dataset(ads, ads_path)
+
+    features = (
+        hourly.select("event_date", "start_hour", "station_id", "load_kwh", "session_count",
+                      "user_count", "utilization", "idle_pile_estimate")
+        .withColumnRenamed("event_date", "date")
+        .withColumn("feature_source", F.lit("schema_v0.4_generated"))
+    )
+    write_dataset(features, feature_path)
+
+    input_rows = dwd.count()
+    quality_rows = dwd.groupBy("quality_valid", "quality_code").count().orderBy("quality_valid", "quality_code").collect()
+    quality_counts = [row.asDict(recursive=True) for row in quality_rows]
+    # 无效行必须携带原因码：无码 = 无法对账的“静默归类”，与守恒失败同等对待。
+    invalid_without_reason = sum(
+        1 for row in quality_counts if row["quality_valid"] is False and row["quality_code"] is None)
+    # 计数与互斥性从两个实际落盘产物读回核验（不再只依赖内存分类计数）
+    dwd_written = spark.read.parquet(str(dwd_path)).count()
+    quarantine_written = spark.read.parquet(str(quarantine_path)).count()
+    overlap = (spark.read.parquet(str(dwd_path)).select("source_row_id")
+               .join(spark.read.parquet(str(quarantine_path)).select("source_row_id"), "source_row_id")
+               .count())
+    report = {
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "source": str(ods_dir),
+        "input_rows": input_rows,
+        "dwd_rows": dwd_written,
+        "quarantine_rows": quarantine_written,
+        "dwd_path": str(dwd_path),
+        "quarantine_path": str(quarantine_path),
+        "conservation": {
+            "rule": "input_rows == dwd_rows + quarantine_rows",
+            "input_rows": input_rows,
+            "dwd_rows": dwd_written,
+            "quarantine_rows": quarantine_written,
+            "balanced": input_rows == dwd_written + quarantine_written,
+            "exclusive": overlap == 0,
+            "invalid_without_reason": invalid_without_reason,
+        },
+        "quality_counts": quality_counts,
+        "dws_rows": hourly.count(),
+        "dws_station_day_rows": station_day.count(),
+        "window_hours": hours.count(),
+        "window_start": lo,
+        "window_end_inclusive": hi,
+        "ads_revenue_daily_rows": ads.count(),
+        "feature_rows": features.count(),
+        "timezone": "UTC",
+        "source_contract": "SQLite Schema v0.4 generated analysis database",
+    }
+    (output_dir / "reports").mkdir(parents=True, exist_ok=True)
+    (output_dir / "reports" / "quality_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # 报告先落盘（保留失败现场证据），再硬校验：守恒/互斥/原因完备任一失败 → 中止流水线，
+    # 不再“记录 balanced: false 后照常返回成功”。
+    check_conservation(report)
+    return report
 
 
 def main() -> int:

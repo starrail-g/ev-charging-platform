@@ -1,0 +1,19 @@
+{
+  "fixture": "dq01",
+  "reference": "runbook §2 手算样例（2026-09-15 复核）",
+  "batch_id": "fx-dq01",
+  "orders": {"input": 7, "kept": 3, "duplicate": 1, "quarantine": 3, "repaired": 0},
+  "wallet": {"input": 2, "kept": 2, "duplicate": 0, "quarantine": 0, "repaired": 0},
+  "revenue_cents": 1901,
+  "settled_energy_wh": 15001,
+  "charge_seconds": 5400,
+  "utilization_2026_09_01": 0.03125,
+  "hourly_allocated_wh": {
+    "2026-09-01T00:00:00Z": 5000,
+    "2026-09-01T01:00:00Z": 5000,
+    "2026-09-01T02:00:00Z": 5001
+  },
+  "kept_order_nos": ["FX-0001", "FX-0002", "FX-0003"],
+  "quarantined_order_nos": ["FX-0004", "FX-0005", "FX-0006"],
+  "note": "FX-0004 外键缺失 / FX-0005 结束早于开始 / FX-0006 结算金额缺失；orders-000007 为 FX-0001 完全重复副本（保留 orders-000001）"
+}

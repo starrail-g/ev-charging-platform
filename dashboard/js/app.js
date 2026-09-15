@@ -1,7 +1,10 @@
 // 主装配：runtime config → demo 数据 → 指标/关注队列/利用率 → 地图（自动降级）→ 图表。
 // 任何局部组件失败只显示局部 error 态，不让整个主屏白屏。
-import { LiveDataProvider } from './data-provider.js';
+// 第二阶段：?source=analytics 切换分析链路（/api/dashboard，Vue 筛选控件，默认拓扑地图）。
+import { DemoDataProvider, LiveDataProvider } from './data-provider.js';
+import { ApiDataProvider } from './api-data-provider.js';
 import { AnalysisProvider } from './analysis-provider.js';
+import { createStationCatalog } from './station-catalog.js';
 import { mapPileStatus } from './status-map.js';
 import { statusIconSvg } from './status-icons.js';
 import { createDashboardState, deriveOverviewCards } from './dashboard-state.js';
@@ -19,20 +22,38 @@ import {
   renderServiceControl, renderServiceDataAvailability,
 } from './charts.js';
 import { renderPageState, statePresentation } from './state-view.js';
+import { analysisSourceAttribution } from './analysis-source.js';
 
 const state = createDashboardState({ liveMode: false });
 const params = new URLSearchParams(location.search);
+// 大屏模式：default = ML 链路（默认数据源即分析服务），analytics = 已发布批次链路。
+// analytics 模式下 ML 分析区属于另一条数据链，必须显式标注来源（PR #24 评审 P2）。
+let dashboardMode = 'default';
 
 function announce(message) {
   const region = document.getElementById('globalState');
   if (region) region.textContent = message;
 }
 
+/** 把筛选条件写回 URL（刷新/分享保留窗口）；只改 query string，不触发导航。 */
+function syncUrlQuery(query) {
+  const url = new URL(location.href);
+  const setOr = (key, value) => {
+    if (value === null || value === undefined || value === '') url.searchParams.delete(key);
+    else url.searchParams.set(key, String(value));
+  };
+  setOr('start', query.start);
+  setOr('end', query.end);
+  setOr('stationId', query.stationId);
+  history.replaceState(null, '', url);
+}
+
 function fmtUtilization(ratio) {
   return `${Math.round((ratio ?? 0) * 100)}%`;
 }
 
-function renderAnalysis(result) {
+function renderAnalysis(result, options = {}) {
+  const attribution = analysisSourceAttribution({ ok: result.ok === true, independent: options.independent === true });
   const status = document.getElementById('analysisStatus');
   const summary = document.getElementById('analysisSummary');
   if (!status || !summary) return;
@@ -42,19 +63,19 @@ function renderAnalysis(result) {
     const algorithm = String(result.health?.metadata?.algorithm ?? '');
     forecastMethod.textContent = algorithm.includes('RandomForest') ? '随机森林回归' : result.ok ? '站点时段基线' : '模型回归';
   }
-  renderForecastWorkbench(result);
+  renderForecastWorkbench(result, { metaPrefix: attribution.metaPrefix });
   renderForecastSupportingModules(result);
   if (!result.ok) {
     status.textContent = result.code === 'ANALYSIS_NOT_CONFIGURED' ? '未配置' : '不可用';
-    status.dataset.state = 'degraded';
+    status.dataset.state = attribution.state;
     const note = document.createElement('p');
     note.className = 'model-note';
     note.textContent = `${result.message}；当前页面保留基础运营指标。`;
     summary.append(note);
     return;
   }
-  status.textContent = '已更新';
-  status.dataset.state = 'ready';
+  status.textContent = attribution.chip;
+  status.dataset.state = attribution.state;
   const forecastItems = result.forecast?.items ?? [];
   const oneHour = forecastItems.filter((item) => item.horizon_hours === 1);
   const topForecast = [...oneHour].sort((a, b) => b.predicted_value - a.predicted_value)[0];
@@ -79,6 +100,13 @@ function renderAnalysis(result) {
   meta.className = 'analysis-meta';
   meta.textContent = `模型 ${result.forecast?.model_version ?? '—'} · 截止 ${result.forecast?.data_cutoff_at ?? '—'}`;
   summary.append(meta);
+  if (attribution.note) {
+    // analytics 模式：显式标注 ML 区为独立数据来源（不受本页筛选影响，评审 P2）。
+    const sourceNote = document.createElement('p');
+    sourceNote.className = 'model-note analysis-source-note';
+    sourceNote.textContent = attribution.note;
+    summary.append(sourceNote);
+  }
 }
 
 function renderForecastSupportingModules(result) {
@@ -106,10 +134,11 @@ function renderForecastSupportingModules(result) {
   if (workbench && wasHidden && currentWorkspacePage === 'overview') workbench.hidden = true;
 }
 
-function renderForecastWorkbench(result) {
+function renderForecastWorkbench(result, options = {}) {
   const target = document.getElementById('analysis-forecast-meta');
   const chart = document.getElementById('analysis-forecast');
   if (!target || !chart) return;
+  const metaPrefix = options.metaPrefix ?? '';
   const items = result.ok ? (result.forecast?.items ?? []) : [];
   chart.parentElement?.querySelector('.forecast-insights')?.remove();
   if (!items.length) {
@@ -119,7 +148,7 @@ function renderForecastWorkbench(result) {
   try {
     chartsById['analysis-forecast'] = renderForecastHorizon(chart, items);
     if (!chartInstances.includes(chartsById['analysis-forecast'])) chartInstances.push(chartsById['analysis-forecast']);
-    target.textContent = `模型 ${result.forecast?.model_version ?? '—'} · 数据截止 ${result.forecast?.data_cutoff_at ?? '—'} · 共 ${items.length} 条预测`;
+    target.textContent = `${metaPrefix}模型 ${result.forecast?.model_version ?? '—'} · 数据截止 ${result.forecast?.data_cutoff_at ?? '—'} · 共 ${items.length} 条预测`;
     const insight = document.createElement('div');
     insight.className = 'forecast-insights';
     const recommendation = result.recommendations?.items?.[0];
@@ -131,7 +160,12 @@ function renderForecastWorkbench(result) {
   }
 }
 
-function renderOverviewMining(model, chartRegistry, instances) {
+// 分帧让出主线程：慢机/软渲染上单任务连渲多张图表会撞上浏览器"脚本运行超时"终止
+// （该终止不可被 try/catch 捕获）。逐批 yield 让每个 chunk 独立成任务——单批被终止
+// 最多损失该批，其后的渲染照常完成，避免"一图超时、整页停在半渲染"。
+const yieldToMain = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+async function renderOverviewMining(model, chartRegistry, instances) {
   const analytics = model.analytics ?? {};
   const definitions = [
     ['overview-health', () => renderHealthScore(document.getElementById('overview-health'), model.metrics, analytics)],
@@ -139,6 +173,7 @@ function renderOverviewMining(model, chartRegistry, instances) {
     ['overview-clusters', () => renderClusterSummary(document.getElementById('overview-clusters'), analytics.station_mining)],
     ['overview-energy-bands', () => renderEnergyBands(document.getElementById('overview-energy-bands'), analytics.energy)],
   ];
+  let processed = 0;
   for (const [id, factory] of definitions) {
     try {
       const chart = factory();
@@ -147,6 +182,8 @@ function renderOverviewMining(model, chartRegistry, instances) {
     } catch (error) {
       renderLocalError(document.getElementById(id), error?.message ?? '总览分析初始化失败');
     }
+    processed += 1;
+    if (processed % 2 === 0) await yieldToMain();
   }
 }
 
@@ -378,7 +415,12 @@ function showWorkspacePage(target) {
   const titleEl = document.querySelector('.workbench-title');
   const subtitleEl = document.querySelector('.workbench-subtitle');
   if (titleEl) titleEl.textContent = title;
-  if (subtitleEl) subtitleEl.textContent = subtitle;
+  if (subtitleEl) {
+    // 分析模式下智能预测页的 ML 区来自独立服务链路：页头同步说明来源（PR #24 评审 P2）。
+    subtitleEl.textContent = page === 'forecast' && dashboardMode === 'analytics'
+      ? `${subtitle}（本页 ML 区来自独立 ML 服务链路，不受当前窗口/站点筛选影响）`
+      : subtitle;
+  }
   requestAnimationFrame(() => {
     chartInstances.forEach((chart) => chart?.resize());
   });
@@ -443,7 +485,7 @@ function setupWorkspaceNavigation() {
   });
 }
 
-function renderAnalysisWorkbench(model, chartRegistry, instances) {
+async function renderAnalysisWorkbench(model, chartRegistry, instances) {
   const workbench = document.getElementById('analysis-workbench');
   const wasHidden = workbench?.hidden;
   // ECharts 需要可见容器才能计算初始尺寸；总览首屏隐藏分析页时先临时展开，
@@ -473,6 +515,7 @@ function renderAnalysisWorkbench(model, chartRegistry, instances) {
     ['analysis-service-control', () => renderServiceControl(document.getElementById('analysis-service-control'), analytics.orders, analytics.service)],
     ['analysis-service-data', () => renderServiceDataAvailability(document.getElementById('analysis-service-data'), analytics.service)],
   ];
+  let processed = 0;
   for (const [id, factory] of definitions) {
     try {
       chartRegistry[id] = factory();
@@ -480,6 +523,8 @@ function renderAnalysisWorkbench(model, chartRegistry, instances) {
     } catch (error) {
       renderLocalError(document.getElementById(id), error?.message ?? '分析图表初始化失败');
     }
+    processed += 1;
+    if (processed % 3 === 0) await yieldToMain(); // 16 张图分 6 批，单批被终止不拖垮整页
   }
   const users = analytics.users ?? {};
   const equipment = analytics.equipment ?? {};
@@ -557,8 +602,24 @@ function formatAnalysisMoney(cents) {
 
 async function boot() {
   const config = window.__EV_CONFIG__ ?? { tencentMapJsKey: '', analysisApiBaseUrl: '', dashboardApiBaseUrl: '', demo: false };
-  const provider = new LiveDataProvider(config.dashboardApiBaseUrl || config.analysisApiBaseUrl);
+  const analyticsMode = params.get('source') === 'analytics' || config.source === 'analytics';
+  dashboardMode = analyticsMode ? 'analytics' : 'default';
+  const provider = analyticsMode
+    ? new ApiDataProvider({ baseUrl: '.' })
+    : new LiveDataProvider(config.dashboardApiBaseUrl || config.analysisApiBaseUrl);
   const analysisProvider = new AnalysisProvider(config.analysisApiBaseUrl);
+  let currentQuery = {
+    start: params.get('start'),
+    end: params.get('end'),
+    stationId: params.get('stationId'),
+  };
+  let controls = null;
+  if (analyticsMode) {
+    document.title = '充电网络态势分析（离线批次）';
+    const titleEl = document.querySelector('.command-title');
+    if (titleEl) titleEl.textContent = '充电网络态势分析';
+    document.body.classList.add('analytics-mode');
+  }
 
   const shell = document.querySelector('.dashboard-shell');
   const mapContainer = document.getElementById('map-surface');
@@ -581,7 +642,31 @@ async function boot() {
   let lastValidModel = null; // 最后有效快照：error 保留 / offline / stale 展示底座
   let lastValidAt = null;
   let currentDeactivateFocus = null; // Esc 只注册一次，读取每轮渲染的最新退出出口
-  let revenueRangeDays = 7; // 营收趋势档位（A-02）：7 或 30；静态按钮只绑一次
+  // 营收趋势档位（A-02）：7 或 30；静态按钮只绑一次。分析批次为多周窗口 → 默认 30 日档
+  //（不再只展示末 7 个点）；7 日档仍可一键切换。
+  let revenueRangeDays = analyticsMode ? 30 : 7;
+  // 站点下拉全集目录：过滤后的响应只含单站，不得覆盖选项表；全集缺失（分享链接
+  // ?stationId=… 或筛选后刷新时首帧即为过滤态）时由目录模块独立加载完整站点表。
+  // 目录使用独立 provider 实例，与主视图请求互不取消。
+  const catalogProvider = new ApiDataProvider({ baseUrl: '.' });
+  const stationCatalog = createStationCatalog({
+    load: (query) => catalogProvider.load(query),
+    onCatalog: (stations) => {
+      if (controls) controls.setStations(stations);
+    },
+  });
+  const stationFiltered = () => currentQuery.stationId !== null
+    && currentQuery.stationId !== undefined && currentQuery.stationId !== '';
+  function ensureStationCatalog() {
+    // 目录与主视图解耦：成功/空/错误任一结果下，过滤态首帧都必须补齐下拉全集
+    //（分享链接 ?stationId=…、筛选后刷新、以及失效站号导致的空窗口）。
+    // controls 只在分析模式挂载：demo 模式不产生任何分析目录请求。
+    if (!controls) return;
+    if (stationFiltered() && !stationCatalog.stations) stationCatalog.ensure();
+  }
+  // 分析批次营收标签为整窗日期：按当前档位取同尾切片；长度不匹配时不再回落到批次生成日期合成横轴。
+  const sliceTail = (labels, length) =>
+    (Array.isArray(labels) && labels.length >= length ? labels.slice(labels.length - length) : null);
 
   /* ---- 页面级状态区 ---- */
 
@@ -685,7 +770,8 @@ async function boot() {
     // 地图：离线（含 offline 演示注入）强制拓扑，重试时 surface 内部先清理旧渲染器
     const onlineAvailable = typeof navigator !== 'undefined' ? navigator.onLine : true;
     const useOnline = onlineAvailable && demoState !== 'offline';
-    const forcedTopology = params.get('map') === 'topology' || demoState === 'offline';
+    const forcedTopology = params.get('map') === 'topology' || demoState === 'offline'
+      || analyticsMode; // 分析批次默认拓扑地图（离线链路不依赖外网地图）
     try {
       const mountResult = await mapSurface.mount(mapContainer, {
         key: config.tencentMapJsKey,
@@ -716,11 +802,13 @@ async function boot() {
     const revenueCentsSeries = revenueRangeDays === 30
       ? (model.revenue30dCents ?? [])
       : model.revenue7dCents;
+    const revenueLabels = sliceTail(model.revenueSeriesLabels, revenueCentsSeries.length);
     for (const [id, factory] of [
       ['chart-load', () => renderLoadChart(document.getElementById('chart-load'), model)],
       ['chart-states', () => renderStateDonut(document.getElementById('chart-states'), model.metrics.counts)],
       ['chart-revenue', () => renderRevenueTrend(
-        document.getElementById('chart-revenue'), revenueCentsSeries, model.updatedAt)],
+        document.getElementById('chart-revenue'), revenueCentsSeries, model.updatedAt,
+        revenueLabels)],
     ]) {
       try {
         const chart = factory();
@@ -730,8 +818,10 @@ async function boot() {
         renderLocalError(document.getElementById(id), error?.message ?? '图表初始化失败');
       }
     }
-    renderOverviewMining(model, chartsById, chartInstances);
-    renderAnalysisWorkbench(model, chartsById, chartInstances);
+    await yieldToMain(); // 三个重渲染阶段之间各让出一帧，避免合成一个超长任务
+    await renderOverviewMining(model, chartsById, chartInstances);
+    await yieldToMain();
+    await renderAnalysisWorkbench(model, chartsById, chartInstances);
     showChartTab(currentChartTab); // 保持当前页签并完成首个 resize
   }
 
@@ -739,6 +829,7 @@ async function boot() {
 
   async function loadDashboard() {
     announce(state.loading().title);
+    if (controls) controls.setStatus('loading', '加载中…');
     const hasSnapshot = lastValidModel !== null;
     if (hasSnapshot) {
       showPageState(state.loading(), { blocking: false, freshness: snapshotLabel() });
@@ -747,7 +838,8 @@ async function boot() {
       showPageState(state.loading(), { blocking: false });
     }
 
-    const result = await provider.load();
+    const result = await provider.load(currentQuery);
+    if (result.superseded) return; // 迟到响应：由更新的请求拥有 UI，不触碰任何界面状态
 
     // 演示注入 error：有数据底座但呈现阻断错误分支
     if (demoState === 'error' && result.ok) {
@@ -762,8 +854,11 @@ async function boot() {
     }
 
     if (!result.ok) {
-      const failed = state.reject(result.error?.message ?? 'demo.json 加载失败');
-      sourceBadge.textContent = '加载失败';
+      const failed = state.reject(
+        result.error?.message ?? (analyticsMode ? '分析接口加载失败' : 'demo.json 加载失败'));
+      sourceBadge.textContent = analyticsMode ? '批次加载失败' : '加载失败';
+      if (controls) controls.setStatus('error', result.error?.message ?? '加载失败');
+      ensureStationCatalog();
       announce(failed.title);
       if (hasSnapshot) {
         // 快照仍在：非阻断错误横幅，主体继续展示最后有效数据
@@ -776,12 +871,20 @@ async function boot() {
     }
 
     const model = result.data;
-    const isEmpty = !model || !Array.isArray(model.stations) || model.stations.length === 0;
+    // 合法响应先同步覆盖窗口：空结果分支同样依赖它——分享链接首开命中空结果时若跳过此步，
+    // “重置”无法恢复全窗口日期（PR #24 评审 P2）。
+    if (controls && model?.coverage) controls.setCoverage(model.coverage);
+    const isEmpty = result.empty === true || !model
+      || !Array.isArray(model.stations) || model.stations.length === 0;
     if (isEmpty || demoState === 'empty') {
       lastValidModel = null;
       lastValidAt = null;
       hideSkeleton();
-      sourceBadge.textContent = demoState === 'empty' ? '演示状态' : '暂无数据';
+      sourceBadge.textContent = demoState === 'empty'
+        ? '演示状态'
+        : analyticsMode ? '窗口无数据' : '暂无数据';
+      if (controls) controls.setStatus('empty', '该筛选条件下没有业务记录');
+      ensureStationCatalog();
       announce(state.empty().title);
       showPageState(state.empty(), { blocking: true });
       return;
@@ -793,13 +896,32 @@ async function boot() {
     const isOffline =
       demoState === 'offline' || (typeof navigator !== 'undefined' && !navigator.onLine);
     const resolved = state.resolve({ stations: model.stations, fetchedAt: model.updatedAt });
-    const isStale = demoState === 'stale' || resolved.isStale;
+    const isStale = demoState === 'stale' || resolved.isStale || model.stale === true;
     sourceBadge.textContent =
       demoState !== null
         ? '演示状态'
-        : isOffline
-          ? 'Schema 快照·离线拓扑'
+        : analyticsMode
+          ? `分析批次 ${result.batchId ?? ''}`
+          : isOffline
+            ? 'Schema 快照·离线拓扑'
             : 'Schema v0.4 快照';
+    if (analyticsMode && result.meta) {
+      sourceBadge.title = `${result.meta.source_type} · UTC · 生成于 `
+        + `${result.meta.batch_generated_at ?? result.meta.generated_at} · 非实时`;
+    }
+    if (controls) {
+      // 覆盖窗口已在上方（空结果分支之前）写入，这里只处理站点全集与状态；站点下拉使用完整站点全集：过滤后的响应只含单站，不得覆盖选项表；
+      // 全集缺失时独立加载完整目录（分享链接首开 / 筛选后刷新的下拉也因此完整）。
+      const hasStationFilter = currentQuery.stationId !== null && currentQuery.stationId !== undefined
+        && currentQuery.stationId !== '';
+      stationCatalog.absorb(model.stations, { filtered: hasStationFilter });
+      controls.setStations(stationCatalog.stations ?? model.stations);
+      ensureStationCatalog();
+      controls.setStatus(
+        isStale ? 'stale' : 'ready',
+        `批次 ${result.batchId ?? '—'} · 数据截至 ${String(model.updatedAt ?? '').slice(0, 16)}Z`
+      );
+    }
 
     await renderContent(model);
 
@@ -815,7 +937,9 @@ async function boot() {
       announce('数据可能已过期，请刷新');
     } else {
       hidePageState();
-      freshnessEl.textContent = `更新于 ${model.updatedAt}（UTC）· ${result.source} 数据源`;
+      freshnessEl.textContent = analyticsMode
+        ? `更新于 ${model.updatedAt}（UTC）· 分析批次 ${result.batchId ?? ''}（模拟数据）`
+        : `更新于 ${model.updatedAt}（UTC）· ${result.source} 数据源`;
       announce(`数据已就绪：${model.metrics.totalPiles} 台桩`);
     }
   }
@@ -856,7 +980,8 @@ async function boot() {
           : lastValidModel.revenue7dCents;
         try {
           const chart = renderRevenueTrend(
-            document.getElementById('chart-revenue'), centsSeries, lastValidModel.updatedAt);
+            document.getElementById('chart-revenue'), centsSeries, lastValidModel.updatedAt,
+            sliceTail(lastValidModel.revenueSeriesLabels, centsSeries.length));
           chartsById['chart-revenue'] = chart;
           if (!chartInstances.includes(chart)) chartInstances.push(chart);
         } catch (error) {
@@ -865,11 +990,26 @@ async function boot() {
         }
       });
     }
+    if (analyticsMode) {
+      // 分析批次默认 30 日档：同步按钮激活态（7 日档仍可一键切换）
+      for (const other of revenueRangeGroup.querySelectorAll('.range-btn')) {
+        const isActive = Number(other.dataset.rangeDays) === revenueRangeDays;
+        other.classList.toggle('is-active', isActive);
+        other.setAttribute('aria-pressed', String(isActive));
+      }
+    }
   }
 
-  // 自适应：容器与窗口变化时重排所有活跃图表
+  // 自适应：容器与窗口变化时重排所有活跃图表。
+  // 守卫：尺寸未变化不触发 resize——否则 chart.resize() 引起的布局变化会再次触发
+  // observer，形成 resize→layout→resize 自激回路，把主线程烧满（VM 软渲染实测 CPU 123%）。
   if (typeof ResizeObserver !== 'undefined') {
-    const observer = new ResizeObserver(() => {
+    let lastObservedSize = null;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      const size = rect ? `${Math.round(rect.width)}x${Math.round(rect.height)}` : null;
+      if (size !== null && size === lastObservedSize) return;
+      lastObservedSize = size;
       for (const chart of chartInstances) chart.resize();
     });
     observer.observe(document.getElementById('operations-strip'));
@@ -878,10 +1018,33 @@ async function boot() {
     for (const chart of chartInstances) chart.resize();
   });
 
+  // 分析模式：挂载 Vue 筛选控件（延迟加载模块，demo 模式零开销）
+  if (analyticsMode) {
+    const { mountAnalyticsControls } = await import('./vue-controls.js');
+    controls = mountAnalyticsControls(document.getElementById('analytics-controls'), {
+      initial: {
+        start: params.get('start'),
+        end: params.get('end'),
+        stationId: params.get('stationId'),
+      },
+      onApply: (query) => {
+        currentQuery = query;
+        syncUrlQuery(query);
+        loadDashboard().catch(() => {});
+      },
+    });
+    if (controls) {
+      const container = document.getElementById('analytics-controls');
+      if (container) container.hidden = false;
+    }
+  }
+
   await loadDashboard();
   // 分析服务独立于基础大屏加载；不可用只影响分析区，不阻断站点和桩状态展示。
-  analysisProvider.load().then(renderAnalysis).catch((error) => {
-    renderAnalysis({ ok: false, code: 'ANALYSIS_UNAVAILABLE', message: error?.message });
+  // analytics 模式下该服务属于另一条数据链（ML 链路）：结果必须带“独立数据源”标注（评审 P2）。
+  const analysisOptions = { independent: analyticsMode };
+  analysisProvider.load().then((result) => renderAnalysis(result, analysisOptions)).catch((error) => {
+    renderAnalysis({ ok: false, code: 'ANALYSIS_UNAVAILABLE', message: error?.message }, analysisOptions);
   });
 }
 

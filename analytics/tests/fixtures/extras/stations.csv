@@ -1,0 +1,2 @@
+source_record_id,batch_id,source_file,source_line,id,name,address,latitude,longitude,status,created_at,updated_at
+stations-000001,fx-extras,stations.csv,2,1,边界测试站,边界市边界路2号,22.510000,113.910000,active,2026-07-01T00:00:00Z,2026-07-01T00:00:00Z

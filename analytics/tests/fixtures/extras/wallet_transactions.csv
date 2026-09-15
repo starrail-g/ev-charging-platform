@@ -1,0 +1,2 @@
+source_record_id,batch_id,source_file,source_line,id,user_id,order_id,transaction_type,amount_cents,balance_after_cents,created_at
+wallet-000001,fx-extras,wallet_transactions.csv,2,1,1,201,charge,-1300,1000,2026-09-02T01:35:00Z
