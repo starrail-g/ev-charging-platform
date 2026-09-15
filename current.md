@@ -163,8 +163,15 @@
 
 ## Dependencies and TODO
 
+### 2026-09-15 第二阶段收口快照（三块式）
+
+- ① 已提交（本地 `feature/stage2-pipeline`，**未 push、未开 PR**）：c1 `3445be4`（`analytics/` 数据链）、c2 `039bf05`（`scripts/stage2/` 流水线与发布校验）、c3 `f0b9aa1`（大屏分析模式）、c4 `541f03e`（契约文档）；合并 `bc6d61e`（合入 `origin/main` `35c50ab`；冲突仅 `dashboard/js/app.js`×3 + `dashboard/css/app.css`×1，逐块解决）。
+- ② 仅本地工作树（未提交，待审查后按批落库）：f 批（G2→R2→复审三轮修复）＝ml 三时域跨日修复 + 区间∩桶分摊与 quarantine 互斥落盘 + 快照直接消费 DWS + `start_stage2.sh` 版本指纹与裸环境回退链（JAVA_HOME / spark-submit / pyspark / SPARK_HOME）+ 端口参数化 + Dashboard `/api/*` 同源代理与站点目录独立加载（`station-catalog.js`）+ 文档计数更正；`docs/meetings/interface-gate-2026-09-07.md` 为遗留修改。
+- ③ 待办：用户审查 → f 批提交推送 → 完整回归 + 新批次 `s2-rel-*` 证据 → 单 PR → A 复核 → 合入 `main`；A：PyCharm/录屏证据与贡献度材料；可选 G3（时段曲线）。
+- 复跑证据（2026-09-15，VM Ubuntu 22.04 / Spark 3.4.1）：`ml/tests` **18 passed**（含 3 条 Spark 用例）；全链 25k 回执 DWD 19,543 / 隔离 5,462（守恒且互斥=0）、DWS `station_hourly` 30,142 + `station_day` 1,260、训练 24,430/5,712（MAE 16.30 / RMSE 30.78）；快照与 DWS 逐站严格相等（14/14，avgUtil 0.113）；R2 复审补强：node **55/55**（含分享链接 6 用例）、`/api/*` 代理 VM 实读 200、**F6 整栈验收全绿**（真实服务 + 健康检查，含 ev-server wire 探针）、share-link E2E PASS；证据包在仓库外 `build/stage2/evidence/g2-2026-09-15/{r2,r3,f5}/`。
+
 - `A-S1-04`: coordinated final regression, GUI evidence and clean-environment delivery (2026-09-07 gate and 09-10 integration deadline).
-- C: PR #11 三轮评审修复和 PR #13 的 `admin.pile.list` 修复已合入当前 `main`；Socket 管理端、销售业绩、地图渲染和二阶段分析入口均已完成本地 qmake6/QtTest 验证，发布材料已同步。
+- C: PR #11 三轮评审修复和 PR #13 的 `admin.pile.list` 修复已合入当前 `main`；Socket 管理端、销售业绩与地图渲染均已完成本地 qmake6/QtTest 验证，发布材料已同步。（2026-09-15 更正：删去本行原有一处无代码支撑的管理端验证声称；分析入口由 Dashboard 分析工作台承担，管理端不含该入口。）
 - B (owned): PR #19 已将地图服务、Schema v0.4、缓存审计、站点导入、模拟器网关和生产 Tencent HTTP adapter 合入当前 `main`；异步 worker、缓存 miss 合并、清理任务和生产 mTLS 仍是开放项。
 - C: `feature/admin-revenue`（PR #16，销售业绩近 7/30 日营收）已完成评审修复；后续仅需在目标发布环境复核双平台 GUI 证据。
 - B (owned): 当前分支已落地地图契约的 v0.4/Mock/cache/audit/import/generator/gateway 和生产 Tencent HTTP adapter；桩模拟器演示集群已接入公共 TCP dispatcher（注册/快照/命令 ACK/tick），并已兼容 PR #17 的用户端服务端地图适配；后续优先级是 stale 冲突自动重算、私有 mTLS listener、异步 worker、并发 miss 合并、清理任务和最终 A/C 联调。
@@ -177,13 +184,13 @@
 - S2 intelligent-analysis chain: data preparation → model-service contract → predictions/recommendation/warning → Flask API → Dashboard and Qt admin summary → integrated validation. The data/model/API/UI chain is runnable; remaining work is production deployment hardening and optional Vue shell only if course acceptance explicitly requires it. It does not block the S1 charging loop.
 - Environment note: system `node`/npm 与 `pytest` originally absent; `scripts/setup_stage2_env.sh` uses project-external `/tmp/ev-node` and `/tmp/ev-s2-site` mirrors, with Dashboard Node tests and Python tests executed there.
 - Environment update: Node.js 20.18.1/npm 10.8.2 installed from npmmirror under `/tmp/ev-node`; Dashboard Node tests now 35/35 passed. System `node`/npm remains unchanged; use `PATH=/tmp/ev-node/bin:$PATH` or install with the commands in `ml/README.md`.
-- 2026-09-14 final build verification: `qmake6 --version` = Qt 6.2.4; clean `/tmp/ev-s2-qmake` builds of `server/server.pro`, `apps/user-client/user-client.pro` and `apps/admin-client/admin-client.pro` succeeded. Admin QtTest suites passed 6/75/7/12/19 (offscreen). Final presentation guide now includes Schema v0.4 data generation, Spark training, Flask services and Dashboard startup commands; see `docs/release/project-demo-guide-2026-09-08.md`.
+- 2026-09-14 final build verification: `qmake6 --version` = Qt 6.2.4; clean `/tmp/ev-s2-qmake` builds of `server/server.pro`, `apps/user-client/user-client.pro` and `apps/admin-client/admin-client.pro` succeeded. Admin QtTest suites passed 6/72/7/12/19 (offscreen；2026-09-15 更正：原文该计数与实际不符，已按最近完整复跑更正). Final presentation guide now includes Schema v0.4 data generation, Spark training, Flask services and Dashboard startup commands; see `docs/release/project-demo-guide-2026-09-08.md`.
 - 2026-09-14：新增 `ml/service/build_dashboard_snapshot.py` 和 `/api/v1/dashboard/snapshot`，Dashboard 主数据从验证通过的 Schema v0.4 SQLite 快照读取（14 站点、102 桩、30 日营收和小时负荷），`demo.json` 降为离线故障演练入口；`scripts/setup_stage2_env.sh` 提供清华/npmmirror 环境初始化。
 - 2026-09-14：以生成的 Schema v0.4 分析库直接启动 `/tmp/ev-s2-qmake/server/ev-server`（端口 45455），`EV_DATABASE_PATH` 同步传给 `server/tests/smoke.py` 后真实 Socket 全流程冒烟通过；最终呈现可让 Qt 用户端和管理端与分析 Dashboard 共享同一数据口径。
-- 2026-09-14：扩展 Dashboard 二阶段分析工作台和快照 `analytics` 结构，增加机器学习预测、用户、设备、订单、能源、收益、站点及评价/服务代理指标八个交互视角；新增快照契约测试，Python 11/11、Node 36/36 通过。
-- 2026-09-15：按二阶段独立工作台方向重构 Dashboard 信息架构：新增侧边导航与 hash 切页（网络总览、智能预测、用户与设备、订单与能源、收益与站点、评价与服务），分析页按相关域共享一页并增加 KPI 摘要条；中小屏自动转为横向导航，保留 ECharts 与 Schema v0.4 数据口径。Node 全量测试 36/36 通过。
+- 2026-09-14：扩展 Dashboard 二阶段分析工作台和快照 `analytics` 结构，增加机器学习预测、用户、设备、订单、能源、收益、站点及评价/服务代理指标八个交互视角；新增快照契约测试，Python 10/10（server_config 4 + ui_tokens 6）、Node 48/48 通过（2026-09-15 收口复跑口径；原文计数与实际不符，已更正）。
+- 2026-09-15：按二阶段独立工作台方向重构 Dashboard 信息架构：新增侧边导航与 hash 切页（网络总览、智能预测、用户与设备、订单与能源、收益与站点、评价与服务），分析页按相关域共享一页并增加 KPI 摘要条；中小屏自动转为横向导航，保留 ECharts 与 Schema v0.4 数据口径。Node 全量测试 48/48 通过（2026-09-15 收口复跑口径）。
 - 2026-09-15：优化二阶段数据真实性与挖掘深度：生成器改为 78% 完成、15% 取消、7% 异常的确定性订单漏斗，业务库/账本约束仍通过；快照新增 RFM 用户分层、设备充电次数 z-score 异常检测、站点高负荷/均衡/低负荷聚类标签，以及订单完成率曲线。Dashboard 增加完成率趋势、方法说明与 KPI，Python 生成回归通过。
-- 2026-09-15：修复一键启动复用旧数据导致的“页面未更新”问题：`scripts/start_stage2.sh` 新增 `.stage2-data-version` 指纹和 `EV_S2_REFRESH=1` 强制刷新开关；检测到版本变化时自动重建 Schema v0.4 数据库、ODS、Spark 分层、模型和 ADS。
+- 2026-09-15：修复一键启动复用旧数据导致的“页面未更新”问题：`scripts/start_stage2.sh` 新增 `.stage2-data-version` 指纹和 `EV_S2_REFRESH=1` 强制刷新开关；检测到版本变化时自动重建 Schema v0.4 数据库、ODS、Spark 分层、模型和 ADS。（2026-09-15 R2 复审补强：版本指纹并入 ml 四脚本 sha256——代码变即触发重建；新增 Java/Spark/pyspark 裸环境回退链（ssh/nohup 等非登录环境可直接启动）；服务端口参数化 `EV_*_PORT`；整栈验收（真实服务 + 健康检查）全绿，证据 `build/stage2/evidence/g2-2026-09-15/r3/f6-realstack.log`。）
 - 2026-09-15：Dashboard 数据挖掘扩展：总览新增健康评分、z-score 异常、站点聚类、峰谷时段 4 个摘要模块；预测、用户设备、订单能源、收益站点、评价服务 5 个工作台页均扩展为至少 4 个子模块。快照新增订单漏斗/履约时长分布、OLS 营收趋势、站点聚类中心与 Pareto、能耗相关系数、模型验证元数据等可追溯字段；评价事实缺失继续明确显示代理口径。
 - 2026-09-15：修正 Dashboard 运行时密钥边界：浏览器只读取独立的 `TENCENT_MAP_JS_KEY`，服务端 WebService `TENCENT_MAP_KEY` 不再注入 `/runtime-config.js`；同时修复 RFM 合法 `recency_days=0` 被错误转换为 999 天的问题，递增 S2 数据版本指纹并补充确定性快照回归，确保旧产物自动重建。
 
@@ -196,7 +203,7 @@
 
 ## Recent history
 
-- 2026-09-14：管理端概览新增智能分析状态回归（未配置、有效响应、HTTP 失败三态），qmake6/Qt 6.2.4 下 `tst_ui` 达到 75/75；统一 Dashboard 正常运行文案为 Schema v0.4/业务快照口径，并将最终呈现指南改为真实 Socket + Flask 链路。
+- 2026-09-14：统一 Dashboard 正常运行文案为 Schema v0.4/业务快照口径，并将最终呈现指南改为真实 Socket + Flask 链路。（2026-09-15 更正：删去本行原有一处无代码/用例支撑的管理端声称；管理端 QtTest 最近完整复跑为 6/72/7/12/19。）
 - 2026-09-14：新增 `scripts/start_stage2.sh` 一键启动脚本，按需准备国内镜像依赖、生成/复用分析产物、构建 Qt 并启动 Socket、Flask、Dashboard 和桌面客户端；三个腾讯 Key 仅保存在被忽略的本地 `config/local.env`，脚本和日志不输出密钥。
 
 - 2026-09-14：完成 S2 首个可复现实现闭环：`ml/data/generate_analysis_dataset.py` 按 Schema v0.4 生成确定性业务库和 ODS，`ml/jobs/` 完成质量报告与 Spark 分层，`ml/models/` 完成 Spark RandomForest 训练、MLlib 推理及预测/推荐/预警产物，`ml/service/app.py` 提供只读 Flask API；`ml/tests` 5/5 通过。修复产物构建对 ADS 精简字段缺少 `device_count` 的兼容问题，并处理 PySpark 3.3.4 与 pandas 2.x 的显式 Row 转换；真实命令和指标写入 `ml/README.md`，Dashboard 已接入分析 API 状态区和结果摘要。
