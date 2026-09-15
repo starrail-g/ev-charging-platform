@@ -16,7 +16,7 @@ export function mountAnalyticsControls(container, options = {}) {
     end: initial.end && DATE_RE.test(initial.end) ? initial.end : '',
     stationId: initial.stationId ?? '',
     stations: [],
-    coverage: { start: '', endExclusive: '' },
+    coverage: { start: '', endExclusive: '', defaultStart: '', defaultEndExclusive: '' },
     status: 'idle',
     message: '等待批次数据…',
   });
@@ -39,8 +39,9 @@ export function mountAnalyticsControls(container, options = {}) {
         onApply(currentQuery());
       };
       const reset = () => {
-        state.start = state.coverage.start;
-        state.end = state.coverage.endExclusive;
+        // 回到默认筛选：默认窗口（服务端口径，覆盖超 90 天时为最新 ≤90 天一段）+ 全部站点
+        state.start = state.coverage.defaultStart || state.coverage.start;
+        state.end = state.coverage.defaultEndExclusive || state.coverage.endExclusive;
         state.stationId = '';
         apply();
       };
@@ -73,11 +74,15 @@ export function mountAnalyticsControls(container, options = {}) {
   app.mount(container);
 
   return {
-    setCoverage({ start, endExclusive } = {}) {
+    setCoverage({ start, endExclusive, defaultStart, defaultEndExclusive } = {}) {
       if (start) state.coverage.start = start;
       if (endExclusive) state.coverage.endExclusive = endExclusive;
-      if (!state.start && start) state.start = start;
-      if (!state.end && endExclusive) state.end = endExclusive;
+      if (defaultStart) state.coverage.defaultStart = defaultStart;
+      else if (!state.coverage.defaultStart) state.coverage.defaultStart = state.coverage.start;
+      if (defaultEndExclusive) state.coverage.defaultEndExclusive = defaultEndExclusive;
+      else if (!state.coverage.defaultEndExclusive) state.coverage.defaultEndExclusive = state.coverage.endExclusive;
+      if (!state.start && state.coverage.defaultStart) state.start = state.coverage.defaultStart;
+      if (!state.end && state.coverage.defaultEndExclusive) state.end = state.coverage.defaultEndExclusive;
     },
     setStations(stations) {
       state.stations = Array.isArray(stations) ? stations : [];

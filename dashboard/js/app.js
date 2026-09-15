@@ -22,9 +22,13 @@ import {
   renderServiceControl, renderServiceDataAvailability,
 } from './charts.js';
 import { renderPageState, statePresentation } from './state-view.js';
+import { analysisSourceAttribution } from './analysis-source.js';
 
 const state = createDashboardState({ liveMode: false });
 const params = new URLSearchParams(location.search);
+// 大屏模式：default = ML 链路（默认数据源即分析服务），analytics = 已发布批次链路。
+// analytics 模式下 ML 分析区属于另一条数据链，必须显式标注来源（PR #24 评审 P2）。
+let dashboardMode = 'default';
 
 function announce(message) {
   const region = document.getElementById('globalState');
@@ -48,7 +52,8 @@ function fmtUtilization(ratio) {
   return `${Math.round((ratio ?? 0) * 100)}%`;
 }
 
-function renderAnalysis(result) {
+function renderAnalysis(result, options = {}) {
+  const attribution = analysisSourceAttribution({ ok: result.ok === true, independent: options.independent === true });
   const status = document.getElementById('analysisStatus');
   const summary = document.getElementById('analysisSummary');
   if (!status || !summary) return;
@@ -58,19 +63,19 @@ function renderAnalysis(result) {
     const algorithm = String(result.health?.metadata?.algorithm ?? '');
     forecastMethod.textContent = algorithm.includes('RandomForest') ? '随机森林回归' : result.ok ? '站点时段基线' : '模型回归';
   }
-  renderForecastWorkbench(result);
+  renderForecastWorkbench(result, { metaPrefix: attribution.metaPrefix });
   renderForecastSupportingModules(result);
   if (!result.ok) {
     status.textContent = result.code === 'ANALYSIS_NOT_CONFIGURED' ? '未配置' : '不可用';
-    status.dataset.state = 'degraded';
+    status.dataset.state = attribution.state;
     const note = document.createElement('p');
     note.className = 'model-note';
     note.textContent = `${result.message}；当前页面保留基础运营指标。`;
     summary.append(note);
     return;
   }
-  status.textContent = '已更新';
-  status.dataset.state = 'ready';
+  status.textContent = attribution.chip;
+  status.dataset.state = attribution.state;
   const forecastItems = result.forecast?.items ?? [];
   const oneHour = forecastItems.filter((item) => item.horizon_hours === 1);
   const topForecast = [...oneHour].sort((a, b) => b.predicted_value - a.predicted_value)[0];
@@ -95,6 +100,13 @@ function renderAnalysis(result) {
   meta.className = 'analysis-meta';
   meta.textContent = `模型 ${result.forecast?.model_version ?? '—'} · 截止 ${result.forecast?.data_cutoff_at ?? '—'}`;
   summary.append(meta);
+  if (attribution.note) {
+    // analytics 模式：显式标注 ML 区为独立数据来源（不受本页筛选影响，评审 P2）。
+    const sourceNote = document.createElement('p');
+    sourceNote.className = 'model-note analysis-source-note';
+    sourceNote.textContent = attribution.note;
+    summary.append(sourceNote);
+  }
 }
 
 function renderForecastSupportingModules(result) {
@@ -122,10 +134,11 @@ function renderForecastSupportingModules(result) {
   if (workbench && wasHidden && currentWorkspacePage === 'overview') workbench.hidden = true;
 }
 
-function renderForecastWorkbench(result) {
+function renderForecastWorkbench(result, options = {}) {
   const target = document.getElementById('analysis-forecast-meta');
   const chart = document.getElementById('analysis-forecast');
   if (!target || !chart) return;
+  const metaPrefix = options.metaPrefix ?? '';
   const items = result.ok ? (result.forecast?.items ?? []) : [];
   chart.parentElement?.querySelector('.forecast-insights')?.remove();
   if (!items.length) {
@@ -135,7 +148,7 @@ function renderForecastWorkbench(result) {
   try {
     chartsById['analysis-forecast'] = renderForecastHorizon(chart, items);
     if (!chartInstances.includes(chartsById['analysis-forecast'])) chartInstances.push(chartsById['analysis-forecast']);
-    target.textContent = `模型 ${result.forecast?.model_version ?? '—'} · 数据截止 ${result.forecast?.data_cutoff_at ?? '—'} · 共 ${items.length} 条预测`;
+    target.textContent = `${metaPrefix}模型 ${result.forecast?.model_version ?? '—'} · 数据截止 ${result.forecast?.data_cutoff_at ?? '—'} · 共 ${items.length} 条预测`;
     const insight = document.createElement('div');
     insight.className = 'forecast-insights';
     const recommendation = result.recommendations?.items?.[0];
@@ -402,7 +415,12 @@ function showWorkspacePage(target) {
   const titleEl = document.querySelector('.workbench-title');
   const subtitleEl = document.querySelector('.workbench-subtitle');
   if (titleEl) titleEl.textContent = title;
-  if (subtitleEl) subtitleEl.textContent = subtitle;
+  if (subtitleEl) {
+    // 分析模式下智能预测页的 ML 区来自独立服务链路：页头同步说明来源（PR #24 评审 P2）。
+    subtitleEl.textContent = page === 'forecast' && dashboardMode === 'analytics'
+      ? `${subtitle}（本页 ML 区来自独立 ML 服务链路，不受当前窗口/站点筛选影响）`
+      : subtitle;
+  }
   requestAnimationFrame(() => {
     chartInstances.forEach((chart) => chart?.resize());
   });
@@ -585,6 +603,7 @@ function formatAnalysisMoney(cents) {
 async function boot() {
   const config = window.__EV_CONFIG__ ?? { tencentMapJsKey: '', analysisApiBaseUrl: '', dashboardApiBaseUrl: '', demo: false };
   const analyticsMode = params.get('source') === 'analytics' || config.source === 'analytics';
+  dashboardMode = analyticsMode ? 'analytics' : 'default';
   const provider = analyticsMode
     ? new ApiDataProvider({ baseUrl: '.' })
     : new LiveDataProvider(config.dashboardApiBaseUrl || config.analysisApiBaseUrl);
@@ -852,6 +871,9 @@ async function boot() {
     }
 
     const model = result.data;
+    // 合法响应先同步覆盖窗口：空结果分支同样依赖它——分享链接首开命中空结果时若跳过此步，
+    // “重置”无法恢复全窗口日期（PR #24 评审 P2）。
+    if (controls && model?.coverage) controls.setCoverage(model.coverage);
     const isEmpty = result.empty === true || !model
       || !Array.isArray(model.stations) || model.stations.length === 0;
     if (isEmpty || demoState === 'empty') {
@@ -888,8 +910,7 @@ async function boot() {
         + `${result.meta.batch_generated_at ?? result.meta.generated_at} · 非实时`;
     }
     if (controls) {
-      controls.setCoverage(model.coverage);
-      // 站点下拉使用完整站点全集：过滤后的响应只含单站，不得覆盖选项表；
+      // 覆盖窗口已在上方（空结果分支之前）写入，这里只处理站点全集与状态；站点下拉使用完整站点全集：过滤后的响应只含单站，不得覆盖选项表；
       // 全集缺失时独立加载完整目录（分享链接首开 / 筛选后刷新的下拉也因此完整）。
       const hasStationFilter = currentQuery.stationId !== null && currentQuery.stationId !== undefined
         && currentQuery.stationId !== '';
@@ -1020,8 +1041,10 @@ async function boot() {
 
   await loadDashboard();
   // 分析服务独立于基础大屏加载；不可用只影响分析区，不阻断站点和桩状态展示。
-  analysisProvider.load().then(renderAnalysis).catch((error) => {
-    renderAnalysis({ ok: false, code: 'ANALYSIS_UNAVAILABLE', message: error?.message });
+  // analytics 模式下该服务属于另一条数据链（ML 链路）：结果必须带“独立数据源”标注（评审 P2）。
+  const analysisOptions = { independent: analyticsMode };
+  analysisProvider.load().then((result) => renderAnalysis(result, analysisOptions)).catch((error) => {
+    renderAnalysis({ ok: false, code: 'ANALYSIS_UNAVAILABLE', message: error?.message }, analysisOptions);
   });
 }
 

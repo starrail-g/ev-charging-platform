@@ -58,7 +58,10 @@ test('adapts analytics payload into the shared view model', () => {
   assert.equal(model.batchId, 's2-smoke-20260915');
   assert.equal(model.sourceType, 'synthetic_warehouse');
   assert.equal(model.updatedAt, '2026-09-15T00:50:00Z');
-  assert.deepEqual(model.coverage, { start: '2026-09-01', endExclusive: '2026-09-02' });
+  assert.equal(model.coverage.start, '2026-09-01');
+  assert.equal(model.coverage.endExclusive, '2026-09-02');
+  assert.equal(model.coverage.defaultStart, '2026-09-01');       // 旧批次回退覆盖窗口
+  assert.equal(model.coverage.defaultEndExclusive, '2026-09-02');
   assert.equal(model.metrics.totalPiles, 2);
   assert.equal(model.metrics.attentionCount, 1);
   assert.equal(model.metrics.availabilityPercent, 50);
@@ -70,6 +73,34 @@ test('adapts analytics payload into the shared view model', () => {
   assert.equal(model.loadSeries.points[0].label, '9/1 00:00');
   assert.equal(model.loadSeries.points[1].loadKw, 5.0);
   assert.equal(model.empty, false);
+});
+
+test('published coverage window (available_*) wins over the generation window', () => {
+  // 评审 P2：发布覆盖窗口 = 生成窗口 ∪ 末端结算追加日；前端筛选以可查询窗口为准，
+  // 旧批次缺 available_* 时回退生成窗口（上一用例覆盖回退分支）。
+  const withWindow = payload();
+  withWindow.meta.available_start = '2026-09-01T00:00:00Z';
+  withWindow.meta.available_end_exclusive = '2026-09-04T00:00:00Z';
+  const model = adaptAnalyticsPayload(withWindow);
+  assert.deepEqual(model.coverage, {
+    start: '2026-09-01', endExclusive: '2026-09-04',
+    defaultStart: '2026-09-01', defaultEndExclusive: '2026-09-04',
+  });
+});
+
+test('default window (default_*) drives init/reset when coverage exceeds the limit', () => {
+  // 覆盖 91 天时服务端把默认窗口收敛到最新 ≤90 天：前端“重置”必须回到 default_*，
+  // 而不是会触发 window_too_large 的整段覆盖窗口。
+  const payloadWithDefaults = payload();
+  payloadWithDefaults.meta.available_start = '2026-06-16T00:00:00Z';
+  payloadWithDefaults.meta.available_end_exclusive = '2026-09-15T00:00:00Z';
+  payloadWithDefaults.meta.default_start = '2026-06-17';
+  payloadWithDefaults.meta.default_end_exclusive = '2026-09-15';
+  const model = adaptAnalyticsPayload(payloadWithDefaults);
+  assert.equal(model.coverage.start, '2026-06-16');
+  assert.equal(model.coverage.endExclusive, '2026-09-15');
+  assert.equal(model.coverage.defaultStart, '2026-06-17');
+  assert.equal(model.coverage.defaultEndExclusive, '2026-09-15');
 });
 
 test('empty status maps to an empty model without throwing', () => {

@@ -183,9 +183,15 @@ export function adaptAnalyticsPayload(payload) {
     batchId: meta.batch_id,
     empty: payload.status === 'empty',
     stale: meta.stale === true,
+    // 覆盖窗口（筛选控件 min/max）= available_*；默认窗口（初始值/“重置”）= default_*
+    // ——服务端口径：覆盖超 90 天时默认收敛到最新一段；旧批次缺省逐级回退（PR #24 评审 P2）。
     coverage: {
-      start: String(meta.data_start ?? '').slice(0, 10),
-      endExclusive: String(meta.data_end_exclusive ?? '').slice(0, 10),
+      start: String(meta.available_start ?? meta.data_start ?? '').slice(0, 10),
+      endExclusive: String(meta.available_end_exclusive ?? meta.data_end_exclusive ?? '').slice(0, 10),
+      defaultStart: String(meta.default_start ?? meta.available_start ?? meta.data_start ?? '').slice(0, 10),
+      defaultEndExclusive: String(
+        meta.default_end_exclusive ?? meta.available_end_exclusive ?? meta.data_end_exclusive ?? ''
+      ).slice(0, 10),
     },
     updatedAt: meta.batch_generated_at ?? meta.generated_at,
     overview,

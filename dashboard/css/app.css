@@ -880,6 +880,17 @@ body {
   color: var(--state-fault);
 }
 
+.model-chip[data-state="independent"] {
+  color: var(--state-reserved);
+}
+
+/* 分析模式：ML 区来源附注（独立数据链路，PR #24 评审 P2） */
+.analysis-source-note {
+  margin-top: 0.35rem;
+  padding-left: 0.55rem;
+  border-left: 2px solid color-mix(in srgb, var(--state-reserved) 70%, transparent);
+}
+
 /* 1366 页签（紧凑态显示，全景态隐藏） */
 .ops-tabs {
   display: none;
