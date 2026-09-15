@@ -195,7 +195,7 @@ export function adaptAnalyticsPayload(payload) {
     metrics: deriveMetrics(data.stations, piles, overview),
     revenueDaily: revenueSeries,
     revenue7dCents: revenueSeries.slice(-7).map((row) => row.cents),
-    revenue30dCents: revenueSeries.map((row) => row.cents),
+    revenue30dCents: revenueSeries.slice(-30).map((row) => row.cents),
     revenueSeriesLabels: revenueSeries.map((row) => row.label),
     loadSeries: { points: loadSeriesPoints },
     quality: data.quality ?? null,

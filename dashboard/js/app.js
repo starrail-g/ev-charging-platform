@@ -4,6 +4,7 @@
 import { DemoDataProvider, LiveDataProvider } from './data-provider.js';
 import { ApiDataProvider } from './api-data-provider.js';
 import { AnalysisProvider } from './analysis-provider.js';
+import { createStationCatalog } from './station-catalog.js';
 import { mapPileStatus } from './status-map.js';
 import { statusIconSvg } from './status-icons.js';
 import { createDashboardState, deriveOverviewCards } from './dashboard-state.js';
@@ -146,7 +147,12 @@ function renderForecastWorkbench(result) {
   }
 }
 
-function renderOverviewMining(model, chartRegistry, instances) {
+// 分帧让出主线程：慢机/软渲染上单任务连渲多张图表会撞上浏览器"脚本运行超时"终止
+// （该终止不可被 try/catch 捕获）。逐批 yield 让每个 chunk 独立成任务——单批被终止
+// 最多损失该批，其后的渲染照常完成，避免"一图超时、整页停在半渲染"。
+const yieldToMain = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+async function renderOverviewMining(model, chartRegistry, instances) {
   const analytics = model.analytics ?? {};
   const definitions = [
     ['overview-health', () => renderHealthScore(document.getElementById('overview-health'), model.metrics, analytics)],
@@ -154,6 +160,7 @@ function renderOverviewMining(model, chartRegistry, instances) {
     ['overview-clusters', () => renderClusterSummary(document.getElementById('overview-clusters'), analytics.station_mining)],
     ['overview-energy-bands', () => renderEnergyBands(document.getElementById('overview-energy-bands'), analytics.energy)],
   ];
+  let processed = 0;
   for (const [id, factory] of definitions) {
     try {
       const chart = factory();
@@ -162,6 +169,8 @@ function renderOverviewMining(model, chartRegistry, instances) {
     } catch (error) {
       renderLocalError(document.getElementById(id), error?.message ?? '总览分析初始化失败');
     }
+    processed += 1;
+    if (processed % 2 === 0) await yieldToMain();
   }
 }
 
@@ -458,7 +467,7 @@ function setupWorkspaceNavigation() {
   });
 }
 
-function renderAnalysisWorkbench(model, chartRegistry, instances) {
+async function renderAnalysisWorkbench(model, chartRegistry, instances) {
   const workbench = document.getElementById('analysis-workbench');
   const wasHidden = workbench?.hidden;
   // ECharts 需要可见容器才能计算初始尺寸；总览首屏隐藏分析页时先临时展开，
@@ -488,6 +497,7 @@ function renderAnalysisWorkbench(model, chartRegistry, instances) {
     ['analysis-service-control', () => renderServiceControl(document.getElementById('analysis-service-control'), analytics.orders, analytics.service)],
     ['analysis-service-data', () => renderServiceDataAvailability(document.getElementById('analysis-service-data'), analytics.service)],
   ];
+  let processed = 0;
   for (const [id, factory] of definitions) {
     try {
       chartRegistry[id] = factory();
@@ -495,6 +505,8 @@ function renderAnalysisWorkbench(model, chartRegistry, instances) {
     } catch (error) {
       renderLocalError(document.getElementById(id), error?.message ?? '分析图表初始化失败');
     }
+    processed += 1;
+    if (processed % 3 === 0) await yieldToMain(); // 16 张图分 6 批，单批被终止不拖垮整页
   }
   const users = analytics.users ?? {};
   const equipment = analytics.equipment ?? {};
@@ -611,7 +623,31 @@ async function boot() {
   let lastValidModel = null; // 最后有效快照：error 保留 / offline / stale 展示底座
   let lastValidAt = null;
   let currentDeactivateFocus = null; // Esc 只注册一次，读取每轮渲染的最新退出出口
-  let revenueRangeDays = 7; // 营收趋势档位（A-02）：7 或 30；静态按钮只绑一次
+  // 营收趋势档位（A-02）：7 或 30；静态按钮只绑一次。分析批次为多周窗口 → 默认 30 日档
+  //（不再只展示末 7 个点）；7 日档仍可一键切换。
+  let revenueRangeDays = analyticsMode ? 30 : 7;
+  // 站点下拉全集目录：过滤后的响应只含单站，不得覆盖选项表；全集缺失（分享链接
+  // ?stationId=… 或筛选后刷新时首帧即为过滤态）时由目录模块独立加载完整站点表。
+  // 目录使用独立 provider 实例，与主视图请求互不取消。
+  const catalogProvider = new ApiDataProvider({ baseUrl: '.' });
+  const stationCatalog = createStationCatalog({
+    load: (query) => catalogProvider.load(query),
+    onCatalog: (stations) => {
+      if (controls) controls.setStations(stations);
+    },
+  });
+  const stationFiltered = () => currentQuery.stationId !== null
+    && currentQuery.stationId !== undefined && currentQuery.stationId !== '';
+  function ensureStationCatalog() {
+    // 目录与主视图解耦：成功/空/错误任一结果下，过滤态首帧都必须补齐下拉全集
+    //（分享链接 ?stationId=…、筛选后刷新、以及失效站号导致的空窗口）。
+    // controls 只在分析模式挂载：demo 模式不产生任何分析目录请求。
+    if (!controls) return;
+    if (stationFiltered() && !stationCatalog.stations) stationCatalog.ensure();
+  }
+  // 分析批次营收标签为整窗日期：按当前档位取同尾切片；长度不匹配时不再回落到批次生成日期合成横轴。
+  const sliceTail = (labels, length) =>
+    (Array.isArray(labels) && labels.length >= length ? labels.slice(labels.length - length) : null);
 
   /* ---- 页面级状态区 ---- */
 
@@ -747,12 +783,13 @@ async function boot() {
     const revenueCentsSeries = revenueRangeDays === 30
       ? (model.revenue30dCents ?? [])
       : model.revenue7dCents;
+    const revenueLabels = sliceTail(model.revenueSeriesLabels, revenueCentsSeries.length);
     for (const [id, factory] of [
       ['chart-load', () => renderLoadChart(document.getElementById('chart-load'), model)],
       ['chart-states', () => renderStateDonut(document.getElementById('chart-states'), model.metrics.counts)],
       ['chart-revenue', () => renderRevenueTrend(
         document.getElementById('chart-revenue'), revenueCentsSeries, model.updatedAt,
-        model.revenueSeriesLabels ?? null)],
+        revenueLabels)],
     ]) {
       try {
         const chart = factory();
@@ -762,8 +799,10 @@ async function boot() {
         renderLocalError(document.getElementById(id), error?.message ?? '图表初始化失败');
       }
     }
-    renderOverviewMining(model, chartsById, chartInstances);
-    renderAnalysisWorkbench(model, chartsById, chartInstances);
+    await yieldToMain(); // 三个重渲染阶段之间各让出一帧，避免合成一个超长任务
+    await renderOverviewMining(model, chartsById, chartInstances);
+    await yieldToMain();
+    await renderAnalysisWorkbench(model, chartsById, chartInstances);
     showChartTab(currentChartTab); // 保持当前页签并完成首个 resize
   }
 
@@ -800,6 +839,7 @@ async function boot() {
         result.error?.message ?? (analyticsMode ? '分析接口加载失败' : 'demo.json 加载失败'));
       sourceBadge.textContent = analyticsMode ? '批次加载失败' : '加载失败';
       if (controls) controls.setStatus('error', result.error?.message ?? '加载失败');
+      ensureStationCatalog();
       announce(failed.title);
       if (hasSnapshot) {
         // 快照仍在：非阻断错误横幅，主体继续展示最后有效数据
@@ -822,6 +862,7 @@ async function boot() {
         ? '演示状态'
         : analyticsMode ? '窗口无数据' : '暂无数据';
       if (controls) controls.setStatus('empty', '该筛选条件下没有业务记录');
+      ensureStationCatalog();
       announce(state.empty().title);
       showPageState(state.empty(), { blocking: true });
       return;
@@ -848,7 +889,13 @@ async function boot() {
     }
     if (controls) {
       controls.setCoverage(model.coverage);
-      controls.setStations(model.stations);
+      // 站点下拉使用完整站点全集：过滤后的响应只含单站，不得覆盖选项表；
+      // 全集缺失时独立加载完整目录（分享链接首开 / 筛选后刷新的下拉也因此完整）。
+      const hasStationFilter = currentQuery.stationId !== null && currentQuery.stationId !== undefined
+        && currentQuery.stationId !== '';
+      stationCatalog.absorb(model.stations, { filtered: hasStationFilter });
+      controls.setStations(stationCatalog.stations ?? model.stations);
+      ensureStationCatalog();
       controls.setStatus(
         isStale ? 'stale' : 'ready',
         `批次 ${result.batchId ?? '—'} · 数据截至 ${String(model.updatedAt ?? '').slice(0, 16)}Z`
@@ -913,7 +960,7 @@ async function boot() {
         try {
           const chart = renderRevenueTrend(
             document.getElementById('chart-revenue'), centsSeries, lastValidModel.updatedAt,
-            lastValidModel.revenueSeriesLabels ?? null);
+            sliceTail(lastValidModel.revenueSeriesLabels, centsSeries.length));
           chartsById['chart-revenue'] = chart;
           if (!chartInstances.includes(chart)) chartInstances.push(chart);
         } catch (error) {
@@ -922,11 +969,26 @@ async function boot() {
         }
       });
     }
+    if (analyticsMode) {
+      // 分析批次默认 30 日档：同步按钮激活态（7 日档仍可一键切换）
+      for (const other of revenueRangeGroup.querySelectorAll('.range-btn')) {
+        const isActive = Number(other.dataset.rangeDays) === revenueRangeDays;
+        other.classList.toggle('is-active', isActive);
+        other.setAttribute('aria-pressed', String(isActive));
+      }
+    }
   }
 
-  // 自适应：容器与窗口变化时重排所有活跃图表
+  // 自适应：容器与窗口变化时重排所有活跃图表。
+  // 守卫：尺寸未变化不触发 resize——否则 chart.resize() 引起的布局变化会再次触发
+  // observer，形成 resize→layout→resize 自激回路，把主线程烧满（VM 软渲染实测 CPU 123%）。
   if (typeof ResizeObserver !== 'undefined') {
-    const observer = new ResizeObserver(() => {
+    let lastObservedSize = null;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      const size = rect ? `${Math.round(rect.width)}x${Math.round(rect.height)}` : null;
+      if (size !== null && size === lastObservedSize) return;
+      lastObservedSize = size;
       for (const chart of chartInstances) chart.resize();
     });
     observer.observe(document.getElementById('operations-strip'));
