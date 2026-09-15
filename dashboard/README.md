@@ -1,7 +1,9 @@
 # 充电网络实时态势大屏（dashboard）
 
-Web 实时态势大屏：原生 HTML/CSS/ES modules + 本地 Apache ECharts（离线可运行），
-数据与 Qt 管理端 Mock 同一口径（`apps/admin-client` 的 `mockdataset`）。
+Web 实时态势大屏：原生 HTML/CSS/ES modules + 本地 Apache ECharts，
+正常运行读取第一阶段 Schema v0.4 SQLite 快照；`demo.json` 仅作为离线演练 fixture。
+
+二阶段分析区和主态势数据通过 `EV_ANALYSIS_API_BASE_URL` 读取独立 Flask 服务：主地图/桩/营收快照来自 Schema v0.4 SQLite，预测、推荐和预警来自 ADS 模型产物；服务不可用时只显示明确的降级状态，不伪造结果。`demo.json` 仅保留离线故障演练，不是最终呈现数据源。
 
 ## 本地启动
 
@@ -9,7 +11,7 @@ Windows（PowerShell）：
 
 ```powershell
 Copy-Item config/example.env config/local.env   # 首次；local.env 已被 .gitignore
-# 可选：编辑 config/local.env 设置 TENCENT_MAP_KEY；不设置则自动使用离线拓扑图
+# 可选：编辑 config/local.env 设置 TENCENT_MAP_JS_KEY；不设置则自动使用离线拓扑图
 python dashboard/serve.py --port 61469
 ```
 
@@ -21,6 +23,32 @@ python3 dashboard/serve.py --port 61469
 ```
 
 打开 http://127.0.0.1:61469/ 即见主屏。
+
+## 二阶段工作台导航
+
+工作台与一阶段客户端页面独立，采用左侧导航切页：`网络总览`、`智能预测`、`用户与设备`、`订单与能源`、`收益与站点`、`评价与服务`。每个分析页只组合同一业务域的相关图表，并在图表上方显示快照 KPI；导航状态同步到 URL hash（例如 `/#forecast`），可直接分享某个分析视角。宽度小于 1180px 时导航自动转为横向滚动栏，宽度小于 720px 时分析卡片单列排列。
+
+分析服务启动示例（另一个终端）：
+
+```bash
+EV_ANALYSIS_ARTIFACT_DIR=/path/to/ads \
+  flask --app ml.service.app run --host 127.0.0.1 --port 61501
+```
+
+然后在 `config/local.env` 设置 `EV_ANALYSIS_API_BASE_URL=http://127.0.0.1:61501`，重启大屏服务。
+
+## 数据挖掘模块
+
+每个工作台页面固定呈现至少四个模块，模块标题同时标注方法与数据口径，便于答辩或运营复核：
+
+- 网络总览：加权健康评分、设备 z-score 异常扫描、站点利用率/能耗聚类、四时段峰谷分解。
+- 智能预测：Spark MLlib 随机森林回归、模型 MAE/RMSE 验证、预测值与残差口径说明、推荐与历史 P95 预警。
+- 用户与设备：订单频次分布、RFM 用户价值矩阵、桩状态分布、功率档位与异常桩联合画像。
+- 订单与能源：订单转化时序、状态漏斗、小时能耗/订单双轴、时段能耗与 Pearson 相关系数。
+- 收益与站点：30 日营收趋势、站点 Pareto 排行、OLS 趋势拟合、聚类中心与累计营收集中度。
+- 评价与服务：完成/非取消/复购代理指标、履约时长分布、日完成率控制图、评价事实完整性。
+
+上述指标均由 Schema v0.4 快照或 ADS 模型产物派生。Schema v0.4 没有评价事实表时，页面显式显示“评价事实缺失”，不会生成虚构星级或情感分数。图表启用 ECharts 的 `aria` 描述能力，并使用 tooltip、visualMap/标线和清晰单位支持多维探索；交互设计参考 [ECharts 交互能力说明](https://echarts.apache.org/en/feature.html) 与 [可访问性指南](https://echarts.apache.org/handbook/en/best-practices/aria/)。
 
 ## 演示参数（验收用）
 
@@ -44,8 +72,9 @@ python3 dashboard/serve.py --port 61469
 
 ## 密钥安全边界
 
-- `config/local.env` 已被 gitignore，真实 `TENCENT_MAP_KEY` 永不进入仓库、日志、
-  截图或测试快照；环境变量 `TENCENT_MAP_KEY` 优先于本地文件。
+- Dashboard 只读取独立的 `TENCENT_MAP_JS_KEY` 用于 GL 底图；服务端 WebService
+  `TENCENT_MAP_KEY` 永不下发到浏览器。真实密钥均已被 gitignore，永不进入仓库、日志、
+  截图或测试快照；环境变量 `TENCENT_MAP_JS_KEY` 优先于本地文件。
 - 服务日志不打印配置、请求响应体或 key。
 - 未配置 key 时页面不发起腾讯地图请求，自动降级为拓扑图。
 

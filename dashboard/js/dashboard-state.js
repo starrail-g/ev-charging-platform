@@ -4,13 +4,13 @@
 import { formatCents } from './data-adapter.js';
 
 const STATE_META = Object.freeze({
-  loading: { icon: 'loader', title: '正在加载数据', description: '从本地演示数据读取中……', action: null },
-  content: { icon: 'activity', title: '数据已就绪', description: '主屏展示最近一次加载的演示数据', action: null },
+  loading: { icon: 'loader', title: '正在加载数据', description: '正在读取 Schema v0.4 业务快照……', action: null },
+  content: { icon: 'activity', title: '数据已就绪', description: '主屏展示最近一次加载的业务快照', action: null },
   empty: { icon: 'inbox', title: '暂无数据', description: '当前没有可展示的站点或充电桩', action: '重试' },
-  error: { icon: 'alert-triangle', title: '数据加载失败', description: '无法读取演示数据，请检查本地服务后重试', action: '重试' },
-  offline: { icon: 'wifi-off', title: '离线模式', description: '正在使用本地数据与离线拓扑图，核心演示不受影响', action: '重试' },
+  error: { icon: 'alert-triangle', title: '数据加载失败', description: '无法读取业务数据服务，请检查 Flask 服务后重试', action: '重试' },
+  offline: { icon: 'wifi-off', title: '离线模式', description: '业务快照暂不可用，正在使用离线拓扑图保留最近状态', action: '重试' },
   stale: { icon: 'clock', title: '数据可能已过期', description: '超过刷新阈值仍未获得新数据', action: '刷新' },
-  'model-unavailable': { icon: 'cpu', title: '智能预测与调度模型待接入', description: '当前为演示数据；模型接入后此处显示真实预测结果', action: null },
+  'model-unavailable': { icon: 'cpu', title: '智能分析暂不可用', description: '分析服务未返回预测结果，基础运营指标仍可用', action: null },
 });
 
 const DEFAULT_STALE_AFTER_MS = 5 * 60 * 1000; // 实时模式默认 5 分钟
