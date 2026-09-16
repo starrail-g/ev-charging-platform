@@ -190,3 +190,36 @@ class SnapshotStore:
         quality = data.get("quality")
         if quality is not None and not isinstance(quality, dict):
             raise SnapshotCorrupt("dashboard.json data.quality must be an object")
+        facts = data.get("workbenchFacts")
+        if facts is not None:
+            if (not isinstance(facts, dict) or facts.get("version") != 1
+                    or not _type_ok(facts.get("totalUsers"), "int") or facts["totalUsers"] < 0):
+                raise SnapshotCorrupt("invalid workbenchFacts header")
+            specs = {
+                "users": {"user_id": "int", "station_id": "int", "frequency": "int",
+                          "monetary": "int", "stat_date": "str", "last_settled_at": "str"},
+                "orders": {"station_id": "int", "status": "str", "stat_date": "str",
+                           "order_count": "int"},
+            }
+            for key, spec in specs.items():
+                rows = facts.get(key)
+                if not isinstance(rows, list):
+                    raise SnapshotCorrupt(f"workbenchFacts.{key} must be a list")
+                for row in rows:
+                    _validate_record(row, spec, f"workbenchFacts.{key}")
+                    if not _date_prefix_ok(row["stat_date"]):
+                        raise SnapshotCorrupt("invalid workbench date")
+                    if key == "users":
+                        try:
+                            datetime.fromisoformat(row["last_settled_at"].replace("Z", "+00:00"))
+                        except ValueError as exc:
+                            raise SnapshotCorrupt("invalid RFM timestamp") from exc
+                        if row["frequency"] < 1 or row["monetary"] < 0:
+                            raise SnapshotCorrupt("invalid RFM counts")
+                    else:
+                        hour = row.get("start_hour")
+                        duration = row.get("duration_seconds")
+                        if (hour is not None and (not _type_ok(hour, "int") or not 0 <= hour <= 23)
+                                or duration is not None and (not _type_ok(duration, "int") or duration < 0)
+                                or row["order_count"] < 0):
+                            raise SnapshotCorrupt("invalid order aggregates")

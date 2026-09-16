@@ -256,12 +256,38 @@ def run(spark, dwd, output, batch_id, manifest):
               "cancelled_orders long, exception_orders long, station_count long, pile_count long, "
               "avg_station_utilization double")
 
+    # 工作台只发布去标识的分析必要字段，不回读污染 ODS，也不导出姓名/手机号。
+    # 按站点/日期保留粒度，API 可以在任意合法筛选窗口重新计算复购和 RFM。
+    ads_user_activity = spark.sql(f"""
+        SELECT '{batch_id}' AS batch_id, o.user_id, p.station_id,
+               TO_DATE(o.settled_at) AS stat_date, COUNT(*) AS frequency,
+               SUM(o.total_amount_cents) AS monetary,
+               MAX(o.settled_at) AS last_settled_at
+        FROM dwd_order o JOIN dwd_pile p ON o.pile_id = p.id
+        WHERE o.status = 'completed' AND o.settled_at IS NOT NULL
+        GROUP BY o.user_id, p.station_id, TO_DATE(o.settled_at)
+    """)
+    ads_user_summary = spark.read.parquet(f"{dwd}/dim_user").agg(
+        F.count("id").alias("total_users")).withColumn("batch_id", F.lit(batch_id))
+    ads_order_activity = spark.sql(f"""
+        SELECT '{batch_id}' AS batch_id, p.station_id,
+               TO_DATE(o.created_at) AS stat_date, o.status,
+               HOUR(o.started_at) AS start_hour, COUNT(*) AS order_count,
+               SUM(CASE WHEN o.status = 'completed'
+                   THEN unix_timestamp(o.ended_at) - unix_timestamp(o.started_at) ELSE 0 END) AS duration_seconds
+        FROM dwd_order o JOIN dwd_pile p ON o.pile_id = p.id
+        GROUP BY p.station_id, TO_DATE(o.created_at), o.status, HOUR(o.started_at)
+    """)
+
     for name, df in (("ads_overview", ads_overview),
                      ("ads_revenue_trend", ads_revenue_trend),
                      ("ads_load_hour", ads_load_hour),
                      ("ads_station_rank", ads_station_rank),
                      ("ads_quality_summary", ads_quality),
-                     ("ads_pile_snapshot", ads_pile_snapshot)):
+                     ("ads_pile_snapshot", ads_pile_snapshot),
+                     ("ads_user_activity", ads_user_activity),
+                     ("ads_user_summary", ads_user_summary),
+                     ("ads_order_activity", ads_order_activity)):
         df.write.mode("error").parquet(f"{output}/ads/{name}")
         print(f"ADS {name}: rows={df.count()}", flush=True)
 

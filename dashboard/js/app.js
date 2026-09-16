@@ -23,6 +23,8 @@ import {
 } from './charts.js';
 import { renderPageState, statePresentation } from './state-view.js';
 import { analysisSourceAttribution } from './analysis-source.js';
+import { metric, panelMissing } from './workbench-state.js';
+import { renderUnavailableChart } from './charts.js';
 
 const state = createDashboardState({ liveMode: false });
 const params = new URLSearchParams(location.search);
@@ -176,7 +178,8 @@ async function renderOverviewMining(model, chartRegistry, instances) {
   let processed = 0;
   for (const [id, factory] of definitions) {
     try {
-      const chart = factory();
+      const missing = panelMissing(id, analytics);
+      const chart = missing ? renderUnavailableChart(document.getElementById(id), missing) : factory();
       chartRegistry[id] = chart;
       instances.push(chart);
     } catch (error) {
@@ -506,7 +509,7 @@ async function renderAnalysisWorkbench(model, chartRegistry, instances) {
     ['analysis-energy', () => renderEnergyProfile(document.getElementById('analysis-energy'), analytics.energy?.hourly)],
     ['analysis-order-funnel', () => renderOrderFunnel(document.getElementById('analysis-order-funnel'), analytics.orders)],
     ['analysis-energy-peaks', () => renderEnergyPeaks(document.getElementById('analysis-energy-peaks'), analytics.energy)],
-    ['analysis-revenue', () => renderRevenueTrend(document.getElementById('analysis-revenue'), (analytics.revenue?.daily ?? []).map((row) => row.revenue_cents), model.updatedAt)],
+    ['analysis-revenue', () => renderRevenueTrend(document.getElementById('analysis-revenue'), (analytics.revenue?.daily ?? []).map((row) => row.revenue_cents), model.updatedAt, (analytics.revenue?.daily ?? []).map((row) => row.date))],
     ['analysis-stations', () => renderStationRanking(document.getElementById('analysis-stations'), analytics.stations)],
     ['analysis-revenue-regression', () => renderRevenueRegression(document.getElementById('analysis-revenue-regression'), analytics.revenue)],
     ['analysis-station-clusters', () => renderStationClusters(document.getElementById('analysis-station-clusters'), analytics.station_mining)],
@@ -518,7 +521,8 @@ async function renderAnalysisWorkbench(model, chartRegistry, instances) {
   let processed = 0;
   for (const [id, factory] of definitions) {
     try {
-      chartRegistry[id] = factory();
+      const missing = panelMissing(id.replace('analysis-', ''), analytics);
+      chartRegistry[id] = missing ? renderUnavailableChart(document.getElementById(id), missing) : factory();
       instances.push(chartRegistry[id]);
     } catch (error) {
       renderLocalError(document.getElementById(id), error?.message ?? '分析图表初始化失败');
@@ -533,33 +537,33 @@ async function renderAnalysisWorkbench(model, chartRegistry, instances) {
   const revenue = analytics.revenue ?? {};
   const service = analytics.service ?? {};
   const insights = {
-    users: [['用户总量', users.total], ['复购用户', users.repeat_users], ['复购率', `${Math.round((users.repeat_users / Math.max(1, users.total)) * 100)}%`]],
+    users: [['用户总量', users.total], ['复购用户', users.repeat_users], ['复购率', metric(users.total > 0 ? users.repeat_users / users.total : null, '%', 0, 100)]],
     equipment: [['设备总量', Object.values(equipment.status_counts ?? {}).reduce((a, b) => a + Number(b), 0)], ['模拟设备', equipment.simulated_count], ['重启次数', equipment.restart_count]],
-    'user-cohort': [['RFM 样本', analytics.user_mining?.top_users?.length ?? 0], ['高价值客群', analytics.user_mining?.segments?.find((row) => row.segment === '高价值')?.count ?? 0], ['方法', 'RFM']],
+    'user-cohort': [['RFM 样本', analytics.user_mining?.sample_count ?? analytics.user_mining?.top_users?.length], ['高价值客群', analytics.user_mining?.segments?.find((row) => row.segment === '高价值')?.count], ['方法', 'RFM']],
     'equipment-risk': [['异常桩', analytics.equipment_mining?.anomaly_count ?? 0], ['阈值', `|z| ≥ ${analytics.equipment_mining?.threshold ?? 2}`], ['方法', 'z-score']],
-    orders: [['订单总量', orders.total], ['完成率', `${Math.round((orders.completion_rate ?? 0) * 100)}%`], ['平均时长', `${Number(orders.avg_duration_minutes ?? 0).toFixed(0)} min`]],
-    energy: [['累计能耗', `${Number(energy.total_kwh ?? 0).toLocaleString()} kWh`], ['单次均值', `${Number(energy.avg_session_kwh ?? 0).toFixed(1)} kWh`], ['峰值时段', energy.peak_hour == null ? '—' : `${energy.peak_hour}:00`]],
+    orders: [['订单总量', orders.total], ['完成率', metric(orders.completion_rate, '%', 0, 100)], ['平均时长', metric(orders.avg_duration_minutes, ' min')]],
+    energy: [['累计能耗', metric(energy.total_kwh, ' kWh', 1)], ['单次均值', metric(energy.avg_session_kwh, ' kWh', 1)], ['峰值时段', energy.peak_hour == null ? '无有效样本' : `${energy.peak_hour}:00`]],
     'order-funnel': [['完成订单', orders.completed ?? 0], ['取消订单', orders.cancelled ?? 0], ['异常/活动', orders.active ?? 0]],
-    'energy-peaks': [['峰值占比', `${(Number(energy.peak_share ?? 0) * 100).toFixed(1)}%`], ['能耗相关', Number(energy.order_energy_correlation ?? 0).toFixed(2)], ['时段数', energy.time_bands?.length ?? 0]],
+    'energy-peaks': [['峰值占比', metric(energy.peak_share, '%', 1, 100)], ['能耗相关', metric(energy.order_energy_correlation, '', 2)], ['时段数', energy.time_bands?.length]],
     revenue: [['近 30 日', formatAnalysisMoney(revenue.total_30d_cents)], ['日均收益', formatAnalysisMoney(revenue.avg_daily_cents)], ['样本天数', revenue.daily?.length ?? 0]],
     stations: [['站点数', analytics.stations?.length ?? 0], ['头部站点', analytics.stations?.[0]?.name ?? '—'], ['头部营收', formatAnalysisMoney(analytics.stations?.[0]?.revenue_cents)]],
     'revenue-regression': [['日斜率', `${(Number(revenue.trend?.slope_cents_per_day ?? 0) / 100).toFixed(2)} 元`], ['拟合度 R²', Number(revenue.trend?.r2 ?? 0).toFixed(2)], ['方法', 'OLS']],
     'station-clusters': [['聚类数', analytics.station_mining?.clusters?.length ?? 0], ['高负荷站点', analytics.station_mining?.clusters?.find((row) => row.label === '高负荷')?.count ?? 0], ['累计口径', '营收 Pareto']],
-    service: [['完成率', `${Math.round((service.completion_rate ?? 0) * 100)}%`], ['非取消率', `${Math.round((1 - (service.cancel_rate ?? 0)) * 100)}%`], ['平均服务时长', `${Number(service.avg_duration_minutes ?? 0).toFixed(0)} min`]],
+    service: [['完成率', metric(service.completion_rate, '%', 0, 100)], ['非取消率', metric(service.cancel_rate == null ? null : 1 - service.cancel_rate, '%', 0, 100)], ['平均服务时长', metric(service.avg_duration_minutes, ' min')]],
     'service-duration': [['完成样本', (service.duration_buckets ?? []).reduce((sum, row) => sum + Number(row.count ?? 0), 0)], ['均值', `${Number(service.avg_duration_minutes ?? 0).toFixed(0)} min`], ['方法', '分桶统计']],
     'service-control': [['基线完成率', `${Math.round(Number(service.service_control?.baseline_completion_rate ?? service.completion_rate ?? 0) * 100)}%`], ['日样本', orders.daily?.length ?? 0], ['方法', '控制图']],
     'service-data': [['评价事实', service.rating_available ? '可用' : '缺失'], ['代理指标', '完成/取消/复购'], ['星级分析', service.rating_available ? '可扩展' : '暂不生成']],
   };
   const methods = {
-    users: `数据挖掘：${analytics.user_mining?.method ?? 'RFM'} 客户价值分层`,
-    equipment: `异常检测：${analytics.equipment_mining?.method ?? 'z-score'} · 检出 ${analytics.equipment_mining?.anomaly_count ?? 0} 个异常桩`,
-    'user-cohort': '聚类画像：RFM 最近消费、频次、金额三维用户价值矩阵',
+    users: `复购：完成订单 ≥ 2 次；分母：${users.denominator ?? '用户总量'}`,
+    equipment: analytics.scope?.equipment ?? '设备运行状态快照',
+    'user-cohort': analytics.scope?.users ?? 'RFM 最近消费、频次、金额三维用户价值矩阵',
     'equipment-risk': '异常检测：累计充电次数 z-score 与功率档位联合筛查',
-    stations: `聚类分析：${analytics.station_mining?.method ?? 'rule-based clustering'} · 按利用率/能耗分组`,
-    orders: '漏斗分析：全部 → 完成/取消，按日追踪转化波动',
-    energy: '时序分析：小时级峰谷识别与订单量双轴关联',
+    stations: '按所选窗口结算营收排序；利用率来自数仓小时网格',
+    orders: analytics.scope?.orders ?? '全部、完成、取消订单按日统计',
+    energy: analytics.scope?.energy ?? '小时级能耗与订单量',
     'order-funnel': '漏斗分析：状态数量逐层收缩，异常与取消不混入完成口径',
-    'energy-peaks': '相关分析：Pearson r 衡量订单量与能耗的同向程度',
+    'energy-peaks': '小时分摊电量按时段求和；缺失统计不填零',
     revenue: '趋势分析：30 日滚动序列与日均收益基线',
     service: '服务分析：履约率、取消率、复购率联合画像',
     'revenue-regression': '回归分析：普通最小二乘拟合日营收趋势，展示斜率与 R²',
@@ -574,10 +578,15 @@ async function renderAnalysisWorkbench(model, chartRegistry, instances) {
     panel.querySelector('.analysis-kpis')?.remove();
     const strip = document.createElement('div');
     strip.className = 'analysis-kpis';
-    for (const [label, value] of rows) {
+    const missing = panelMissing(panelId, analytics);
+    for (const [label, value] of missing ? [['数据状态', '未提供']] : rows) {
       const item = document.createElement('div');
       item.className = 'analysis-kpi';
-      item.innerHTML = `<span>${label}</span><strong>${value ?? '—'}</strong>`;
+      const title = document.createElement('span');
+      title.textContent = label;
+      const content = document.createElement('strong');
+      content.textContent = value == null || /NaN|Infinity/.test(String(value)) ? '未提供' : String(value);
+      item.append(title, content);
       strip.append(item);
     }
     panel.append(strip);
@@ -585,7 +594,7 @@ async function renderAnalysisWorkbench(model, chartRegistry, instances) {
     if (methods[panelId]) {
       const method = document.createElement('p');
       method.className = 'analysis-method';
-      method.textContent = methods[panelId];
+      method.textContent = missing ?? methods[panelId];
       panel.append(method);
     }
   }
@@ -594,7 +603,7 @@ async function renderAnalysisWorkbench(model, chartRegistry, instances) {
 }
 
 function formatAnalysisMoney(cents) {
-  if (!Number.isFinite(Number(cents))) return '—';
+  if (cents == null || !Number.isFinite(Number(cents))) return '未提供';
   return `¥${(Number(cents) / 100).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 

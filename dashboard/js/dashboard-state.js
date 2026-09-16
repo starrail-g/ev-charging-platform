@@ -66,6 +66,6 @@ export function deriveOverviewCards(metrics) {
       sub: `/ ${metrics.totalPiles} 台`,
     },
     { key: 'utilization', label: '平均站点利用率', value: `${utilizationPercent}%` },
-    { key: 'revenue', label: '近 7 日营收', value: formatCents(metrics.revenueCents) },
+    { key: 'revenue', label: metrics.revenueLabel ?? '近 7 日营收', value: formatCents(metrics.revenueCents) },
   ];
 }

@@ -103,6 +103,13 @@ class TestDq01Warehouse(WarehouseCase):
         self.assertEqual(ov["energy_wh"], 15001)
         self.assertEqual(ov["completed_orders"], 2)
 
+        users = self.spark.read.parquet(to_uri(work / "ads" / "ads_user_activity")).collect()
+        self.assertEqual(sum(r["frequency"] for r in users), 2)
+        self.assertEqual(sum(r["monetary"] for r in users), 1901)
+        orders = self.spark.read.parquet(to_uri(work / "ads" / "ads_order_activity")).collect()
+        self.assertEqual(sum(r["order_count"] for r in orders if r["status"] == 'completed'), 2)
+        self.assertEqual(sum(r["duration_seconds"] for r in orders), 5400)
+
         trend = self.spark.read.parquet(to_uri(work / "ads" / "ads_revenue_trend")).collect()
         self.assertEqual(len(trend), 1)
         self.assertEqual(str(trend[0]["stat_date"]), "2026-09-01")

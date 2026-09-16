@@ -213,7 +213,15 @@ export function resizeAll(charts) {
 
 function renderAnalysisChart(el, option) {
   const chart = getChart(el);
-  chart.setOption({ ...chartTheme(), ...option });
+  chart.setOption({ ...chartTheme(), ...option }, { notMerge: true });
+  return chart;
+}
+
+export function renderUnavailableChart(el, message = '当前数据源未提供此项指标') {
+  const chart = getChart(el);
+  chart.clear();
+  chart.setOption({ graphic: [{ type: 'text', left: 'center', top: 'middle',
+    style: { text: message, fill: chartTheme().palette.muted, fontSize: 14 } }] });
   return chart;
 }
 
@@ -292,13 +300,14 @@ export function renderStationRanking(el, stations = []) {
 
 /** 服务质量代理：完成率、非取消率、复购率和履约时长。 */
 export function renderServiceQuality(el, service = {}) {
-  const values = [service.completion_rate ?? 0, 1 - (service.cancel_rate ?? 0), service.repeat_user_rate ?? 0].map((value) => Math.round(value * 100));
+  const values = [service.completion_rate, service.cancel_rate == null ? null : 1 - service.cancel_rate, service.repeat_user_rate]
+    .map((value) => value == null ? null : Math.round(value * 100));
   return renderAnalysisChart(el, {
     tooltip: { ...chartTheme().tooltip, trigger: 'axis', valueFormatter: (value) => `${value}%` },
     grid: { left: 48, right: 18, top: 22, bottom: 34 },
     xAxis: { type: 'category', data: ['完成率', '非取消率', '复购率'], axisLabel: { color: chartTheme().palette.muted } },
     yAxis: { type: 'value', max: 100, axisLabel: { color: chartTheme().palette.muted, formatter: '{value}%' } },
-    series: [{ type: 'bar', data: values, itemStyle: { color: resolveVar('--night-focus'), borderRadius: [4, 4, 0, 0] }, label: { show: true, position: 'top', formatter: '{c}%' } }],
+    series: [{ type: 'bar', data: values, itemStyle: { color: resolveVar('--night-focus'), borderRadius: [4, 4, 0, 0] }, label: { show: true, position: 'top', formatter: ({ value }) => value == null ? '缺失' : `${value}%` } }],
   });
 }
 
@@ -451,7 +460,7 @@ export function renderEnergyPeaks(el, energy = {}) {
     xAxis: { type: 'category', data: rows.map((row) => row.label), axisLabel: { color: chartTheme().palette.muted, interval: 0, rotate: 18 } },
     yAxis: { type: 'value', name: 'kWh', axisLabel: { color: chartTheme().palette.muted } },
     series: [{ type: 'bar', data: rows.map((row) => row.energy_kwh ?? 0), itemStyle: { color: resolveVar('--state-charging'), borderRadius: [4, 4, 0, 0] }, label: { show: true, position: 'top', formatter: ({ value }) => Number(value).toFixed(0) } }],
-    graphic: [{ type: 'text', left: 'center', bottom: 4, style: { text: `订单量—能耗 Pearson r = ${Number(energy.order_energy_correlation ?? 0).toFixed(2)} · 峰值占比 ${(Number(energy.peak_share ?? 0) * 100).toFixed(1)}%`, fill: chartTheme().palette.muted, fontSize: 11 } }],
+    graphic: [{ type: 'text', left: 'center', bottom: 4, style: { text: `订单量—能耗相关：${energy.order_energy_correlation == null ? '未提供' : Number(energy.order_energy_correlation).toFixed(2)} · 峰值占比 ${energy.peak_share == null ? '未提供' : `${(energy.peak_share * 100).toFixed(1)}%`}`, fill: chartTheme().palette.muted, fontSize: 11 } }],
   });
 }
 

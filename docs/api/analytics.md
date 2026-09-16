@@ -127,3 +127,32 @@ python3 -m unittest discover -s analytics/tests -p 'test_api*.py' -v
 - Flask 提供静态大屏资产（`dashboard/`）与 runtime config；**不得**把 `serve.py` 的地图 WebService 凭据搬进浏览器配置；
 - 外网地图不是离线链路依赖（本轮默认拓扑地图）；
 - 刷新页面只触发本地 JSON 读取，**不启动 Spark 批处理**。
+
+## 7. G3 工作台与独立 ML 服务（2026-09-16）
+
+`GET /api/dashboard` 增加 `data.analytics`，由同一发布批次的 ADS 聚合事实计算，随
+`start/end/station_id` 筛选。内部 `workbenchFacts` 不随 API 响应返回，不导出姓名、手机号或账本。
+
+- `users`：已完成订单按结算日统计频次，频次 ≥ 2 为复购。全网分母为清洗后用户总数；
+  单站分母为该站所选窗口有完成订单的用户数。0 单用户只计入全网频次分布。
+- `user_mining`：R = 所选窗口末日与最近结算日之差（UTC，允许 0）；F = 完成订单数；
+  M = 整数分金额。高价值阈值 F ≥ 8 且 M ≥ 100000，成长 F ≥ 3，其余低频。
+  RFM 样本只含消费用户，`sample_count` 是总样本数，`top_users` 仅展示金额前 10 名。
+- `equipment`：清洗后批次末桩快照，按站点过滤，不随日期回溯。
+- `orders`：按创建日筛选，状态取批次末状态；平均时长仅取完成订单。
+- `revenue/stations`：沿用筛选后的 ADS 结算营收；近 30 日相对查询终点计算。
+- `energy`：沿用 ADS 小时重叠分摊电量，各时段互斥且覆盖 24 小时；
+  订单曲线统计所选创建日队列中完成订单的起始小时，与电量分摊口径分别标注。
+- 缺失用户事实的旧批次仍可展示设备、营收、负荷；需重建数仓补齐用户分析。
+  未发布的异常评分、聚类、时长分桶、控制图、营收回归、评价事实和设备重启次数
+  明确显示“未提供”；分母为零的比例为 `null`，不将其画成 0 或 `NaN%`。
+
+独立 ML 的启动环境：`EV_ANALYSIS_ARTIFACT_DIR` 指向 `forecast.json`、
+`recommendations.json`、`alerts.json`、`model_metadata.json` 所在目录；启动
+`waitress-serve --listen=127.0.0.1:61501 ml.service.app:app`。生成/训练步骤见 `ml/README.md`。
+analytics 大屏进程设置 `EV_ANALYSIS_API_BASE_URL=http://127.0.0.1:61501` 后重启，
+`runtime-config.js` 会注入此地址；ML 可设置 `EV_ANALYSIS_ALLOWED_ORIGIN` 为大屏源地址。
+这里的 loopback 地址供 VM 内浏览器使用。
+
+预测、推荐、预警仍显式标注“独立 ML 链路”，不随 G3 筛选变化，也不是 G3 批次预测。
+本次接入不改模型训练数据边界；要预测 G3 需另行构建其小时特征并重新训练。
