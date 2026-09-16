@@ -15,9 +15,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
-from analytics.generate_data import GENERATOR_VERSION, hour_weight, weighted_slot_offsets
+from analytics.generate_data import Generator, PROFILES, hour_weight, weighted_slot_offsets
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 GEN = REPO / "analytics" / "generate_data.py"
@@ -34,13 +35,15 @@ def parse_iso(s):
 
 
 class GeneratorCase(unittest.TestCase):
+    profile = "smoke"
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = pathlib.Path(tempfile.mkdtemp(prefix="gen-test-"))
         for i in (1, 2):
             out = cls.tmp / f"gen{i}"
             subprocess.run(
-                [sys.executable, str(GEN), "--profile", "smoke", "--seed", "20260914",
+                [sys.executable, str(GEN), "--profile", cls.profile, "--seed", "20260914",
                  "--batch-id", "gen-test", "--out-root", str(out), "--repo-root", str(REPO)],
                 check=True, capture_output=True, text=True)
         cls.a = cls.tmp / "gen1" / "batches" / "gen-test"
@@ -49,8 +52,8 @@ class GeneratorCase(unittest.TestCase):
         cls.wallet = load_csv(cls.a / "input" / "wallet_transactions.csv")
         cls.users = load_csv(cls.a / "input" / "users.csv")
         cls.piles = load_csv(cls.a / "input" / "charging_piles.csv")
-        cls.labels = [json.loads(line) for line in
-                      open(cls.a / "input" / "dirty_labels.jsonl", encoding="utf-8")]
+        with open(cls.a / "input" / "dirty_labels.jsonl", encoding="utf-8") as fh:
+            cls.labels = [json.loads(line) for line in fh]
         cls.manifest = json.loads((cls.a / "manifest.json").read_text(encoding="utf-8"))
 
     @classmethod
@@ -66,6 +69,7 @@ class GeneratorCase(unittest.TestCase):
                              f"{name} 同 seed 两次运行不一致")
 
     def test_manifest_hashes_match_files(self):
+        self.assertEqual(self.manifest["generator_version"], "1.1.0")
         for table, meta in self.manifest["tables"].items():
             f = self.a / meta["file"]
             self.assertEqual(hashlib.sha256(f.read_bytes()).hexdigest(), meta["sha256"], table)
@@ -149,41 +153,105 @@ class GeneratorCase(unittest.TestCase):
         self.assertEqual(len(offsets), 200)
         self.assertEqual(offsets, sorted(offsets))
         self.assertGreater(len(set(offsets)), 190)
+        for count in (0, 1, 2, 100):
+            offsets = weighted_slot_offsets(monday, monday + timedelta(days=14), count)
+            self.assertEqual(len(offsets), count)
+            if count:
+                self.assertEqual(offsets[0], 0)
+                self.assertLess(offsets[-1], 14 * 86400)
+                self.assertEqual(len(set(offsets)), count)
+
+    def test_generated_times_stay_inside_window(self):
+        labeled = {l["source_record_id"] for l in self.labels}
+        t0 = parse_iso(self.manifest["data_start"])
+        t1 = parse_iso(self.manifest["data_end_exclusive"])
+        for row in self.orders:
+            if row["source_record_id"] in labeled:
+                continue  # 有意污染由底稿测试覆盖，不能用业务 id 匹配来源记录标签。
+            for field in ("started_at", "ended_at", "settled_at"):
+                if row[field]:
+                    value = parse_iso(row[field])
+                    self.assertGreaterEqual(value, t0, (row["source_record_id"], field))
+                    self.assertLess(value, t1, (row["source_record_id"], field))
+
+
+class LowProfileGeneratorCase(GeneratorCase):
+    profile = "low"
+
+    def test_actual_weekday_weekend_distribution(self):
+        """发布档真实 CSV 的每小时日均单量；仅检查权重数组不能发现均匀抖动回归。"""
+        labeled = {l["source_record_id"] for l in self.labels}
+        counts = {False: Counter(), True: Counter()}
+        days = Counter()
+        day = parse_iso(self.manifest["data_start"])
+        while day < parse_iso(self.manifest["data_end_exclusive"]):
+            days[day.weekday() >= 5] += 1
+            day += timedelta(days=1)
+        for row in self.orders:
+            if row["source_record_id"] in labeled or not row["started_at"]:
+                continue
+            started = parse_iso(row["started_at"])
+            counts[started.weekday() >= 5][started.hour] += 1
+
+        def rate(weekend, hours):
+            return sum(counts[weekend][h] for h in hours) / (days[weekend] * len(hours))
+
+        for weekend in (False, True):
+            self.assertGreater(sum(counts[weekend].values()), 1000)
+            night = rate(weekend, range(0, 6))
+            self.assertGreater(rate(weekend, range(11, 14)), night * 2)
+            self.assertGreater(rate(weekend, range(17, 21)), night * 2)
+        self.assertGreater(rate(False, range(7, 10)), rate(False, range(0, 6)) * 2)
+        self.assertLess(rate(True, range(7, 10)), rate(False, range(7, 10)) * 0.9)
+        self.assertGreater(rate(True, range(11, 14)), rate(True, range(7, 10)) * 1.2)
+        self.assertGreater(rate(True, range(17, 21)), rate(True, range(7, 10)) * 1.2)
 
     def test_low_profile_regression_dq05_dq11_collision(self):
         """回归（9/15）：low 档 + seed 20260914 曾因 DQ05 将 power_kw 脏化为带空格字符串、
         DQ11 又对该桩做 功率×时长 数值运算而 TypeError 崩溃（sequence * float）。
         修复（float() 还原）后应完整产出批次，且 DQ11 标签与 manifest 哈希一致。"""
-        out = self.tmp / "low"
-        subprocess.run(
-            [sys.executable, str(GEN), "--profile", "low", "--seed", "20260914",
-             "--batch-id", "gen-low-reg", "--out-root", str(out), "--repo-root", str(REPO)],
-            check=True, capture_output=True, text=True)
-        batch = out / "batches" / "gen-low-reg"
-        with open(batch / "input" / "dirty_labels.jsonl", encoding="utf-8") as fh:
-            labels = [json.loads(line) for line in fh]
-        self.assertGreaterEqual(len([l for l in labels if l["rule"] == "DQ11"]), 3,
+        self.assertGreaterEqual(len([l for l in self.labels if l["rule"] == "DQ11"]), 3,
                                 "DQ11 正例缺失")
-        manifest = json.loads((batch / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(manifest["profile"], "low")
-        self.assertEqual(manifest["generator_version"], GENERATOR_VERSION)
-        for table, meta in manifest["tables"].items():
-            f = batch / meta["file"]
-            self.assertEqual(hashlib.sha256(f.read_bytes()).hexdigest(), meta["sha256"], table)
+        self.assertEqual(self.manifest["profile"], "low")
 
-        orders = []
-        with open(batch / "input" / "charging_orders.csv", encoding="utf-8", newline="") as fh:
-            orders = list(csv.DictReader(fh))
-        labels_by_id = {l["source_record_id"] for l in labels}
-        counts = {2: 0, 8: 0, 18: 0}
-        for row in orders:
-            if row["id"] in labels_by_id or not row["started_at"]:
-                continue
-            started = parse_iso(row["started_at"])
-            self.assertLessEqual(started, parse_iso(manifest["data_end_exclusive"]))
-            counts[started.hour] = counts.get(started.hour, 0) + 1
-        self.assertGreater(counts[8], counts[2] * 1.5)
-        self.assertGreater(counts[18], counts[2] * 1.5)
+
+class CleanDraftCase(unittest.TestCase):
+    def test_all_profiles_before_pollution(self):
+        """检查全部合法底稿，避免标签过滤掩盖边界、同桩重叠及活动订单问题。"""
+        for profile in PROFILES:
+            with self.subTest(profile=profile):
+                g = Generator(profile, 20260914, "draft", REPO.parent, REPO)
+                g.gen_users()
+                g.gen_stations()
+                g.gen_piles()
+                g.gen_orders()
+                spans = {}
+                active_piles, active_users = set(), set()
+                for row in g.orders:
+                    for field in ("started_at", "ended_at", "settled_at"):
+                        if row[field]:
+                            self.assertGreaterEqual(parse_iso(row[field]), g.t0)
+                            self.assertLess(parse_iso(row[field]), g.t1)
+                    if row["started_at"]:
+                        start = parse_iso(row["started_at"])
+                        end = parse_iso(row["ended_at"]) if row["ended_at"] else g.t1
+                        self.assertLess(start, end)
+                        spans.setdefault(row["pile_id"], []).append((start, end))
+                        for gap in g.collection_gaps:
+                            station = g.piles[row["pile_id"] - 1]["station_id"]
+                            if station == gap["station_id"]:
+                                self.assertFalse(start < parse_iso(gap["gap_end_exclusive"])
+                                                 and end > parse_iso(gap["gap_start"]))
+                    if row["status"] in ("charging", "pending_settlement", "reserved",
+                                         "pending_reservation"):
+                        self.assertNotIn(row["pile_id"], active_piles)
+                        self.assertNotIn(row["user_id"], active_users)
+                        active_piles.add(row["pile_id"])
+                        active_users.add(row["user_id"])
+                for intervals in spans.values():
+                    intervals.sort()
+                    for previous, following in zip(intervals, intervals[1:]):
+                        self.assertLessEqual(previous[1], following[0])
 
 
 if __name__ == "__main__":
