@@ -1,4 +1,10 @@
 // Missing measurements stay missing; a measured zero remains a valid value.
+export function orderStatusLabel(status) {
+  return { completed: '已完成', cancelled: '已取消', exception: '异常',
+    pending_reservation: '待确认预约', reserved: '已预约', charging: '充电中',
+    pending_settlement: '待结算' }[status] ?? status;
+}
+
 export function metric(value, suffix = '', digits = 0, scale = 1) {
   return value == null || !Number.isFinite(Number(value))
     ? '未提供' : `${(Number(value) * scale).toFixed(digits)}${suffix}`;

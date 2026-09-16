@@ -91,6 +91,7 @@ def main(argv=None):
     ).orderBy("stat_date", "station_id", "user_id").collect()]
     order_activity = [r.asDict() for r in read("ads_order_activity").select(
         "station_id", "status", "start_hour", "order_count", "duration_seconds",
+        "duration_le15", "duration_15_30", "duration_30_60", "duration_gt60",
         F.date_format("stat_date", "yyyy-MM-dd").alias("stat_date")
     ).orderBy("stat_date", "station_id", "status", "start_hour").collect()]
     total_users = int(read("ads_user_summary").collect()[0]["total_users"])
@@ -146,7 +147,7 @@ def main(argv=None):
         },
         "data": {
             # 内部聚合事实只供 API 筛选；响应只返回计算后的工作台指标。
-            "workbenchFacts": {"version": 1, "totalUsers": total_users,
+            "workbenchFacts": {"version": 2, "totalUsers": total_users,
                                "users": user_activity, "orders": order_activity},
             "overview": {
                 "revenueCents": int(overview["revenue_cents"]),

@@ -264,12 +264,13 @@ def create_app(config: dict | None = None):
     # ------------------------------------------------------------------ 静态与运行时配置
     @app.get("/runtime-config.js")
     def runtime_config():
-        # 兼容原 serve.py: window.__EV_CONFIG__；不搬 WebService 凭据，地图默认拓扑（无 key）
-        cfg_js = json.dumps({"tencentMapKey": "", "demo": False, "source": "analytics",
+        # 只发布浏览器底图专用 key；WebService 凭据仍留在服务端。
+        cfg_js = json.dumps({"tencentMapJsKey": os.environ.get("TENCENT_MAP_JS_KEY", ""),
+                             "demo": False, "source": "analytics",
                              "analysisApiBaseUrl": os.environ.get("EV_ANALYSIS_API_BASE_URL", "")},
                             ensure_ascii=False)
         return Response(f"window.__EV_CONFIG__ = {cfg_js};\n",
-                        mimetype="application/javascript")
+                        mimetype="application/javascript", headers={"Cache-Control": "no-store"})
 
     @app.get("/")
     def index():

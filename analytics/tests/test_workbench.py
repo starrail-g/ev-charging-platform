@@ -6,6 +6,7 @@ from analytics.api.app import create_app
 from analytics.api.app import _filter_data
 from analytics.api.snapshot_store import SnapshotStore, SnapshotCorrupt
 from analytics.tests.test_api import dash_payload
+from analytics.api.workbench import revenue_trend, station_groups, equipment_activity
 
 
 class WorkbenchCase(unittest.TestCase):
@@ -70,10 +71,71 @@ class WorkbenchCase(unittest.TestCase):
 
     def test_runtime_config_passes_explicit_ml_endpoint_only(self):
         with patch.dict('os.environ', {'EV_ANALYSIS_API_BASE_URL': 'http://127.0.0.1:61501',
+                                       'TENCENT_MAP_JS_KEY': 'browser-map-test-key',
                                        'TENCENT_MAP_KEY': 'must-not-expose'}):
             response = create_app().test_client().get('/runtime-config.js').get_data(as_text=True)
         self.assertIn('"analysisApiBaseUrl": "http://127.0.0.1:61501"', response)
         self.assertNotIn('must-not-expose', response)
+        self.assertIn('"tencentMapJsKey": "browser-map-test-key"', response)
+
+    def test_equipment_scores_use_selected_snapshot_population(self):
+        self.data['piles'] = [dict(id=i, stationId=1 if i<5 else 2, code=f'P-{i}',
+                                  status='idle', totalChargeCount=0 if i<5 else 12) for i in range(6)]
+        mining = self.get()['equipment_mining']
+        self.assertEqual(mining['sample_count'], 6)
+        self.assertEqual(mining['anomaly_count'], 1)
+        self.assertEqual(mining['top_anomalies'][0]['pile_id'], 5)
+        self.assertAlmostEqual(mining['top_anomalies'][0]['z_score'], 5**.5)
+        self.assertEqual(self.get('2026-09-02')['equipment_mining'], mining)
+        selected = self.get(station=1)['equipment_mining']
+        self.assertEqual(selected['sample_count'], 5)
+        self.assertIsNone(selected['anomaly_count'])
+        self.assertTrue(all(r['z_score'] is None for r in selected['top_anomalies']))
+        self.assertIsNone(equipment_activity([]))
+        self.assertIsNone(equipment_activity([dict(id=1, code='P', stationId=1)]))
+        self.assertIsNone(equipment_activity([dict(totalChargeCount=-1)]))
+        json.dumps(selected, allow_nan=False)
+
+    def test_regression_uses_calendar_days_and_handles_constant_series(self):
+        rows = [{'date': '2026-09-01', 'revenue_cents': 100},
+                {'date': '2026-09-03', 'revenue_cents': 300},
+                {'date': '2026-09-04', 'revenue_cents': 400}]
+        trend = revenue_trend(rows)
+        self.assertEqual(trend['slope_cents_per_day'], 100)
+        self.assertEqual(trend['r2'], 1)
+        self.assertEqual(trend['fitted_cents'], [100, 300, 400])
+        self.assertIsNone(revenue_trend(rows[:1]))
+        for row in rows:
+            row['revenue_cents'] = 0
+        self.assertIsNone(revenue_trend(rows)['r2'])
+
+    def test_station_thresholds_and_pareto_use_same_station_axis(self):
+        rows = [dict(station_id=i, revenue_cents=value, utilization=util)
+                for i, value, util in [(1, 60, .65), (2, 30, .35), (3, 10, .1)]]
+        groups = station_groups(rows)
+        self.assertEqual([r['cluster'] for r in groups['pareto']], ['高负荷', '均衡', '低负荷'])
+        self.assertEqual([r['cumulative_share'] for r in groups['pareto']], [.6, .9, 1])
+        self.assertEqual([r['count'] for r in groups['centroids']], [1, 1, 1])
+        groups = station_groups([dict(station_id=1, revenue_cents=0, utilization=0)])
+        self.assertIsNone(groups['pareto'][0]['cumulative_share'])
+        self.assertIsNone(groups['centroids'][0]['avg_utilization'])
+
+    def test_duration_conservation_filtering_and_control_limits(self):
+        facts = self.data['workbenchFacts']
+        facts['version'] = 2
+        for row in facts['orders']:
+            row.update(duration_le15=0, duration_15_30=0, duration_30_60=0, duration_gt60=0)
+        facts['orders'][0]['duration_30_60'] = 1
+        SnapshotStore._validate_dashboard(self.dash, 'test')
+        a = self.get()
+        self.assertEqual([r['count'] for r in a['service']['duration_buckets']], [0, 0, 1, 0])
+        self.assertEqual(a['service']['service_control']['baseline_completion_rate'], .5)
+        self.assertEqual(len(a['service']['service_control']['limits']), 2)
+        self.assertTrue(all(0 <= r['lower'] <= r['upper'] <= 1 for r in a['service']['service_control']['limits']))
+        self.assertEqual(sum(r['count'] for r in self.get('2026-09-02')['service']['duration_buckets']), 0)
+        facts['orders'][0]['duration_30_60'] = 2
+        with self.assertRaises(SnapshotCorrupt):
+            SnapshotStore._validate_dashboard(self.dash, 'test')
 
 
 if __name__ == '__main__':

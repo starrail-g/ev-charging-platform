@@ -109,6 +109,8 @@ class TestDq01Warehouse(WarehouseCase):
         orders = self.spark.read.parquet(to_uri(work / "ads" / "ads_order_activity")).collect()
         self.assertEqual(sum(r["order_count"] for r in orders if r["status"] == 'completed'), 2)
         self.assertEqual(sum(r["duration_seconds"] for r in orders), 5400)
+        self.assertEqual([sum(r[k] for r in orders) for k in
+                          ("duration_le15", "duration_15_30", "duration_30_60", "duration_gt60")], [0, 1, 1, 0])
 
         trend = self.spark.read.parquet(to_uri(work / "ads" / "ads_revenue_trend")).collect()
         self.assertEqual(len(trend), 1)

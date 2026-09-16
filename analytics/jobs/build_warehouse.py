@@ -274,7 +274,17 @@ def run(spark, dwd, output, batch_id, manifest):
                TO_DATE(o.created_at) AS stat_date, o.status,
                HOUR(o.started_at) AS start_hour, COUNT(*) AS order_count,
                SUM(CASE WHEN o.status = 'completed'
-                   THEN unix_timestamp(o.ended_at) - unix_timestamp(o.started_at) ELSE 0 END) AS duration_seconds
+                   THEN unix_timestamp(o.ended_at) - unix_timestamp(o.started_at) ELSE 0 END) AS duration_seconds,
+               SUM(CASE WHEN o.status = 'completed' AND
+                   unix_timestamp(o.ended_at) - unix_timestamp(o.started_at) <= 900 THEN 1 ELSE 0 END) AS duration_le15,
+               SUM(CASE WHEN o.status = 'completed' AND
+                   unix_timestamp(o.ended_at) - unix_timestamp(o.started_at) > 900 AND
+                   unix_timestamp(o.ended_at) - unix_timestamp(o.started_at) <= 1800 THEN 1 ELSE 0 END) AS duration_15_30,
+               SUM(CASE WHEN o.status = 'completed' AND
+                   unix_timestamp(o.ended_at) - unix_timestamp(o.started_at) > 1800 AND
+                   unix_timestamp(o.ended_at) - unix_timestamp(o.started_at) <= 3600 THEN 1 ELSE 0 END) AS duration_30_60,
+               SUM(CASE WHEN o.status = 'completed' AND
+                   unix_timestamp(o.ended_at) - unix_timestamp(o.started_at) > 3600 THEN 1 ELSE 0 END) AS duration_gt60
         FROM dwd_order o JOIN dwd_pile p ON o.pile_id = p.id
         GROUP BY p.station_id, TO_DATE(o.created_at), o.status, HOUR(o.started_at)
     """)

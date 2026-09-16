@@ -192,7 +192,7 @@ class SnapshotStore:
             raise SnapshotCorrupt("dashboard.json data.quality must be an object")
         facts = data.get("workbenchFacts")
         if facts is not None:
-            if (not isinstance(facts, dict) or facts.get("version") != 1
+            if (not isinstance(facts, dict) or facts.get("version") not in (1, 2)
                     or not _type_ok(facts.get("totalUsers"), "int") or facts["totalUsers"] < 0):
                 raise SnapshotCorrupt("invalid workbenchFacts header")
             specs = {
@@ -223,3 +223,9 @@ class SnapshotStore:
                                 or duration is not None and (not _type_ok(duration, "int") or duration < 0)
                                 or row["order_count"] < 0):
                             raise SnapshotCorrupt("invalid order aggregates")
+                        if facts["version"] == 2:
+                            buckets = [row.get(k) for k in ("duration_le15", "duration_15_30",
+                                                           "duration_30_60", "duration_gt60")]
+                            if (any(not _type_ok(v, "int") or v < 0 for v in buckets)
+                                    or sum(buckets) != (row["order_count"] if row["status"] == "completed" else 0)):
+                                raise SnapshotCorrupt("invalid duration bucket conservation")

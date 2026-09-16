@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { metric, panelMissing } from '../js/workbench-state.js';
+import { metric, panelMissing, orderStatusLabel } from '../js/workbench-state.js';
+
+test('order states use Chinese labels without changing existing Chinese labels', () => {
+  assert.deepEqual(['completed','cancelled','exception','charging','reserved','pending_reservation','pending_settlement'].map(orderStatusLabel),
+    ['已完成','已取消','异常','充电中','已预约','待确认预约','待结算']);
+  assert.equal(orderStatusLabel('已完成'), '已完成');
+});
 
 test('absent metrics are distinct from observed zero', () => {
   for (const missing of [undefined, null, NaN, Infinity]) assert.equal(metric(missing), '未提供');

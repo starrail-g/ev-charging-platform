@@ -4,6 +4,7 @@
 // 金额始终由整数分转换；正常运行数据来自 Schema v0.4 快照。
 import { mapPileStatus, STATUS_META } from './status-map.js';
 import { formatCents } from './data-adapter.js';
+import { orderStatusLabel, metric } from './workbench-state.js';
 
 const TEXT_FAMILY = 'system-ui, "Segoe UI", "Microsoft YaHei", sans-serif';
 
@@ -241,8 +242,9 @@ export function renderUserSegments(el, segments = [], mining = {}) {
 /** 设备运行：状态分布与快慢充类型分布。 */
 export function renderEquipmentOverview(el, equipment = {}, mining = {}) {
   const status = equipment.status_counts ?? {};
-  const labels = Object.keys(status);
-  const values = labels.map((key) => status[key]);
+  const keys = Object.keys(status);
+  const labels = keys.map(key => STATUS_META[key] ? mapPileStatus(key).label : key);
+  const values = keys.map(key => ({ value: status[key], itemStyle: { color: mapPileStatus(key).color } }));
   return renderAnalysisChart(el, {
     tooltip: { ...chartTheme().tooltip, trigger: 'axis' },
     grid: { left: 42, right: 18, top: 22, bottom: 34 },
@@ -342,13 +344,13 @@ export function renderHealthScore(el, metrics = {}, analytics = {}) {
 
 /** 总览：展示最偏离累计充电次数基线的桩。 */
 export function renderAnomalyScan(el, mining = {}) {
-  const rows = (mining.top_anomalies ?? []).slice(0, 6).reverse();
+  const rows = (mining.top_anomalies ?? []).filter(row => row.z_score != null && Math.abs(row.z_score) >= (mining.threshold ?? 2)).slice(0, 6).reverse();
   return renderAnalysisChart(el, {
     tooltip: { ...chartTheme().tooltip, trigger: 'axis', valueFormatter: (value) => `z=${Number(value).toFixed(2)}` },
     grid: { left: 84, right: 20, top: 12, bottom: 24 },
     xAxis: { type: 'value', name: 'z-score', axisLabel: { color: chartTheme().palette.muted } },
     yAxis: { type: 'category', data: rows.map((row) => row.pile_code ?? `桩 ${row.pile_id}`), axisLabel: { color: chartTheme().palette.muted } },
-    series: rows.length ? [{ type: 'bar', data: rows.map((row) => Number(row.z_score ?? 0)), itemStyle: { color: resolveVar('--state-fault'), borderRadius: [0, 4, 4, 0] }, markLine: { data: [{ xAxis: Number(mining.threshold ?? 2) }, { xAxis: -Number(mining.threshold ?? 2) }] } }] : emptySeries('暂无异常桩'),
+    series: rows.length ? [{ type: 'bar', data: rows.map((row) => row.z_score), itemStyle: { color: resolveVar('--state-fault'), borderRadius: [0, 4, 4, 0] }, markLine: { data: [{ xAxis: Number(mining.threshold ?? 2) }, { xAxis: -Number(mining.threshold ?? 2) }] } }] : emptySeries(mining.stddev_charge_count === 0 ? '累计次数无差异，无法计算偏离' : '暂无统计异常桩'),
   });
 }
 
@@ -360,7 +362,7 @@ export function renderClusterSummary(el, mining = {}) {
     grid: { left: 50, right: 18, top: 18, bottom: 32 },
     xAxis: { type: 'category', data: rows.map((row) => row.label), axisLabel: { color: chartTheme().palette.muted } },
     yAxis: { type: 'value', max: 1, axisLabel: { color: chartTheme().palette.muted, formatter: (value) => `${Math.round(value * 100)}%` } },
-    series: [{ name: '平均利用率', type: 'bar', data: rows.map((row) => row.avg_utilization ?? 0), itemStyle: { color: resolveVar('--state-idle'), borderRadius: [4, 4, 0, 0] }, label: { show: true, position: 'top', formatter: ({ value }) => `${Math.round(Number(value) * 100)}%` } }],
+    series: [{ name: '平均利用率', type: 'bar', data: rows.map((row) => row.avg_utilization ?? null), itemStyle: { color: resolveVar('--state-idle'), borderRadius: [4, 4, 0, 0] }, label: { show: true, position: 'top', formatter: ({ value }) => value == null ? '' : `${Math.round(Number(value) * 100)}%` } }],
   });
 }
 
@@ -429,25 +431,30 @@ export function renderRfmMatrix(el, mining = {}) {
   });
 }
 
-/** 用户与设备页：异常桩 z-score + 功率分布的设备风险视图。 */
+/** 用户与设备页：累计充电次数偏离排名；统计异常不代表设备故障。 */
 export function renderEquipmentRisk(el, equipment = {}, mining = {}) {
   const rows = (mining.top_anomalies ?? []).slice(0, 8).reverse();
+  const hasScores = rows.some(row => row.z_score != null);
   return renderAnalysisChart(el, {
-    tooltip: { ...chartTheme().tooltip, trigger: 'axis', valueFormatter: (value) => `z=${Number(value).toFixed(2)}` },
-    grid: { left: 78, right: 18, top: 18, bottom: 34 },
-    xAxis: { type: 'value', name: 'z-score', axisLabel: { color: chartTheme().palette.muted } },
+    tooltip: { ...chartTheme().tooltip, trigger: 'axis', valueFormatter: (value) => hasScores ? `z=${Number(value).toFixed(2)}` : `${value} 次` },
+    grid: { left: 95, right: 45, top: 22, bottom: 38 },
+    xAxis: { type: 'value', name: hasScores ? 'z-score' : '次数', axisLabel: { color: chartTheme().palette.muted } },
     yAxis: { type: 'category', data: rows.map((row) => row.pile_code ?? `桩 ${row.pile_id}`), axisLabel: { color: chartTheme().palette.muted } },
-    series: rows.length ? [{ type: 'bar', data: rows.map((row) => Number(row.z_score ?? 0)), itemStyle: { color: resolveVar('--state-fault'), borderRadius: [0, 4, 4, 0] } }] : emptySeries('暂无异常桩'),
+    series: rows.length ? [{ name: hasScores ? '充电次数偏离' : '累计充电次数', type: 'bar',
+      data: rows.map(row => ({ value: hasScores ? row.z_score : row.total_charge_count,
+        itemStyle: { color: resolveVar(row.anomaly ? '--state-fault' : '--state-charging') } })),
+      markLine: hasScores ? { silent: true, data: [{ xAxis: mining.threshold ?? 2 }, { xAxis: -(mining.threshold ?? 2) }] } : undefined }] : emptySeries('暂无设备样本'),
     graphic: [{ type: 'text', left: 'center', bottom: 5, style: { text: `设备总量 ${Object.values(equipment.status_counts ?? {}).reduce((sum, value) => sum + Number(value), 0)} 台`, fill: chartTheme().palette.muted, fontSize: 11 } }],
   });
 }
 
 /** 订单页：状态计数漏斗。 */
 export function renderOrderFunnel(el, orders = {}) {
-  const rows = orders.status_counts ?? [];
+  const rows = (orders.status_counts ?? []).map(row => ({ ...row, label: orderStatusLabel(row.label) }));
   return renderAnalysisChart(el, {
     tooltip: { ...chartTheme().tooltip, trigger: 'item' },
-    series: [{ type: 'funnel', left: '8%', top: 16, bottom: 18, width: '84%', min: 0, max: Math.max(1, ...rows.map((row) => Number(row.count ?? 0))), minSize: '20%', maxSize: '92%', sort: 'descending', gap: 3, label: { color: chartTheme().palette.text, formatter: ({ name, value }) => `${name}  ${value}` }, itemStyle: { borderColor: resolveVar('--night-bg'), borderWidth: 1 }, data: rows.map((row) => ({ name: row.label, value: row.count })) }],
+    legend: { ...chartTheme().legend, type: 'scroll', bottom: 0 },
+    series: [{ type: 'funnel', left: '8%', top: 16, bottom: 50, width: '84%', min: 0, max: Math.max(1, ...rows.map((row) => Number(row.count ?? 0))), minSize: '20%', maxSize: '92%', sort: 'descending', gap: 3, label: { color: chartTheme().palette.text, formatter: ({ name, value }) => `${name}  ${value}` }, itemStyle: { borderColor: resolveVar('--night-bg'), borderWidth: 1 }, data: rows.map((row) => ({ name: row.label, value: row.count })) }],
   });
 }
 
@@ -472,7 +479,7 @@ export function renderRevenueRegression(el, revenue = {}) {
   const xMean = (values.length - 1) / 2;
   const denominator = values.reduce((sum, _value, index) => sum + (index - xMean) ** 2, 0);
   const slope = denominator ? values.reduce((sum, value, index) => sum + (index - xMean) * (value - mean), 0) / denominator : 0;
-  const fit = values.map((_value, index) => mean + slope * (index - xMean));
+  const fit = revenue.trend?.fitted_cents ?? values.map((_value, index) => mean + slope * (index - xMean));
   return renderAnalysisChart(el, {
     tooltip: { ...chartTheme().tooltip, trigger: 'axis', valueFormatter: (value) => formatCents(Math.round(value)) },
     legend: { ...chartTheme().legend, top: 0 },
@@ -480,21 +487,22 @@ export function renderRevenueRegression(el, revenue = {}) {
     xAxis: { type: 'category', data: rows.map((row) => row.date?.slice(5) ?? '—'), axisLabel: { color: chartTheme().palette.muted } },
     yAxis: { type: 'value', axisLabel: { color: chartTheme().palette.muted, formatter: (value) => `¥${Math.round(value / 100)}` } },
     series: [{ name: '实际营收', type: 'bar', data: values, itemStyle: { color: resolveVar('--state-idle'), opacity: 0.8 } }, { name: 'OLS 拟合', type: 'line', data: fit, smooth: false, lineStyle: { color: resolveVar('--night-focus'), width: 2, type: 'dashed' } }],
-    graphic: [{ type: 'text', left: 'center', bottom: 3, style: { text: `斜率 ${(Number(revenue.trend?.slope_cents_per_day ?? slope) / 100).toFixed(2)} 元/日 · R² ${Number(revenue.trend?.r2 ?? 0).toFixed(2)}`, fill: chartTheme().palette.muted, fontSize: 11 } }],
+    graphic: [{ type: 'text', left: 'center', bottom: 3, style: { text: `斜率 ${(Number(revenue.trend?.slope_cents_per_day ?? slope) / 100).toFixed(2)} 元/日 · R² ${metric(revenue.trend?.r2, '', 2)}`, fill: chartTheme().palette.muted, fontSize: 11 } }],
   });
 }
 
 /** 站点页：聚类平均利用率与累计营收 Pareto。 */
-export function renderStationClusters(el, mining = {}) {
-  const centroids = mining.centroids ?? [];
-  const pareto = mining.pareto ?? [];
+export function renderStationClusters(el, mining = {}, stations = []) {
+  const byId = new Map(stations.map(row => [row.station_id, row]));
+  const pareto = (mining.pareto ?? []).map(row => ({ ...byId.get(row.station_id), ...row }));
+  const colors = { '高负荷': resolveVar('--state-fault'), '均衡': resolveVar('--state-charging'), '低负荷': resolveVar('--state-idle') };
   return renderAnalysisChart(el, {
-    tooltip: { ...chartTheme().tooltip, trigger: 'axis' },
+    tooltip: { ...chartTheme().tooltip, trigger: 'axis', valueFormatter: value => metric(value, '%', 1, 100) },
     legend: { ...chartTheme().legend, top: 0 },
-    grid: { left: 50, right: 48, top: 34, bottom: 34 },
-    xAxis: { type: 'category', data: centroids.map((row) => row.label), axisLabel: { color: chartTheme().palette.muted } },
+    grid: { left: 50, right: 48, top: 34, bottom: 60 },
+    xAxis: { type: 'category', data: pareto.map(row => `${row.name}\n${row.cluster ?? ''}`), axisLabel: { color: chartTheme().palette.muted, width: 65, overflow: 'truncate' } },
     yAxis: [{ type: 'value', max: 1, axisLabel: { color: chartTheme().palette.muted, formatter: (value) => `${Math.round(value * 100)}%` } }, { type: 'value', max: 1, axisLabel: { color: chartTheme().palette.muted, formatter: (value) => `${Math.round(value * 100)}%` } }],
-    series: [{ name: '聚类平均利用率', type: 'bar', data: centroids.map((row) => row.avg_utilization ?? 0), itemStyle: { color: resolveVar('--state-charging'), borderRadius: [4, 4, 0, 0] } }, { name: '累计营收占比', type: 'line', yAxisIndex: 1, data: centroids.map((_row, index) => pareto.length ? pareto[Math.min(pareto.length - 1, Math.round((index + 1) * pareto.length / Math.max(1, centroids.length)) - 1)]?.cumulative_share ?? 0 : 0), lineStyle: { color: resolveVar('--state-idle'), type: 'dashed' } }],
+    series: [{ name: '站点利用率', type: 'bar', data: pareto.map(row => ({ value: row.utilization ?? null, itemStyle: { color: colors[row.cluster] ?? resolveVar('--state-charging') } })) }, { name: '累计营收占比', type: 'line', yAxisIndex: 1, data: pareto.map(row => row.cumulative_share), lineStyle: { color: resolveVar('--night-focus'), type: 'dashed' } }],
   });
 }
 
@@ -513,13 +521,19 @@ export function renderDurationBuckets(el, service = {}) {
 /** 服务页：按日完成率与基线对照。 */
 export function renderServiceControl(el, orders = {}, service = {}) {
   const daily = orders.daily ?? [];
-  const baseline = Number(service.service_control?.baseline_completion_rate ?? service.completion_rate ?? 0) * 100;
+  const baseline = service.service_control?.baseline_completion_rate ?? service.completion_rate;
+  const limits = new Map((service.service_control?.limits ?? []).map(row => [row.date, row]));
   return renderAnalysisChart(el, {
+    legend: { ...chartTheme().legend, top: 0, type: 'scroll' },
     tooltip: { ...chartTheme().tooltip, trigger: 'axis', valueFormatter: (value) => `${Number(value).toFixed(1)}%` },
-    grid: { left: 48, right: 18, top: 22, bottom: 30 },
+    grid: { left: 48, right: 18, top: 38, bottom: 30 },
     xAxis: { type: 'category', data: daily.map((row) => row.date?.slice(5) ?? '—'), axisLabel: { color: chartTheme().palette.muted } },
     yAxis: { type: 'value', min: 0, max: 100, axisLabel: { color: chartTheme().palette.muted, formatter: '{value}%' } },
-    series: [{ name: '日完成率', type: 'line', smooth: true, data: daily.map((row) => row.total ? (Number(row.completed ?? 0) / Number(row.total)) * 100 : 0), lineStyle: { color: resolveVar('--night-focus') }, areaStyle: { color: 'rgba(77, 215, 255, 0.12)' } }, { name: '总体基线', type: 'line', data: daily.map(() => baseline), symbol: 'none', lineStyle: { color: resolveVar('--state-reserved'), type: 'dashed' } }],
+    series: [{ name: '日完成率', type: 'line', smooth: false, data: daily.map(row => row.total ? row.completed / row.total * 100 : null), lineStyle: { color: resolveVar('--night-focus') } },
+      { name: '总体基线', type: 'line', data: daily.map(() => baseline == null ? null : baseline * 100), symbol: 'none', lineStyle: { color: resolveVar('--state-reserved'), type: 'dashed' } },
+      ...['upper', 'lower'].map(key => ({ name: key === 'upper' ? '上控制限' : '下控制限', type: 'line', symbol: 'none',
+        data: daily.map(row => limits.has(row.date) ? limits.get(row.date)[key] * 100 : null),
+        lineStyle: { color: resolveVar('--state-fault'), type: 'dotted' } }))],
   });
 }
 

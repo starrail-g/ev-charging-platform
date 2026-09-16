@@ -512,7 +512,7 @@ async function renderAnalysisWorkbench(model, chartRegistry, instances) {
     ['analysis-revenue', () => renderRevenueTrend(document.getElementById('analysis-revenue'), (analytics.revenue?.daily ?? []).map((row) => row.revenue_cents), model.updatedAt, (analytics.revenue?.daily ?? []).map((row) => row.date))],
     ['analysis-stations', () => renderStationRanking(document.getElementById('analysis-stations'), analytics.stations)],
     ['analysis-revenue-regression', () => renderRevenueRegression(document.getElementById('analysis-revenue-regression'), analytics.revenue)],
-    ['analysis-station-clusters', () => renderStationClusters(document.getElementById('analysis-station-clusters'), analytics.station_mining)],
+    ['analysis-station-clusters', () => renderStationClusters(document.getElementById('analysis-station-clusters'), analytics.station_mining, analytics.stations)],
     ['analysis-service', () => renderServiceQuality(document.getElementById('analysis-service'), analytics.service)],
     ['analysis-service-duration', () => renderDurationBuckets(document.getElementById('analysis-service-duration'), analytics.service)],
     ['analysis-service-control', () => renderServiceControl(document.getElementById('analysis-service-control'), analytics.orders, analytics.service)],
@@ -540,15 +540,15 @@ async function renderAnalysisWorkbench(model, chartRegistry, instances) {
     users: [['用户总量', users.total], ['复购用户', users.repeat_users], ['复购率', metric(users.total > 0 ? users.repeat_users / users.total : null, '%', 0, 100)]],
     equipment: [['设备总量', Object.values(equipment.status_counts ?? {}).reduce((a, b) => a + Number(b), 0)], ['模拟设备', equipment.simulated_count], ['重启次数', equipment.restart_count]],
     'user-cohort': [['RFM 样本', analytics.user_mining?.sample_count ?? analytics.user_mining?.top_users?.length], ['高价值客群', analytics.user_mining?.segments?.find((row) => row.segment === '高价值')?.count], ['方法', 'RFM']],
-    'equipment-risk': [['异常桩', analytics.equipment_mining?.anomaly_count ?? 0], ['阈值', `|z| ≥ ${analytics.equipment_mining?.threshold ?? 2}`], ['方法', 'z-score']],
+    'equipment-risk': [['偏离异常桩', analytics.equipment_mining?.anomaly_count], ['阈值', `|z| ≥ ${analytics.equipment_mining?.threshold ?? 2}`], ['样本桩', analytics.equipment_mining?.sample_count]],
     orders: [['订单总量', orders.total], ['完成率', metric(orders.completion_rate, '%', 0, 100)], ['平均时长', metric(orders.avg_duration_minutes, ' min')]],
     energy: [['累计能耗', metric(energy.total_kwh, ' kWh', 1)], ['单次均值', metric(energy.avg_session_kwh, ' kWh', 1)], ['峰值时段', energy.peak_hour == null ? '无有效样本' : `${energy.peak_hour}:00`]],
     'order-funnel': [['完成订单', orders.completed ?? 0], ['取消订单', orders.cancelled ?? 0], ['异常/活动', orders.active ?? 0]],
     'energy-peaks': [['峰值占比', metric(energy.peak_share, '%', 1, 100)], ['能耗相关', metric(energy.order_energy_correlation, '', 2)], ['时段数', energy.time_bands?.length]],
     revenue: [['近 30 日', formatAnalysisMoney(revenue.total_30d_cents)], ['日均收益', formatAnalysisMoney(revenue.avg_daily_cents)], ['样本天数', revenue.daily?.length ?? 0]],
     stations: [['站点数', analytics.stations?.length ?? 0], ['头部站点', analytics.stations?.[0]?.name ?? '—'], ['头部营收', formatAnalysisMoney(analytics.stations?.[0]?.revenue_cents)]],
-    'revenue-regression': [['日斜率', `${(Number(revenue.trend?.slope_cents_per_day ?? 0) / 100).toFixed(2)} 元`], ['拟合度 R²', Number(revenue.trend?.r2 ?? 0).toFixed(2)], ['方法', 'OLS']],
-    'station-clusters': [['聚类数', analytics.station_mining?.clusters?.length ?? 0], ['高负荷站点', analytics.station_mining?.clusters?.find((row) => row.label === '高负荷')?.count ?? 0], ['累计口径', '营收 Pareto']],
+    'revenue-regression': [['日斜率', metric(revenue.trend?.slope_cents_per_day, ' 元', 2, 0.01)], ['拟合度 R²', metric(revenue.trend?.r2, '', 2)], ['方法', 'OLS']],
+    'station-clusters': [['非空分组', analytics.station_mining?.clusters?.filter(row => row.count > 0).length ?? 0], ['高负荷站点', analytics.station_mining?.clusters?.find((row) => row.label === '高负荷')?.count ?? 0], ['累计口径', '营收 Pareto']],
     service: [['完成率', metric(service.completion_rate, '%', 0, 100)], ['非取消率', metric(service.cancel_rate == null ? null : 1 - service.cancel_rate, '%', 0, 100)], ['平均服务时长', metric(service.avg_duration_minutes, ' min')]],
     'service-duration': [['完成样本', (service.duration_buckets ?? []).reduce((sum, row) => sum + Number(row.count ?? 0), 0)], ['均值', `${Number(service.avg_duration_minutes ?? 0).toFixed(0)} min`], ['方法', '分桶统计']],
     'service-control': [['基线完成率', `${Math.round(Number(service.service_control?.baseline_completion_rate ?? service.completion_rate ?? 0) * 100)}%`], ['日样本', orders.daily?.length ?? 0], ['方法', '控制图']],
@@ -558,7 +558,7 @@ async function renderAnalysisWorkbench(model, chartRegistry, instances) {
     users: `复购：完成订单 ≥ 2 次；分母：${users.denominator ?? '用户总量'}`,
     equipment: analytics.scope?.equipment ?? '设备运行状态快照',
     'user-cohort': analytics.scope?.users ?? 'RFM 最近消费、频次、金额三维用户价值矩阵',
-    'equipment-risk': '异常检测：累计充电次数 z-score 与功率档位联合筛查',
+    'equipment-risk': analytics.equipment_mining?.note ?? '批次末累计充电次数 z-score；统计偏离不等于设备故障',
     stations: '按所选窗口结算营收排序；利用率来自数仓小时网格',
     orders: analytics.scope?.orders ?? '全部、完成、取消订单按日统计',
     energy: analytics.scope?.energy ?? '小时级能耗与订单量',
@@ -567,9 +567,9 @@ async function renderAnalysisWorkbench(model, chartRegistry, instances) {
     revenue: '趋势分析：30 日滚动序列与日均收益基线',
     service: '服务分析：履约率、取消率、复购率联合画像',
     'revenue-regression': '回归分析：普通最小二乘拟合日营收趋势，展示斜率与 R²',
-    'station-clusters': '聚类 + Pareto：站点负荷层级与营收累计贡献联看',
-    'service-duration': '分布分析：完成订单履约时长分桶，观察长尾效率',
-    'service-control': '统计过程控制：日完成率对总体基线做波动监测',
+    'station-clusters': '利用率分组：高负荷 ≥65%，均衡 ≥35%，其余低负荷；按营收降序',
+    'service-duration': '完成订单充电时长，按创建日筛选；分桶右端包含边界',
+    'service-control': '按创建日队列计算完成率；控制限按每日样本量计算（3σ）',
     'service-data': '数据质量：评价表缺失则只呈现可追溯订单代理指标',
   };
   for (const [panelId, rows] of Object.entries(insights)) {
@@ -779,8 +779,7 @@ async function boot() {
     // 地图：离线（含 offline 演示注入）强制拓扑，重试时 surface 内部先清理旧渲染器
     const onlineAvailable = typeof navigator !== 'undefined' ? navigator.onLine : true;
     const useOnline = onlineAvailable && demoState !== 'offline';
-    const forcedTopology = params.get('map') === 'topology' || demoState === 'offline'
-      || analyticsMode; // 分析批次默认拓扑地图（离线链路不依赖外网地图）
+    const forcedTopology = params.get('map') === 'topology' || demoState === 'offline';
     try {
       const mountResult = await mapSurface.mount(mapContainer, {
         key: config.tencentMapJsKey,
