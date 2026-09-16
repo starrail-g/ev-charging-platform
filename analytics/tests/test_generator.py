@@ -17,7 +17,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from analytics.generate_data import hour_weight, weighted_slot_offsets
+from analytics.generate_data import GENERATOR_VERSION, hour_weight, weighted_slot_offsets
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 GEN = REPO / "analytics" / "generate_data.py"
@@ -166,9 +166,24 @@ class GeneratorCase(unittest.TestCase):
                                 "DQ11 正例缺失")
         manifest = json.loads((batch / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["profile"], "low")
+        self.assertEqual(manifest["generator_version"], GENERATOR_VERSION)
         for table, meta in manifest["tables"].items():
             f = batch / meta["file"]
             self.assertEqual(hashlib.sha256(f.read_bytes()).hexdigest(), meta["sha256"], table)
+
+        orders = []
+        with open(batch / "input" / "charging_orders.csv", encoding="utf-8", newline="") as fh:
+            orders = list(csv.DictReader(fh))
+        labels_by_id = {l["source_record_id"] for l in labels}
+        counts = {2: 0, 8: 0, 18: 0}
+        for row in orders:
+            if row["id"] in labels_by_id or not row["started_at"]:
+                continue
+            started = parse_iso(row["started_at"])
+            self.assertLessEqual(started, parse_iso(manifest["data_end_exclusive"]))
+            counts[started.hour] = counts.get(started.hour, 0) + 1
+        self.assertGreater(counts[8], counts[2] * 1.5)
+        self.assertGreater(counts[18], counts[2] * 1.5)
 
 
 if __name__ == "__main__":

@@ -30,7 +30,7 @@ from pathlib import Path
 
 UTC = timezone.utc
 SCHEMA_VERSION = "0.4"
-GENERATOR_VERSION = "1.0.0"
+GENERATOR_VERSION = "1.1.0"
 RULES_VERSION = "dq-v1"
 SOURCE_TYPE = "synthetic_warehouse"
 
@@ -140,6 +140,31 @@ def weighted_slot_offsets(start: datetime, end: datetime, count: int) -> list[fl
         within = 0.0 if weight <= 0 else (target - cumulative) / weight
         offsets.append(min(total_seconds, elapsed + within))
     return offsets
+
+
+def weighted_time_sample(start: datetime, end: datetime, rng: random.Random) -> datetime:
+    """Sample a timestamp from [start, end] using the weekday/weekend curve."""
+    if end <= start:
+        return start
+    bins = []
+    cursor = start.replace(minute=0, second=0, microsecond=0)
+    while cursor < end:
+        bucket_end = min(end, cursor + timedelta(hours=1))
+        seconds = (bucket_end - max(start, cursor)).total_seconds()
+        if seconds > 0:
+            bins.append((cursor, seconds, hour_weight(cursor)))
+        cursor = bucket_end
+    total = sum(seconds * weight for _, seconds, weight in bins)
+    if total <= 0:
+        return start + timedelta(seconds=rng.random() * (end - start).total_seconds())
+    target = rng.random() * total
+    for bucket_start, seconds, weight in bins:
+        mass = seconds * weight
+        if target <= mass:
+            return max(start, bucket_start) + timedelta(
+                seconds=(target / max(weight, 1e-9)))
+        target -= mass
+    return end - timedelta(seconds=1)
 
 
 def git_commit(repo_root: Path) -> str:
@@ -329,9 +354,10 @@ class Generator:
                     continue
 
                 dur = self.rng.randint(600, max_dur)
-                slot_gap = offsets[kk + 1] - offsets[kk] if kk + 1 < count else min_step
-                start = slot0 + timedelta(seconds=self.rng.uniform(
-                    0, max(0.0, slot_gap - dur - 300)))
+                slot_end = (self.t0 + timedelta(seconds=offsets[kk + 1])
+                            if kk + 1 < count else self.t1)
+                latest_start = slot_end - timedelta(seconds=dur + 300)
+                start = weighted_time_sample(slot0, max(slot0, latest_start), self.rng)
                 end = start + timedelta(seconds=dur)
                 reserved = start - timedelta(seconds=self.rng.randint(120, 7200))
 
