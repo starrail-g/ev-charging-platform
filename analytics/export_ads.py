@@ -43,7 +43,7 @@ UTC = timezone.utc
 def dump_json(path: Path, obj) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(obj, fh, ensure_ascii=False, indent=2)
+        json.dump(obj, fh, ensure_ascii=False, indent=2, allow_nan=False)
     os.replace(tmp, path)
 
 
@@ -84,6 +84,17 @@ def main(argv=None):
         "capacity_pile_seconds").collect()]
     rank = [r.asDict() for r in read("ads_station_rank").collect()]
     snapshot = [r.asDict() for r in read("ads_pile_snapshot").collect()]
+    user_activity = [r.asDict() for r in read("ads_user_activity").select(
+        "user_id", "station_id", "frequency", "monetary",
+        F.date_format("stat_date", "yyyy-MM-dd").alias("stat_date"),
+        F.date_format("last_settled_at", "yyyy-MM-dd'T'HH:mm:ss'Z'").alias("last_settled_at")
+    ).orderBy("stat_date", "station_id", "user_id").collect()]
+    order_activity = [r.asDict() for r in read("ads_order_activity").select(
+        "station_id", "status", "start_hour", "order_count", "duration_seconds",
+        "duration_le15", "duration_15_30", "duration_30_60", "duration_gt60",
+        F.date_format("stat_date", "yyyy-MM-dd").alias("stat_date")
+    ).orderBy("stat_date", "station_id", "status", "start_hour").collect()]
+    total_users = int(read("ads_user_summary").collect()[0]["total_users"])
 
     # 站点维度来自快照聚合（ADS 内部派生, 不再回读 DWD）
     stations, pile_rows = {}, []
@@ -135,6 +146,9 @@ def main(argv=None):
             "collection_gaps": manifest.get("collection_gaps", []),
         },
         "data": {
+            # 内部聚合事实只供 API 筛选；响应只返回计算后的工作台指标。
+            "workbenchFacts": {"version": 2, "totalUsers": total_users,
+                               "users": user_activity, "orders": order_activity},
             "overview": {
                 "revenueCents": int(overview["revenue_cents"]),
                 "completedOrders": int(overview["completed_orders"]),

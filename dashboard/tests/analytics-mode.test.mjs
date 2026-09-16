@@ -66,6 +66,7 @@ test('adapts analytics payload into the shared view model', () => {
   assert.equal(model.metrics.attentionCount, 1);
   assert.equal(model.metrics.availabilityPercent, 50);
   assert.equal(model.metrics.revenueCents, 1901);
+  assert.equal(model.metrics.revenueLabel, '所选窗口营收');
   assert.equal(model.stationUtilization[0].name, '测试充电站');
   assert.equal(model.stationUtilization[0].utilization, 0.03125);
   assert.deepEqual(model.revenue7dCents, [1901]);
@@ -73,6 +74,16 @@ test('adapts analytics payload into the shared view model', () => {
   assert.equal(model.loadSeries.points[0].label, '9/1 00:00');
   assert.equal(model.loadSeries.points[1].loadKw, 5.0);
   assert.equal(model.empty, false);
+});
+
+test('preserves filtered workbench data and its batch source', () => {
+  const response = payload();
+  response.data.analytics = { users: { total: 500, repeat_users: 200 },
+    equipment: { status_counts: { idle: 67 }, restart_count: null } };
+  const model = adaptAnalyticsPayload(response);
+  assert.deepEqual(model.analytics, response.data.analytics);
+  assert.match(model.meta.source, /s2-smoke-20260915/);
+  assert.equal(model.analytics.equipment.restart_count, null);
 });
 
 test('published coverage window (available_*) wins over the generation window', () => {

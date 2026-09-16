@@ -198,12 +198,14 @@ export function adaptAnalyticsPayload(payload) {
     stations: data.stations,
     stationUtilization,
     piles,
-    metrics: deriveMetrics(data.stations, piles, overview),
+    metrics: { ...deriveMetrics(data.stations, piles, overview), revenueLabel: '所选窗口营收' },
     revenueDaily: revenueSeries,
     revenue7dCents: revenueSeries.slice(-7).map((row) => row.cents),
     revenue30dCents: revenueSeries.slice(-30).map((row) => row.cents),
     revenueSeriesLabels: revenueSeries.map((row) => row.label),
     loadSeries: { points: loadSeriesPoints },
     quality: data.quality ?? null,
+    analytics: data.analytics ?? {},
+    meta: { source: `G3 清洗数仓 · 批次 ${meta.batch_id}` },
   };
 }

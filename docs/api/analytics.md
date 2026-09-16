@@ -127,3 +127,55 @@ python3 -m unittest discover -s analytics/tests -p 'test_api*.py' -v
 - Flask 提供静态大屏资产（`dashboard/`）与 runtime config；**不得**把 `serve.py` 的地图 WebService 凭据搬进浏览器配置；
 - 外网地图不是离线链路依赖（本轮默认拓扑地图）；
 - 刷新页面只触发本地 JSON 读取，**不启动 Spark 批处理**。
+
+## 7. G3 工作台与独立 ML 服务（2026-09-16）
+
+`GET /api/dashboard` 增加 `data.analytics`，由同一发布批次的 ADS 聚合事实计算，随
+`start/end/station_id` 筛选。内部 `workbenchFacts` 不随 API 响应返回，不导出姓名、手机号或账本。
+
+- `users`：已完成订单按结算日统计频次，频次 ≥ 2 为复购。全网分母为清洗后用户总数；
+  单站分母为该站所选窗口有完成订单的用户数。0 单用户只计入全网频次分布。
+- `user_mining`：R = 所选窗口末日与最近结算日之差（UTC，允许 0）；F = 完成订单数；
+  M = 整数分金额。高价值阈值 F ≥ 8 且 M ≥ 100000，成长 F ≥ 3，其余低频。
+  RFM 样本只含消费用户，`sample_count` 是总样本数，`top_users` 仅展示金额前 10 名。
+- `equipment`：清洗后批次末桩快照，按站点过滤，不随日期回溯；状态以中文展示。
+- `equipment_mining`：以所选站点范围全部桩的 `totalChargeCount` 计算总体均值、标准差和 z-score；
+  绝对值 ≥2 为统计偏离异常，不等于设备故障。展示偏离最大的 8 桩，正常桩使用不同颜色。
+  空样本/缺计数时不提供评分；无方差时 z-score 和异常数为 `null`，图中改为实际累计次数。
+- `orders`：按创建日筛选，状态取批次末状态；平均时长仅取完成订单。
+- `revenue/stations`：沿用筛选后的 ADS 结算营收；近 30 日相对查询终点计算。
+- `energy`：沿用 ADS 小时重叠分摊电量，各时段互斥且覆盖 24 小时；
+  订单曲线统计所选创建日队列中完成订单的起始小时，与电量分摊口径分别标注。
+- 缺失用户事实的旧批次仍可展示设备、营收、负荷；需重建数仓补齐用户分析。
+  未提供的评价事实和设备重启次数
+  明确显示“未提供”；分母为零的比例为 `null`，不将其画成 0 或 `NaN%`。
+
+独立 ML 的启动环境：`EV_ANALYSIS_ARTIFACT_DIR` 指向 `forecast.json`、
+`recommendations.json`、`alerts.json`、`model_metadata.json` 所在目录；启动
+`waitress-serve --listen=127.0.0.1:61501 ml.service.app:app`。生成/训练步骤见 `ml/README.md`。
+analytics 大屏进程设置 `EV_ANALYSIS_API_BASE_URL=http://127.0.0.1:61501` 后重启，
+`runtime-config.js` 会注入此地址；ML 可设置 `EV_ANALYSIS_ALLOWED_ORIGIN` 为大屏源地址。
+这里的 loopback 地址供 VM 内浏览器使用。
+
+腾讯底图：大屏进程读取浏览器专用 `TENCENT_MAP_JS_KEY`，经不缓存的 `runtime-config.js`
+传给现有 GL 渲染器。分析模式不再强制拓扑；无 key、离线或 SDK 失败时仍回退拓扑，
+`?map=topology` 可显式指定离线模式。WebService `TENCENT_MAP_KEY` 不会发送给浏览器。
+实际 key 仅放部署环境，禁止提交到仓库；控制台须开通 JavaScript API GL 并允许部署来源。
+
+预测、推荐、预警仍显式标注“独立 ML 链路”，不随 G3 筛选变化，也不是 G3 批次预测。
+本次接入不改模型训练数据边界；要预测 G3 需另行构建其小时特征并重新训练。
+
+### 工作台图表补全
+
+- 营收回归：查询窗口内最近 30 日的已发布营收，以实际日差为自变量做 OLS；
+  少于两日不拟合，常量序列的 R² 为 `null`。`fitted_cents` 与实际日期逐行对应，缺测日不补零。
+- 站点分组：沿用项目利用率阈值，高负荷 ≥65%，均衡 ≥35%，其余低负荷。
+  分组均值仅对实际成员计算；空分组为 `null`。图中按站点营收降序展示利用率与累计营收占比，
+  两条序列共用站点横轴；零总营收的占比为 `null`，不强行分成三个非空组。
+- 履约时长：扩展 `workbenchFacts.version=2`，ADS 订单聚合增加 `duration_le15`、
+  `duration_15_30`、`duration_30_60`、`duration_gt60`。只统计完成订单真实起止时间之差，
+  对应秒数 `(0,900]`、`(900,1800]`、`(1800,3600]`、`(3600,+∞)`，按创建日和站点过滤。
+  每条聚合记录的四桶之和必须等于完成订单数，否则快照返回 503；v1 旧批次兼容且明确缺失分桶。
+- 服务控制图：按所选创建日队列，整体完成率为基线，按每天订单量计算二项比例的三倍标准差控制限，
+  上下限裁剪到 0–1；没有订单的日期不产生控制点。此图反映批次末完成状态，不是评价评分。
+- 订单漏斗仅将展示标签映射为中文，底层状态码和统计数量不变。

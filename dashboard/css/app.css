@@ -1203,6 +1203,7 @@ body.analytics-mode .chart-range { display: none; }
 }
 
 .workspace-nav {
+  min-width: 0;
   position: sticky;
   top: 1rem;
   display: flex;
@@ -1271,6 +1272,7 @@ body.analytics-mode .chart-range { display: none; }
 .analysis-caption { font-size: 0.76rem; }
 .analysis-chart { height: 330px; margin-top: 0.7rem; }
 .forecast-meta { padding-top: 0.45rem; }
+.forecast-meta, .analysis-method, #analysisSnapshotMeta { overflow-wrap: anywhere; }
 .forecast-insights { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; margin-top: 0.65rem; }
 .forecast-insights span { display: grid; gap: 0.18rem; padding: 0.58rem 0.7rem; border-left: 2px solid var(--night-focus); color: var(--night-muted-text); background: color-mix(in srgb, var(--night-decorative) 15%, transparent); font-size: 0.72rem; }
 .forecast-insights b { color: var(--night-text); font-size: 0.7rem; }

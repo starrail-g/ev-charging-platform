@@ -30,7 +30,7 @@ from pathlib import Path
 
 UTC = timezone.utc
 SCHEMA_VERSION = "0.4"
-GENERATOR_VERSION = "1.0.0"
+GENERATOR_VERSION = "1.1.0"
 RULES_VERSION = "dq-v1"
 SOURCE_TYPE = "synthetic_warehouse"
 
@@ -91,6 +91,82 @@ def parse_date(s: str) -> datetime:
 
 def billing_cents(energy_wh: int, price_cents: int, service_fee_cents: int) -> int:
     return (energy_wh * price_cents + 999) // 1000 + service_fee_cents
+
+
+# G3：相对小时权重同时用于划分槽位和槽内起点采样，避免低密度订单被均匀抖动摊平。
+WEEKDAY_HOUR_WEIGHTS = (0.35, 0.30, 0.30, 0.35, 0.45, 0.65, 1.00, 1.55,
+                         1.75, 1.45, 1.05, 1.30, 1.40, 1.25, 1.00, 0.90,
+                         1.05, 1.55, 1.80, 1.85, 1.65, 1.15, 0.75, 0.50)
+WEEKEND_HOUR_WEIGHTS = (0.30, 0.28, 0.28, 0.32, 0.40, 0.52, 0.65, 0.85,
+                         1.00, 1.10, 1.30, 1.60, 1.75, 1.65, 1.45, 1.30,
+                         1.25, 1.45, 1.70, 1.80, 1.70, 1.35, 0.90, 0.55)
+
+
+def hour_weight(value: datetime) -> float:
+    """返回 UTC 时段相对权重；周六/周日使用周末曲线。"""
+    weights = WEEKEND_HOUR_WEIGHTS if value.weekday() >= 5 else WEEKDAY_HOUR_WEIGHTS
+    return weights[value.hour]
+
+
+def weighted_slot_offsets(start: datetime, end: datetime, count: int) -> list[float]:
+    """返回 count 个槽位左边界；窗口末端仅作为最后槽位的右边界。"""
+    if count <= 0:
+        return []
+    total_seconds = (end - start).total_seconds()
+    if total_seconds <= 0:
+        raise ValueError("slot window must have positive duration")
+    bins = []
+    for index in range(int(total_seconds // 3600) + 1):
+        bucket_start = start + timedelta(hours=index)
+        bucket_end = min(end, bucket_start + timedelta(hours=1))
+        seconds = max(0.0, (bucket_end - bucket_start).total_seconds())
+        bins.append((seconds, hour_weight(bucket_start)))
+    weighted_total = sum(seconds * weight for seconds, weight in bins)
+    if weighted_total <= 0:
+        return [total_seconds * i / count for i in range(count)]
+    offsets = []
+    cumulative = 0.0
+    bin_index = 0
+    elapsed = 0.0
+    for slot in range(count):
+        target = weighted_total * slot / count
+        while (bin_index < len(bins) - 1
+               and cumulative + bins[bin_index][0] * bins[bin_index][1] < target):
+            seconds, weight = bins[bin_index]
+            cumulative += seconds * weight
+            elapsed += seconds
+            bin_index += 1
+        seconds, weight = bins[bin_index]
+        within = 0.0 if weight <= 0 else (target - cumulative) / weight
+        offsets.append(min(total_seconds, elapsed + within))
+    return offsets
+
+
+def weighted_time_sample(start: datetime, end: datetime, rng: random.Random) -> datetime:
+    """Sample a timestamp from [start, end] using the weekday/weekend curve."""
+    if end < start:
+        raise ValueError("no feasible start time in slot")
+    if end == start:
+        return start
+    bins = []
+    cursor = start.replace(minute=0, second=0, microsecond=0)
+    while cursor < end:
+        bucket_end = min(end, cursor + timedelta(hours=1))
+        seconds = (bucket_end - max(start, cursor)).total_seconds()
+        if seconds > 0:
+            bins.append((cursor, seconds, hour_weight(cursor)))
+        cursor = bucket_end
+    total = sum(seconds * weight for _, seconds, weight in bins)
+    if total <= 0:
+        return start + timedelta(seconds=rng.random() * (end - start).total_seconds())
+    target = rng.random() * total
+    for bucket_start, seconds, weight in bins:
+        mass = seconds * weight
+        if target <= mass:
+            return max(start, bucket_start) + timedelta(
+                seconds=(target / max(weight, 1e-9)))
+        target -= mass
+    return end
 
 
 def git_commit(repo_root: Path) -> str:
@@ -258,18 +334,18 @@ class Generator:
             count = per[idx]
             if count == 0:
                 continue
-            step = self.window_seconds / count
-            max_dur = int(min(7200, max(600, step * 0.5)))
+            offsets = weighted_slot_offsets(self.t0, self.t1, count)
+            boundaries = offsets + [self.window_seconds]
+            min_step = min(b - a for a, b in zip(boundaries, boundaries[1:]))
+            max_dur = int(min(7200, max(600, min_step * 0.5)))
             open_last = self.rng.random() < 0.10
             st_gap = (gap_station is not None and pile["station_id"] == gap_station)
 
             for kk in range(count):
-                slot0 = self.t0 + timedelta(seconds=kk * step)
-                if st_gap and gap_start <= slot0 < gap_end:
-                    continue  # 采集缺口：不出行
+                slot0 = self.t0 + timedelta(seconds=offsets[kk])
                 is_last = kk == count - 1
                 if is_last and open_last:
-                    st_time = self.t1 - timedelta(seconds=self.rng.randint(600, 5400))
+                    st_time = max(slot0, self.t1 - timedelta(seconds=self.rng.randint(600, 5400)))
                     if st_gap and gap_start <= st_time < gap_end:
                         continue
                     reserved = st_time - timedelta(seconds=self.rng.randint(120, 3600))
@@ -279,9 +355,15 @@ class Generator:
                     continue
 
                 dur = self.rng.randint(600, max_dur)
-                start = slot0 + timedelta(seconds=self.rng.uniform(
-                    0, max(0.0, step - dur - 300)))
+                slot_end = (self.t0 + timedelta(seconds=offsets[kk + 1])
+                            if kk + 1 < count else self.t1)
+                # 桩内保留 5 分钟间隔；窗口末端另预留最长结算延迟，结算也须严格在 t1 前。
+                latest_start = min(slot_end - timedelta(seconds=dur + 300),
+                                   self.t1 - timedelta(seconds=dur + 1801))
+                start = weighted_time_sample(slot0, latest_start, self.rng)
                 end = start + timedelta(seconds=dur)
+                if st_gap and start < gap_end and end > gap_start:
+                    continue  # 按实际区间检查采集缺口，槽内采样不能跨入缺测时段。
                 reserved = start - timedelta(seconds=self.rng.randint(120, 7200))
 
                 r = self.rng.random()
@@ -309,7 +391,7 @@ class Generator:
                 self.orders.append(o)
 
         # 末端活动订单：reserved / pending_reservation（新增）
-        used_piles: set[int] = set()
+        used_piles: set[int] = {o["pile_id"] for o in new_active}
 
         def pick_free_pile() -> dict | None:
             cand = [pl for pl in piles if pl["id"] not in used_piles]

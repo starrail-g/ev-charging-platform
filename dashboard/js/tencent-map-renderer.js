@@ -20,6 +20,7 @@ export class TencentMapRenderer {
     this._stations = [];
     this._focusedStationId = null;
     this._markerClickHandler = null;
+    this._resizeObserver = null;
   }
 
   /** 加载 SDK：复用已存在的 TMap；否则动态注入 script 并等待（不打印任何内容）。
@@ -96,6 +97,25 @@ export class TencentMapRenderer {
       });
       this._markers = this._buildMarkers(TMap, pilesByStation);
       this._bindMarkerClicks(onStationActivate);
+      let bounds = null;
+      if (this._stations.length > 1) {
+        bounds = new TMap.LatLngBounds();
+        for (const station of this._stations) bounds.extend(new TMap.LatLng(station.latitude, station.longitude));
+        this._map.fitBounds(bounds, { padding: 60 });
+      }
+      if (typeof ResizeObserver !== 'undefined') {
+        let lastSize = '';
+        this._resizeObserver = new ResizeObserver(([entry]) => {
+          const { width, height } = entry.contentRect;
+          const size = `${Math.round(width)}x${Math.round(height)}`;
+          if (width > 0 && height > 0 && size !== lastSize) {
+            this._map?.resize();
+            if (bounds && this._focusedStationId == null) this._map?.fitBounds(bounds, { padding: 40 });
+          }
+          lastSize = size;
+        });
+        this._resizeObserver.observe(container);
+      }
       return { mode: 'tencent' };
     } catch (error) {
       this._release();
@@ -168,7 +188,11 @@ export class TencentMapRenderer {
   /** 释放本渲染器持有的地图与 marker 引用；绝不改动共享容器
    *  （容器生命周期由 MapSurface 单点管理）。 */
   _release() {
+    this._resizeObserver?.disconnect();
+    this._resizeObserver = null;
     this._unbindMarkerClicks();
+    this._markers?.setMap(null);
+    this._map?.destroy();
     this._map = null;
     this._markers = null;
   }

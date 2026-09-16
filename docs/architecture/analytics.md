@@ -101,6 +101,17 @@ HDFS 根：`/ev-stage2/batches/<batch-id>/`；本地产物根：`EV_ANALYTICS_RO
 
 ## 5. 目录与发布
 
+工作台扩展（2026-09-16）：`build_warehouse.py` 从同批次 DWD 增加
+`ads_user_activity`（用户 × 站点 × 结算日的完成频次、金额和最近结算）、
+`ads_user_summary`（清洗后用户总量）和 `ads_order_activity`（站点 × 创建日 × 状态 × 起始小时的
+订单数及完成时长）。导出器仍只读取 ADS，将必要事实写入发布快照内部 `workbenchFacts`；
+API 的 `workbench.py` 在筛选后聚合为 `data.analytics`，不向浏览器返回内部事实表，
+也不读取业务库或启动 Spark。旧快照缺少扩展事实时，缺失指标明确降级。
+聚合事实 v2 在 `ads_order_activity` 增加完成订单真实时长四桶（15/30/60 分钟边界，右闭），
+发布快照逐行校验四桶之和等于完成数量。营收回归、站点利用率分组和完成率控制限
+由 API 对所选窗口统计，不引入独立数据源，也不回推缺失分桶。
+日期、复购分母、RFM 阈值与独立 ML 来源边界见 `docs/api/analytics.md` §7。
+
 ```
 仓库（入 git）                    产物（不入 git）
 analytics/                        D:/work/chargingplatform/build/stage2/   (Windows 工作区)
