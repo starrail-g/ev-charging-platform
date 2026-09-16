@@ -1333,3 +1333,31 @@ body.analytics-mode .chart-range { display: none; }
   .overview-insight-grid { grid-template-columns: 1fr; }
   .insight-content { height: 180px; }
 }
+
+/* ---------- 概览页布局：地图板块固定高度 / 右栏三卡滚动 / 指标卡填充 / 左导航等长 ---------- */
+/* 背景：工作台改版后概览页网格会把地图块拉伸到同行最高栏（右栏内容约 974/1264px），
+   全屏下页面过高且地图板块尺寸随内容变化；此处固定统一高度，站点取景仍由渲染器自动适配。
+   高度调参见 :root 的 --ev-map-h。 */
+:root { --ev-map-h: clamp(440px, 52vh, 620px); }
+
+@media (min-width: 1181px) {
+  /* 左导航与右侧内容列等长（更窄宽度仍走横向导航布局，不受影响） */
+  .workspace-layout { align-items: stretch; }
+  .workspace-nav { position: static; }
+}
+
+@media (min-width: 1501px) {
+  /* 全景态四张指标卡均匀放大填满地图同高，间隙同步加大 */
+  .workspace-content .metric-strip { height: var(--ev-map-h); grid-auto-rows: 1fr; gap: 1rem; }
+}
+
+@media (min-width: 901px) {
+  /* 地图板块固定高度，不随同行右栏内容拉伸 */
+  .workspace-content .map-wrap { height: var(--ev-map-h); min-height: 0; align-self: start; }
+  /* 右栏三卡（实时关注 / 站点利用率 / 智能预测与调度）等分高度、各自内部滚动 */
+  .workspace-content .right-rail { max-height: var(--ev-map-h); overflow: hidden; }
+  .workspace-content .right-rail .rail-block { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .workspace-content .right-rail .util-list,
+  .workspace-content .right-rail .analysis-summary { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+  .workspace-content .right-rail .alert-list { scrollbar-width: thin; }
+}
